@@ -197,7 +197,12 @@ async def health_check(database: Database = Depends(get_database)):
 
 async def run_gradient_analysis_background(analysis_id: str, symbol: str, database: Database):
     """Background task to run gradient analysis"""
+    logs = []  # Initialize logs list
+
     try:
+        # Log: Starting
+        logs.append(f"[{datetime.utcnow().isoformat()}] Starting gradient analysis for {symbol}")
+
         # Send WebSocket update: Starting
         await ws_manager.send_progress(
             task_id=analysis_id,
@@ -216,7 +221,8 @@ async def run_gradient_analysis_background(analysis_id: str, symbol: str, databa
 
         start_time = time.time()
 
-        # Send progress: Loading data
+        # Log and send progress: Loading data
+        logs.append(f"[{datetime.utcnow().isoformat()}] Loading market data for {symbol}")
         await ws_manager.send_progress(
             task_id=analysis_id,
             symbol=symbol,
@@ -226,7 +232,8 @@ async def run_gradient_analysis_background(analysis_id: str, symbol: str, databa
             message="Loading market data..."
         )
 
-        # Send progress: Training models
+        # Log and send progress: Training models
+        logs.append(f"[{datetime.utcnow().isoformat()}] Training ensemble models (14-day forecast)")
         await ws_manager.send_progress(
             task_id=analysis_id,
             symbol=symbol,
@@ -244,8 +251,10 @@ async def run_gradient_analysis_background(analysis_id: str, symbol: str, databa
             symbol, 14, "14-DAY"
         )
         current_price = df['Close'].iloc[-1]
+        logs.append(f"[{datetime.utcnow().isoformat()}] Model training completed. Current price: ${current_price:.2f}")
 
-        # Send progress: Running strategy
+        # Log and send progress: Running strategy
+        logs.append(f"[{datetime.utcnow().isoformat()}] Analyzing forecast gradient patterns")
         await ws_manager.send_progress(
             task_id=analysis_id,
             symbol=symbol,
@@ -258,6 +267,7 @@ async def run_gradient_analysis_background(analysis_id: str, symbol: str, databa
         # Run gradient strategy
         result = analyze_gradient_strategy(stats, current_price)
         result['forecast_median'] = stats['median'].tolist() if hasattr(stats['median'], 'tolist') else list(stats['median'])
+        logs.append(f"[{datetime.utcnow().isoformat()}] Strategy analysis completed. Signal: {result.get('signal')}")
 
         execution_time_ms = int((time.time() - start_time) * 1000)
 
@@ -265,8 +275,11 @@ async def run_gradient_analysis_background(analysis_id: str, symbol: str, databa
         analysis = convert_strategy_result_to_model('gradient', result, symbol, current_price, execution_time_ms)
         analysis.id = analysis_id
         analysis.status = AnalysisStatus.COMPLETED
+        analysis.logs = logs  # Attach logs to analysis
 
         # Update database with completed analysis
+        logs.append(f"[{datetime.utcnow().isoformat()}] Saving analysis results to database")
+        logs.append(f"[{datetime.utcnow().isoformat()}] SUCCESS: Analysis completed in {execution_time_ms}ms")
         await database.db.strategy_analyses.update_one(
             {"id": analysis_id},
             {"$set": analysis.dict()}
@@ -287,12 +300,16 @@ async def run_gradient_analysis_background(analysis_id: str, symbol: str, databa
         )
 
     except Exception as e:
-        # Update status to FAILED
+        # Log error
+        logs.append(f"[{datetime.utcnow().isoformat()}] ERROR: Analysis failed - {str(e)}")
+
+        # Update status to FAILED with logs
         await database.db.strategy_analyses.update_one(
             {"id": analysis_id},
             {"$set": {
                 "status": AnalysisStatus.FAILED.value,
-                "error": str(e)
+                "error": str(e),
+                "logs": logs
             }}
         )
 
@@ -311,7 +328,12 @@ async def run_gradient_analysis_background(analysis_id: str, symbol: str, databa
 
 async def run_consensus_analysis_background(consensus_id: str, request: ConsensusRequest, database: Database):
     """Background task to run consensus analysis"""
+    logs = []  # Initialize logs list
+
     try:
+        # Log: Starting
+        logs.append(f"[{datetime.utcnow().isoformat()}] Starting consensus analysis for {request.symbol}")
+
         # Send WebSocket update: Starting
         await ws_manager.send_progress(
             task_id=consensus_id,
@@ -330,6 +352,9 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
 
         start_time = time.time()
 
+        # Log: Training models
+        logs.append(f"[{datetime.utcnow().isoformat()}] Training ensemble models for consensus analysis")
+
         # Train 14-day ensemble - run in process pool to avoid blocking event loop
         loop = asyncio.get_event_loop()
         stats, df = await loop.run_in_executor(
@@ -338,12 +363,14 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
             request.symbol, 14, "14-DAY"
         )
         current_price = df['Close'].iloc[-1]
+        logs.append(f"[{datetime.utcnow().isoformat()}] Model training completed. Current price: ${current_price:.2f}")
 
         results = {}
         strategy_ids = []
 
         # Run all 8 strategies with progress updates
         # Strategy 1: Gradient (0% -> 12%)
+        logs.append(f"[{datetime.utcnow().isoformat()}] Running Forecast Gradient strategy (1/8)")
         await ws_manager.send_progress(
             task_id=consensus_id,
             symbol=request.symbol,
@@ -358,11 +385,14 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
             analysis_id = await database.create_strategy_analysis(analysis)
             strategy_ids.append(analysis_id)
             results['Forecast Gradient'] = result
+            logs.append(f"[{datetime.utcnow().isoformat()}] Forecast Gradient completed: {result.get('signal')}")
         except Exception as e:
             print(f"Gradient strategy failed: {e}")
             results['Forecast Gradient'] = {'signal': 'ERROR', 'position_size_pct': 0}
+            logs.append(f"[{datetime.utcnow().isoformat()}] WARNING: Forecast Gradient failed - {str(e)}")
 
         # Strategy 2: Confidence-Weighted (12% -> 25%)
+        logs.append(f"[{datetime.utcnow().isoformat()}] Running Confidence-Weighted strategy (2/8)")
         await ws_manager.send_progress(
             task_id=consensus_id,
             symbol=request.symbol,
@@ -377,11 +407,14 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
             analysis_id = await database.create_strategy_analysis(analysis)
             strategy_ids.append(analysis_id)
             results['Confidence-Weighted'] = result
+            logs.append(f"[{datetime.utcnow().isoformat()}] Confidence-Weighted completed: {result.get('signal')}")
         except Exception as e:
             print(f"Confidence strategy failed: {e}")
             results['Confidence-Weighted'] = {'signal': 'ERROR', 'position_size_pct': 0}
+            logs.append(f"[{datetime.utcnow().isoformat()}] WARNING: Confidence-Weighted failed - {str(e)}")
 
         # Strategy 3: Multi-Timeframe (25% -> 37%)
+        logs.append(f"[{datetime.utcnow().isoformat()}] Running Multi-Timeframe strategy (3/8)")
         await ws_manager.send_progress(
             task_id=consensus_id,
             symbol=request.symbol,
@@ -402,11 +435,14 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
             analysis_id = await database.create_strategy_analysis(analysis)
             strategy_ids.append(analysis_id)
             results['Multi-Timeframe'] = result
+            logs.append(f"[{datetime.utcnow().isoformat()}] Multi-Timeframe completed: {result.get('signal')}")
         except Exception as e:
             print(f"Timeframe strategy failed: {e}")
             results['Multi-Timeframe'] = {'signal': 'ERROR', 'position_size_pct': 0}
+            logs.append(f"[{datetime.utcnow().isoformat()}] WARNING: Multi-Timeframe failed - {str(e)}")
 
         # Strategy 4: Volatility Sizing (37% -> 50%)
+        logs.append(f"[{datetime.utcnow().isoformat()}] Running Volatility Sizing strategy (4/8)")
         await ws_manager.send_progress(
             task_id=consensus_id,
             symbol=request.symbol,
@@ -421,11 +457,14 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
             analysis_id = await database.create_strategy_analysis(analysis)
             strategy_ids.append(analysis_id)
             results['Volatility Sizing'] = result
+            logs.append(f"[{datetime.utcnow().isoformat()}] Volatility Sizing completed: {result.get('signal')}")
         except Exception as e:
             print(f"Volatility strategy failed: {e}")
             results['Volatility Sizing'] = {'signal': 'ERROR', 'position_size_pct': 0}
+            logs.append(f"[{datetime.utcnow().isoformat()}] WARNING: Volatility Sizing failed - {str(e)}")
 
         # Strategy 5: Mean Reversion (50% -> 62%)
+        logs.append(f"[{datetime.utcnow().isoformat()}] Running Mean Reversion strategy (5/8)")
         await ws_manager.send_progress(
             task_id=consensus_id,
             symbol=request.symbol,
@@ -440,11 +479,14 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
             analysis_id = await database.create_strategy_analysis(analysis)
             strategy_ids.append(analysis_id)
             results['Mean Reversion'] = result
+            logs.append(f"[{datetime.utcnow().isoformat()}] Mean Reversion completed: {result.get('signal')}")
         except Exception as e:
             print(f"Mean reversion strategy failed: {e}")
             results['Mean Reversion'] = {'signal': 'ERROR', 'position_size_pct': 0}
+            logs.append(f"[{datetime.utcnow().isoformat()}] WARNING: Mean Reversion failed - {str(e)}")
 
         # Strategy 6: Acceleration (62% -> 75%)
+        logs.append(f"[{datetime.utcnow().isoformat()}] Running Acceleration strategy (6/8)")
         await ws_manager.send_progress(
             task_id=consensus_id,
             symbol=request.symbol,
@@ -459,11 +501,14 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
             analysis_id = await database.create_strategy_analysis(analysis)
             strategy_ids.append(analysis_id)
             results['Acceleration'] = result
+            logs.append(f"[{datetime.utcnow().isoformat()}] Acceleration completed: {result.get('signal')}")
         except Exception as e:
             print(f"Acceleration strategy failed: {e}")
             results['Acceleration'] = {'signal': 'ERROR', 'position_size_pct': 0}
+            logs.append(f"[{datetime.utcnow().isoformat()}] WARNING: Acceleration failed - {str(e)}")
 
         # Strategy 7: Swing Trading (75% -> 87%)
+        logs.append(f"[{datetime.utcnow().isoformat()}] Running Swing Trading strategy (7/8)")
         await ws_manager.send_progress(
             task_id=consensus_id,
             symbol=request.symbol,
@@ -478,11 +523,14 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
             analysis_id = await database.create_strategy_analysis(analysis)
             strategy_ids.append(analysis_id)
             results['Swing Trading'] = result
+            logs.append(f"[{datetime.utcnow().isoformat()}] Swing Trading completed: {result.get('signal')}")
         except Exception as e:
             print(f"Swing strategy failed: {e}")
             results['Swing Trading'] = {'signal': 'ERROR', 'position_size_pct': 0}
+            logs.append(f"[{datetime.utcnow().isoformat()}] WARNING: Swing Trading failed - {str(e)}")
 
         # Strategy 8: Risk-Adjusted (87% -> 100%)
+        logs.append(f"[{datetime.utcnow().isoformat()}] Running Risk-Adjusted strategy (8/8)")
         await ws_manager.send_progress(
             task_id=consensus_id,
             symbol=request.symbol,
@@ -497,11 +545,14 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
             analysis_id = await database.create_strategy_analysis(analysis)
             strategy_ids.append(analysis_id)
             results['Risk-Adjusted'] = result
+            logs.append(f"[{datetime.utcnow().isoformat()}] Risk-Adjusted completed: {result.get('signal')}")
         except Exception as e:
             print(f"Risk-adjusted strategy failed: {e}")
             results['Risk-Adjusted'] = {'signal': 'ERROR', 'position_size_pct': 0}
+            logs.append(f"[{datetime.utcnow().isoformat()}] WARNING: Risk-Adjusted failed - {str(e)}")
 
         # Analyze consensus
+        logs.append(f"[{datetime.utcnow().isoformat()}] Calculating consensus from strategy results")
         bullish_keywords = ['BUY', 'BULLISH', 'MOMENTUM', 'REVERT', 'REVERSAL', 'EXCELLENT', 'GOOD']
         bearish_keywords = ['SELL', 'BEARISH', 'OUT', 'STAY', 'EXIT', 'POOR', 'FALSE']
 
@@ -544,6 +595,8 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
             consensus = "MIXED SIGNALS"
             strength = "LOW"
 
+        logs.append(f"[{datetime.utcnow().isoformat()}] Consensus: {consensus} ({strength}) - Bullish: {bullish_count}, Bearish: {bearish_count}")
+
         # Calculate average position
         bullish_positions = [results[name].get('position_size_pct', 0) for name in bullish_strategies
                            if 'position_size_pct' in results[name] and results[name]['position_size_pct'] > 0]
@@ -552,6 +605,8 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
         execution_time_ms = int((time.time() - start_time) * 1000)
 
         # Update consensus result in database
+        logs.append(f"[{datetime.utcnow().isoformat()}] Saving consensus results to database")
+        logs.append(f"[{datetime.utcnow().isoformat()}] SUCCESS: Consensus analysis completed in {execution_time_ms}ms")
         await database.db.consensus_results.update_one(
             {"id": consensus_id},
             {"$set": {
@@ -568,7 +623,8 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
                 "avg_position": avg_position,
                 "strategy_results": strategy_ids,
                 "status": AnalysisStatus.COMPLETED.value,
-                "execution_time_ms": execution_time_ms
+                "execution_time_ms": execution_time_ms,
+                "logs": logs
             }}
         )
 
@@ -590,12 +646,16 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
         )
 
     except Exception as e:
-        # Update status to FAILED
+        # Log error
+        logs.append(f"[{datetime.utcnow().isoformat()}] ERROR: Consensus analysis failed - {str(e)}")
+
+        # Update status to FAILED with logs
         await database.db.consensus_results.update_one(
             {"id": consensus_id},
             {"$set": {
                 "status": AnalysisStatus.FAILED.value,
-                "error": str(e)
+                "error": str(e),
+                "logs": logs
             }}
         )
 
@@ -690,14 +750,22 @@ async def get_analysis_status(
     analysis_id: str,
     database: Database = Depends(get_database)
 ):
-    """Get status and results of an analysis"""
+    """Get status and results of an analysis (checks both strategy and consensus collections)"""
     try:
+        # Try to find in strategy_analyses collection first
         analysis = await database.get_strategy_analysis(analysis_id)
 
-        if not analysis:
-            raise HTTPException(status_code=404, detail=f"Analysis {analysis_id} not found")
+        if analysis:
+            return analysis
 
-        return analysis
+        # If not found, try consensus_results collection
+        consensus_result = await database.get_consensus_result(analysis_id)
+
+        if consensus_result:
+            return consensus_result
+
+        # Not found in either collection
+        raise HTTPException(status_code=404, detail=f"Analysis {analysis_id} not found")
 
     except HTTPException:
         raise

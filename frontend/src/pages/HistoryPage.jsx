@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Search, Filter, Calendar } from 'lucide-react';
 import api from '../services/api';
 import { format } from 'date-fns';
+import LogsModal from '../components/LogsModal';
 
 const STRATEGY_TYPES = [
   { value: '', label: 'All Strategies' },
@@ -22,6 +23,7 @@ function HistoryPage() {
   const [consensusHistory, setConsensusHistory] = useState([]);
   const [loading, setLoading] = useState(false);
   const [viewMode, setViewMode] = useState('analyses'); // 'analyses' or 'consensus'
+  const [selectedAnalysis, setSelectedAnalysis] = useState(null); // For logs modal
 
   useEffect(() => {
     loadHistory();
@@ -47,15 +49,15 @@ function HistoryPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold text-gray-900">Analysis History</h1>
-        <p className="text-gray-600 mt-1">View past strategy analyses and consensus results</p>
+        <h1 className="text-3xl font-bold text-gray-100">Analysis History</h1>
+        <p className="text-gray-400 mt-1">View past strategy analyses and consensus results</p>
       </div>
 
       {/* Filters */}
       <div className="card">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Symbol</label>
+            <label className="block text-sm font-medium text-gray-300 mb-2">Symbol</label>
             <input
               type="text"
               value={symbol}
@@ -66,7 +68,7 @@ function HistoryPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">View Type</label>
+            <label className="block text-sm font-medium text-gray-300 mb-2">View Type</label>
             <select
               value={viewMode}
               onChange={(e) => setViewMode(e.target.value)}
@@ -79,7 +81,7 @@ function HistoryPage() {
 
           {viewMode === 'analyses' && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Strategy</label>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Strategy</label>
               <select
                 value={strategyFilter}
                 onChange={(e) => setStrategyFilter(e.target.value)}
@@ -107,11 +109,13 @@ function HistoryPage() {
             </h2>
             <div className="space-y-3">
               {analyses.map((analysis, idx) => (
-                <div key={idx} className="p-4 border border-gray-200 rounded-lg hover:border-brand-300 transition-colors">
+                <div key={idx}
+                     className="p-4 border border-gray-700 rounded-lg hover:border-brand-500 transition-colors cursor-pointer"
+                     onClick={() => setSelectedAnalysis(analysis)}>
                   <div className="flex items-center justify-between">
                     <div className="flex-1">
                       <div className="flex items-center space-x-3">
-                        <span className="font-semibold text-gray-900">{analysis.symbol}</span>
+                        <span className="font-semibold text-gray-100">{analysis.symbol}</span>
                         <span className="badge badge-info">{analysis.strategy_type}</span>
                         <span className={`badge ${
                           analysis.signal?.signal?.includes('BUY') ? 'badge-success' :
@@ -121,12 +125,12 @@ function HistoryPage() {
                           {analysis.signal?.signal}
                         </span>
                       </div>
-                      <p className="text-sm text-gray-600 mt-1">
+                      <p className="text-sm text-gray-400 mt-1">
                         ${analysis.current_price?.toFixed(2)} • Position: {analysis.signal?.position_size_pct || 0}%
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="text-sm text-gray-600">
+                      <p className="text-sm text-gray-400">
                         {format(new Date(analysis.created_at), 'MMM d, yyyy')}
                       </p>
                       <p className="text-xs text-gray-500">
@@ -145,11 +149,13 @@ function HistoryPage() {
             </h2>
             <div className="space-y-3">
               {consensusHistory.map((consensus, idx) => (
-                <div key={idx} className="p-4 border border-gray-200 rounded-lg hover:border-brand-300 transition-colors">
+                <div key={idx}
+                     className="p-4 border border-gray-700 rounded-lg hover:border-brand-500 transition-colors cursor-pointer"
+                     onClick={() => setSelectedAnalysis(consensus)}>
                   <div className="flex items-center justify-between">
                     <div className="flex-1">
                       <div className="flex items-center space-x-3">
-                        <span className="font-semibold text-gray-900">{consensus.symbol}</span>
+                        <span className="font-semibold text-gray-100">{consensus.symbol}</span>
                         <span className={`badge ${
                           consensus.consensus?.includes('BUY') ? 'badge-success' :
                           consensus.consensus?.includes('SELL') ? 'badge-danger' :
@@ -157,16 +163,16 @@ function HistoryPage() {
                         }`}>
                           {consensus.consensus}
                         </span>
-                        <span className="text-sm text-gray-600">
+                        <span className="text-sm text-gray-400">
                           {consensus.strength}
                         </span>
                       </div>
-                      <p className="text-sm text-gray-600 mt-1">
+                      <p className="text-sm text-gray-400 mt-1">
                         ${consensus.current_price?.toFixed(2)} • Bullish: {consensus.bullish_count}/{consensus.total_count}
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="text-sm text-gray-600">
+                      <p className="text-sm text-gray-400">
                         {format(new Date(consensus.created_at), 'MMM d, yyyy')}
                       </p>
                       <p className="text-xs text-gray-500">
@@ -180,6 +186,14 @@ function HistoryPage() {
           </div>
         )}
       </div>
+
+      {/* Logs Modal */}
+      {selectedAnalysis && (
+        <LogsModal
+          analysis={selectedAnalysis}
+          onClose={() => setSelectedAnalysis(null)}
+        />
+      )}
     </div>
   );
 }

@@ -16,12 +16,12 @@ function Navigation() {
   ];
 
   return (
-    <nav className="bg-white border-b border-gray-200">
+    <nav className="bg-gray-800 border-b border-gray-700">
       <div className="max-w-7xl mx-auto px-4">
         <div className="flex justify-between items-center h-16">
           <div className="flex items-center space-x-2">
-            <Activity className="w-8 h-8 text-brand-600" />
-            <span className="text-xl font-bold text-gray-900">
+            <Activity className="w-8 h-8 text-brand-500" />
+            <span className="text-xl font-bold text-gray-100">
               Temporal Trading Agents
             </span>
           </div>
@@ -33,8 +33,8 @@ function Navigation() {
                 to={path}
                 className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors ${
                   location.pathname === path
-                    ? 'bg-brand-100 text-brand-700'
-                    : 'text-gray-600 hover:bg-gray-100'
+                    ? 'bg-brand-900 text-brand-300 border border-brand-700'
+                    : 'text-gray-300 hover:bg-gray-700'
                 }`}
               >
                 <Icon className="w-5 h-5" />
@@ -51,7 +51,7 @@ function Navigation() {
 function App() {
   return (
     <Router>
-      <div className="min-h-screen bg-gray-50">
+      <div className="min-h-screen bg-gray-900">
         <Navigation />
 
         <main className="max-w-7xl mx-auto px-4 py-8">

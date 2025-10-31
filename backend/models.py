@@ -75,6 +75,15 @@ class StrategySignal(BaseModel):
     metadata: Optional[Dict[str, Any]] = {}
 
 
+class AnalysisStarted(BaseModel):
+    """Response when analysis is started"""
+    analysis_id: str
+    symbol: str
+    strategy_type: StrategyType
+    status: AnalysisStatus
+    message: str = "Analysis started in background"
+
+
 class StrategyResult(BaseModel):
     """Result from a single strategy analysis"""
     strategy_type: StrategyType
@@ -118,6 +127,7 @@ class StrategyAnalysis(BaseModel):
     error: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     execution_time_ms: Optional[int] = None
+    logs: Optional[List[str]] = []  # Captured console logs during execution
     metadata: Dict[str, Any] = {}
 
 
@@ -137,7 +147,11 @@ class ConsensusResult(BaseModel):
     neutral_strategies: List[str]
     avg_position: float
     strategy_results: List[str]  # References to StrategyAnalysis IDs
+    status: AnalysisStatus = AnalysisStatus.COMPLETED
+    error: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    execution_time_ms: Optional[int] = None
+    logs: Optional[List[str]] = []  # Captured console logs during execution
     metadata: Dict[str, Any] = {}
 
 
