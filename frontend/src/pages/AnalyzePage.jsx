@@ -102,8 +102,8 @@ function AnalyzePage() {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-3xl font-bold text-gray-900">Analyze Trading Strategy</h1>
-        <p className="text-gray-600 mt-1">
+        <h1 className="text-3xl font-bold text-gray-100">Analyze Trading Strategy</h1>
+        <p className="text-gray-400 mt-1">
           Run trading strategy analysis on any symbol with real-time progress updates
         </p>
       </div>
@@ -120,7 +120,7 @@ function AnalyzePage() {
         <div className="space-y-6">
           {/* Symbol Selection */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium text-gray-300 mb-2">
               Trading Symbol
             </label>
             <div className="flex space-x-2">
@@ -139,8 +139,8 @@ function AnalyzePage() {
                   onClick={() => setSymbol(sym)}
                   className={`px-3 py-1 rounded-lg text-sm font-medium transition-colors ${
                     symbol === sym
-                      ? 'bg-brand-100 text-brand-700'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      ? 'bg-brand-900 text-brand-300 border border-brand-700'
+                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                   }`}
                 >
                   {sym}
@@ -151,7 +151,7 @@ function AnalyzePage() {
 
           {/* Strategy Selection */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium text-gray-300 mb-2">
               Strategy
             </label>
             <select
@@ -166,7 +166,7 @@ function AnalyzePage() {
               ))}
             </select>
             {selectedStrategyInfo && (
-              <p className="text-sm text-gray-600 mt-2">
+              <p className="text-sm text-gray-400 mt-2">
                 {selectedStrategyInfo.description}
               </p>
             )}
@@ -175,7 +175,7 @@ function AnalyzePage() {
           {/* Horizons (for consensus only) */}
           {selectedStrategy === 'all' && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
                 Forecast Horizons (days)
               </label>
               <div className="flex flex-wrap gap-2">
@@ -192,14 +192,14 @@ function AnalyzePage() {
                     className={`px-4 py-2 rounded-lg font-medium transition-colors ${
                       horizons.includes(days)
                         ? 'bg-brand-600 text-white'
-                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                     }`}
                   >
                     {days}d
                   </button>
                 ))}
               </div>
-              <p className="text-sm text-gray-600 mt-2">
+              <p className="text-sm text-gray-400 mt-2">
                 Selected: {horizons.join(', ')} days
               </p>
             </div>
@@ -234,7 +234,7 @@ function AnalyzePage() {
           </div>
 
           {error && (
-            <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
+            <div className="p-4 bg-red-900 border border-red-700 rounded-lg text-red-200">
               <p className="font-medium">Analysis Failed</p>
               <p className="text-sm mt-1">{error}</p>
             </div>
@@ -252,20 +252,20 @@ function AnalyzePage() {
           ) : (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
-                <div className="p-4 bg-gray-50 rounded-lg">
-                  <p className="text-sm text-gray-600">Signal</p>
-                  <p className="text-2xl font-bold text-gray-900">{result.signal?.signal}</p>
+                <div className="p-4 bg-gray-700 rounded-lg">
+                  <p className="text-sm text-gray-400">Signal</p>
+                  <p className="text-2xl font-bold text-gray-100">{result.signal?.signal}</p>
                 </div>
-                <div className="p-4 bg-gray-50 rounded-lg">
-                  <p className="text-sm text-gray-600">Position Size</p>
-                  <p className="text-2xl font-bold text-gray-900">{result.signal?.position_size_pct}%</p>
+                <div className="p-4 bg-gray-700 rounded-lg">
+                  <p className="text-sm text-gray-400">Position Size</p>
+                  <p className="text-2xl font-bold text-gray-100">{result.signal?.position_size_pct}%</p>
                 </div>
               </div>
 
               {result.signal?.rationale && (
-                <div className="p-4 bg-blue-50 rounded-lg">
-                  <p className="text-sm font-medium text-gray-700 mb-1">Rationale</p>
-                  <p className="text-gray-900">{result.signal.rationale}</p>
+                <div className="p-4 bg-blue-900 rounded-lg border border-blue-700">
+                  <p className="text-sm font-medium text-gray-300 mb-1">Rationale</p>
+                  <p className="text-gray-100">{result.signal.rationale}</p>
                 </div>
               )}
             </div>

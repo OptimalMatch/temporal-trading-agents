@@ -7,21 +7,21 @@ import useWebSocket from '../hooks/useWebSocket';
 
 function StatCard({ title, value, icon: Icon, trend, color = 'blue' }) {
   const colors = {
-    blue: 'bg-blue-100 text-blue-600',
-    green: 'bg-green-100 text-green-600',
-    yellow: 'bg-yellow-100 text-yellow-600',
-    red: 'bg-red-100 text-red-600',
+    blue: 'bg-blue-900 text-blue-400 border border-blue-700',
+    green: 'bg-green-900 text-green-400 border border-green-700',
+    yellow: 'bg-yellow-900 text-yellow-400 border border-yellow-700',
+    red: 'bg-red-900 text-red-400 border border-red-700',
   };
 
   return (
     <div className="card">
       <div className="flex items-start justify-between">
         <div className="flex-1">
-          <p className="text-sm font-medium text-gray-600">{title}</p>
-          <p className="mt-2 text-3xl font-semibold text-gray-900">{value}</p>
+          <p className="text-sm font-medium text-gray-400">{title}</p>
+          <p className="mt-2 text-3xl font-semibold text-gray-100">{value}</p>
           {trend && (
-            <p className="mt-2 text-sm text-gray-600">
-              <span className={trend > 0 ? 'text-green-600' : 'text-red-600'}>
+            <p className="mt-2 text-sm text-gray-400">
+              <span className={trend > 0 ? 'text-green-400' : 'text-red-400'}>
                 {trend > 0 ? '+' : ''}{trend}%
               </span>{' '}
               from last period
@@ -50,21 +50,21 @@ function RecentAnalysis({ analysis }) {
                      signal.includes('HOLD') ? 'HOLD' : 'NO_SIGNAL';
 
   return (
-    <div className="flex items-center justify-between py-3 border-b border-gray-200 last:border-0">
+    <div className="flex items-center justify-between py-3 border-b border-gray-700 last:border-0">
       <div className="flex-1">
         <div className="flex items-center space-x-3">
-          <span className="font-semibold text-gray-900">{analysis.symbol}</span>
+          <span className="font-semibold text-gray-100">{analysis.symbol}</span>
           <span className={`badge ${signalColors[signalType]}`}>{signal}</span>
         </div>
-        <p className="text-sm text-gray-500 mt-1">
+        <p className="text-sm text-gray-400 mt-1">
           {analysis.strategy_type} • ${analysis.current_price?.toFixed(2)}
         </p>
       </div>
       <div className="text-right">
-        <p className="text-sm font-medium text-gray-900">
+        <p className="text-sm font-medium text-gray-100">
           {analysis.signal?.position_size_pct || 0}% position
         </p>
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-gray-400">
           {new Date(analysis.created_at).toLocaleTimeString()}
         </p>
       </div>
@@ -118,7 +118,7 @@ function Dashboard() {
 
   if (error) {
     return (
-      <div className="card flex items-center space-x-3 text-red-600">
+      <div className="card flex items-center space-x-3 text-red-400 bg-red-900 border-red-700">
         <AlertCircle className="w-5 h-5" />
         <span>Error loading dashboard: {error}</span>
       </div>
@@ -130,14 +130,14 @@ function Dashboard() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
-          <p className="text-gray-600 mt-1">
+          <h1 className="text-3xl font-bold text-gray-100">Dashboard</h1>
+          <p className="text-gray-400 mt-1">
             Real-time trading strategy analysis and monitoring
           </p>
         </div>
         <div className="flex items-center space-x-2">
           <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`}></div>
-          <span className="text-sm text-gray-600">
+          <span className="text-sm text-gray-400">
             {connected ? 'Connected' : 'Disconnected'}
           </span>
         </div>
@@ -182,9 +182,9 @@ function Dashboard() {
           <h2 className="text-xl font-semibold mb-4">Strategy Breakdown</h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {Object.entries(stats.strategy_breakdown).map(([strategy, count]) => (
-              <div key={strategy} className="text-center p-4 bg-gray-50 rounded-lg">
-                <p className="text-2xl font-bold text-gray-900">{count}</p>
-                <p className="text-sm text-gray-600 capitalize">{strategy}</p>
+              <div key={strategy} className="text-center p-4 bg-gray-700 rounded-lg">
+                <p className="text-2xl font-bold text-gray-100">{count}</p>
+                <p className="text-sm text-gray-400 capitalize">{strategy}</p>
               </div>
             ))}
           </div>
