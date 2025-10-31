@@ -16,6 +16,10 @@ import importlib.util
 
 def load_ensemble_module(module_path: str = "../examples/crypto_ensemble_forecast.py"):
     """Load the ensemble forecasting module dynamically."""
+    # Patch temporal data fetch to use Polygon.io before loading ensemble
+    from strategies.cached_data_fetch import patch_temporal_data_fetch
+    patch_temporal_data_fetch()
+
     spec = importlib.util.spec_from_file_location("ensemble", module_path)
     ensemble = importlib.util.module_from_spec(spec)
     sys.modules["ensemble"] = ensemble

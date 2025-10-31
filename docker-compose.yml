@@ -32,6 +32,11 @@ services:
     environment:
       - MONGODB_URL=mongodb://mongodb:27017
       - PYTHONUNBUFFERED=1
+      - POLYGON_API_KEY=${POLYGON_API_KEY}
+      - MASSIVE_ACCESS_KEY_ID=${MASSIVE_ACCESS_KEY_ID}
+      - MASSIVE_SECRET_ACCESS_KEY=${MASSIVE_SECRET_ACCESS_KEY}
+      - MASSIVE_S3_ENDPOINT=${MASSIVE_S3_ENDPOINT}
+      - MASSIVE_S3_BUCKET=${MASSIVE_S3_BUCKET}
     ports:
       - "10750:8000"
     depends_on:
@@ -45,6 +50,13 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
   # MCP Server
   mcp-server:

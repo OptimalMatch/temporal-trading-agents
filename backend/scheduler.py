@@ -7,8 +7,8 @@ from datetime import datetime, timedelta
 from typing import Dict
 import asyncio
 
-from database import Database
-from models import ScheduledTask, ScheduleFrequency, StrategyType
+from backend.database import Database
+from backend.models import ScheduledTask, ScheduleFrequency, StrategyType
 
 
 class TaskScheduler:

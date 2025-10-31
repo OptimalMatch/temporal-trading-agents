@@ -1,4 +1,5 @@
 import { X } from 'lucide-react';
+import ForecastChart from './ForecastChart';
 
 function LogsModal({ analysis, onClose }) {
   if (!analysis) return null;
@@ -6,13 +7,13 @@ function LogsModal({ analysis, onClose }) {
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
          onClick={onClose}>
-      <div className="bg-gray-800 rounded-xl shadow-2xl max-w-4xl w-full max-h-[80vh] flex flex-col border border-gray-700"
+      <div className="bg-gray-800 rounded-xl shadow-2xl max-w-6xl w-full max-h-[90vh] flex flex-col border border-gray-700"
            onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-700">
           <div>
             <h2 className="text-2xl font-bold text-gray-100">
-              Analysis Logs: {analysis.symbol}
+              Analysis Details: {analysis.symbol}
             </h2>
             <p className="text-sm text-gray-400 mt-1">
               {analysis.strategy_type} • {new Date(analysis.created_at).toLocaleString()}
@@ -26,8 +27,17 @@ function LogsModal({ analysis, onClose }) {
           </button>
         </div>
 
-        {/* Logs Content */}
-        <div className="flex-1 overflow-y-auto p-6">
+        {/* Content Area */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {/* Forecast Chart (if available) */}
+          {analysis.forecast_data && (
+            <div className="border-b border-gray-700 pb-6">
+              <ForecastChart forecastData={analysis.forecast_data} symbol={analysis.symbol} />
+            </div>
+          )}
+
+          {/* Logs Content */}
+          <div>
           {analysis.logs && analysis.logs.length > 0 ? (
             <div className="bg-gray-900 rounded-lg p-4 font-mono text-sm space-y-1">
               {analysis.logs.map((log, idx) => (
@@ -50,6 +60,7 @@ function LogsModal({ analysis, onClose }) {
               </p>
             </div>
           )}
+          </div>
         </div>
 
         {/* Footer with metrics */}

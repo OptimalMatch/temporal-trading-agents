@@ -5,6 +5,8 @@ Provides REST API endpoints for running trading strategies and getting consensus
 import sys
 import os
 from pathlib import Path
+import pandas as pd
+import traceback
 
 # Add parent directory to path for strategy imports
 sys.path.append(str(Path(__file__).parent.parent))
@@ -23,7 +25,7 @@ from backend.models import (
     ConsensusAnalysis, HealthCheck, StrategyType, StrategyAnalysis,
     ConsensusResult, AnalysisStatus, StrategySignal, ForecastStats,
     ScheduledTask, ScheduledTaskCreate, ScheduledTaskUpdate, ScheduleFrequency,
-    AnalysisStarted
+    AnalysisStarted, ForecastData, ModelPrediction, HistoricalPriceData, PricePoint
 )
 from backend.database import Database
 from backend.websocket_manager import manager as ws_manager
@@ -125,6 +127,81 @@ def _train_multiple_timeframes_worker(symbol: str, horizons: list, ensemble_path
     """Worker function for training multiple timeframes in separate process"""
     ensemble = load_ensemble_module(ensemble_path)
     return train_multiple_timeframes(symbol, ensemble, horizons)
+
+async def save_historical_prices(symbol: str, df, db: Database, source: str = "polygon") -> bool:
+    """Save historical price data from DataFrame to database"""
+    try:
+        # Extract OHLCV data from DataFrame
+        prices = []
+        for idx, row in df.iterrows():
+            price_point = PricePoint(
+                date=idx.strftime("%Y-%m-%d") if hasattr(idx, 'strftime') else str(idx),
+                open=float(row['Open']) if 'Open' in row else float(row['Close']),
+                high=float(row['High']) if 'High' in row else float(row['Close']),
+                low=float(row['Low']) if 'Low' in row else float(row['Close']),
+                close=float(row['Close']),
+                volume=float(row['Volume']) if 'Volume' in row and not pd.isna(row['Volume']) else None
+            )
+            prices.append(price_point.dict())
+
+        # Get date range
+        dates = [p['date'] for p in prices]
+        first_date = min(dates)
+        last_date = max(dates)
+
+        historical_data = {
+            "symbol": symbol,
+            "source": source,
+            "prices": prices,
+            "first_date": first_date,
+            "last_date": last_date,
+            "total_days": len(prices),
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow(),
+            "metadata": {}
+        }
+
+        # Upsert to database
+        success = await db.upsert_historical_prices(historical_data)
+        return success
+    except Exception as e:
+        print(f"Error saving historical prices for {symbol}: {e}")
+        return False
+
+
+def build_forecast_data(ensemble_stats: dict, df, forecast_horizon: int, current_price: float) -> ForecastData:
+    """Build ForecastData object from ensemble stats and dataframe"""
+    # Get historical prices (up to 2 years = 730 days for flexible display)
+    hist_days = min(730, len(df))
+    historical_prices = df['Close'].iloc[-hist_days:].values.tolist()
+
+    # Build individual model predictions
+    individual_models = []
+    if 'details' in ensemble_stats:
+        for detail in ensemble_stats['details']:
+            individual_models.append(ModelPrediction(
+                name=detail['name'],
+                prices=detail['prices'].tolist() if hasattr(detail['prices'], 'tolist') else detail['prices'],
+                final_change_pct=float(detail['final_change'])
+            ))
+
+    # Convert numpy arrays to lists
+    def to_list(arr):
+        return arr.tolist() if hasattr(arr, 'tolist') else list(arr)
+
+    return ForecastData(
+        historical_prices=historical_prices,
+        historical_days=hist_days,
+        forecast_horizon=forecast_horizon,
+        current_price=current_price,
+        ensemble_median=to_list(ensemble_stats['median']),
+        ensemble_q25=to_list(ensemble_stats['q25']),
+        ensemble_q75=to_list(ensemble_stats['q75']),
+        ensemble_min=to_list(ensemble_stats['min']),
+        ensemble_max=to_list(ensemble_stats['max']),
+        individual_models=individual_models,
+        forecast_days=list(range(1, forecast_horizon + 1))
+    )
 
 def convert_numpy_to_native(obj):
     """Recursively convert numpy types to native Python types"""
@@ -604,6 +681,13 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
 
         execution_time_ms = int((time.time() - start_time) * 1000)
 
+        # Build forecast data for visualization
+        forecast_data = build_forecast_data(stats, df, 14, current_price)
+
+        # Save historical prices to separate collection
+        logs.append(f"[{datetime.utcnow().isoformat()}] Saving historical price data to database")
+        await save_historical_prices(request.symbol, df, database, source="polygon")
+
         # Update consensus result in database
         logs.append(f"[{datetime.utcnow().isoformat()}] Saving consensus results to database")
         logs.append(f"[{datetime.utcnow().isoformat()}] SUCCESS: Consensus analysis completed in {execution_time_ms}ms")
@@ -622,6 +706,7 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
                 "neutral_strategies": neutral_strategies,
                 "avg_position": avg_position,
                 "strategy_results": strategy_ids,
+                "forecast_data": forecast_data.dict(),
                 "status": AnalysisStatus.COMPLETED.value,
                 "execution_time_ms": execution_time_ms,
                 "logs": logs
@@ -670,6 +755,7 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
         )
 
         print(f"❌ Background consensus analysis failed for {consensus_id}: {e}")
+        traceback.print_exc()
 
 
 # ==================== Strategy Endpoints ====================
@@ -858,6 +944,39 @@ async def get_consensus_history(
         return {"symbol": symbol, "count": len(results), "results": results}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to retrieve history: {str(e)}")
+
+
+@app.get("/api/v1/history/prices/{symbol}")
+async def get_historical_prices(
+    symbol: str,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    database: Database = Depends(get_database)
+):
+    """Get historical price data for a symbol"""
+    try:
+        if start_date or end_date:
+            prices = await database.get_historical_prices_range(
+                symbol=symbol,
+                start_date=start_date,
+                end_date=end_date
+            )
+        else:
+            prices_doc = await database.get_historical_prices(symbol)
+            prices = prices_doc.get("prices") if prices_doc else None
+
+        if prices is None:
+            raise HTTPException(status_code=404, detail=f"No historical price data found for {symbol}")
+
+        return {
+            "symbol": symbol,
+            "count": len(prices) if isinstance(prices, list) else 0,
+            "prices": prices
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve historical prices: {str(e)}")
 
 
 @app.get("/api/v1/analytics/{symbol}")
