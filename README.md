@@ -35,6 +35,231 @@ Or install from the temporal-forecasting repository directly:
 pip install git+https://github.com/OptimalMatch/temporal.git
 ```
 
+## Docker Deployment
+
+The project includes a complete Docker setup with REST API backend, MCP server for AI agent access, and MongoDB database.
+
+### Architecture
+
+```
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│   MCP Server    │────▶│  Backend API     │────▶│   MongoDB       │
+│  (Port: stdio)  │     │  (Port: 8000)    │     │ (Port: 27017)   │
+└─────────────────┘     └──────────────────┘     └─────────────────┘
+      AI Agents              REST API              Database Storage
+```
+
+**Services:**
+- **Backend API**: FastAPI REST endpoints for all 8 trading strategies
+- **MCP Server**: Model Context Protocol server for AI agent integration
+- **MongoDB**: Database for storing analyses, consensus results, and forecasts
+
+### Quick Start with Docker
+
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/temporal-trading-agents.git
+cd temporal-trading-agents
+```
+
+2. Build and start all services:
+```bash
+docker-compose up --build
+```
+
+3. Access the API:
+```bash
+# Health check
+curl http://localhost:8000/health
+
+# Run gradient strategy analysis
+curl -X POST "http://localhost:8000/api/v1/analyze/gradient?symbol=BTC-USD"
+
+# Run comprehensive 8-strategy consensus analysis
+curl -X POST http://localhost:8000/api/v1/analyze/consensus \
+  -H "Content-Type: application/json" \
+  -d '{"symbol": "BTC-USD", "horizons": [3, 7, 14, 21]}'
+```
+
+### Docker Services
+
+**Backend API** (Port 8000):
+- Health check: `GET /health`
+- Gradient strategy: `POST /api/v1/analyze/gradient?symbol=SYMBOL`
+- Confidence strategy: `POST /api/v1/analyze/confidence?symbol=SYMBOL`
+- All 8 strategies consensus: `POST /api/v1/analyze/consensus`
+- Analysis history: `GET /api/v1/history/analyses/{symbol}`
+- Consensus history: `GET /api/v1/history/consensus/{symbol}`
+- Symbol analytics: `GET /api/v1/analytics/{symbol}`
+
+**MCP Server** (AI Agent Access):
+Available tools:
+- `analyze_gradient_strategy` - Run forecast gradient analysis
+- `analyze_confidence_strategy` - Run confidence-weighted analysis
+- `analyze_all_strategies` - Run all 8 strategies with consensus
+- `get_analysis_history` - Get historical strategy analyses
+- `get_consensus_history` - Get historical consensus results
+- `get_symbol_analytics` - Get comprehensive symbol analytics
+
+**MongoDB** (Port 27017):
+Collections:
+- `strategy_analyses` - Individual strategy analysis results
+- `consensus_results` - Multi-strategy consensus results
+- `model_trainings` - Model training records
+- `price_forecasts` - Forecast data
+- `users` - User accounts (future)
+- `api_keys` - API keys (future)
+
+### Environment Configuration
+
+Copy `.env.example` to `.env` and customize:
+```bash
+cp .env.example .env
+```
+
+Key environment variables:
+- `MONGODB_URL` - MongoDB connection string (default: `mongodb://mongodb:27017`)
+- `BACKEND_URL` - Backend API URL for MCP server (default: `http://backend:8000`)
+- `DEFAULT_FORECAST_HORIZONS` - Default horizons for analysis (default: `3,7,14,21`)
+- `CORS_ORIGINS` - Allowed CORS origins (comma-separated)
+
+### Docker Commands
+
+```bash
+# Start services in detached mode
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# View logs for specific service
+docker-compose logs -f backend
+docker-compose logs -f mcp-server
+docker-compose logs -f mongodb
+
+# Stop services
+docker-compose down
+
+# Stop and remove volumes (WARNING: deletes database data)
+docker-compose down -v
+
+# Rebuild services
+docker-compose up --build
+
+# Check service health
+docker-compose ps
+```
+
+### API Examples
+
+**Run Gradient Strategy:**
+```bash
+curl -X POST "http://localhost:8000/api/v1/analyze/gradient?symbol=ETH-USD"
+```
+
+**Run All 8 Strategies with Consensus:**
+```bash
+curl -X POST http://localhost:8000/api/v1/analyze/consensus \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symbol": "BTC-USD",
+    "horizons": [3, 7, 14, 21]
+  }'
+```
+
+**Get Analysis History:**
+```bash
+curl "http://localhost:8000/api/v1/history/analyses/BTC-USD?limit=10"
+```
+
+**Get Symbol Analytics:**
+```bash
+curl "http://localhost:8000/api/v1/analytics/BTC-USD"
+```
+
+### MCP Server Usage
+
+The MCP server allows AI agents (like Claude) to access trading strategies through a standardized protocol.
+
+**Claude Desktop Configuration:**
+
+Add to your Claude Desktop `claude_desktop_config.json`:
+```json
+{
+  "mcpServers": {
+    "temporal-trading": {
+      "command": "docker",
+      "args": [
+        "exec",
+        "-i",
+        "temporal-trading-mcp",
+        "python",
+        "mcp-server/server.py"
+      ]
+    }
+  }
+}
+```
+
+**Example Agent Usage:**
+
+With the MCP server configured, AI agents can use commands like:
+```
+Analyze BTC-USD using all 8 trading strategies
+Get consensus history for ETH-USD
+What are the analytics for BTC-USD?
+```
+
+### Database Management
+
+**Access MongoDB shell:**
+```bash
+docker exec -it temporal-trading-mongodb mongosh
+```
+
+**MongoDB commands:**
+```javascript
+// Switch to database
+use temporal_trading
+
+// View collections
+show collections
+
+// Query strategy analyses
+db.strategy_analyses.find({symbol: "BTC-USD"}).sort({created_at: -1}).limit(5)
+
+// Query consensus results
+db.consensus_results.find({symbol: "BTC-USD"}).sort({created_at: -1}).limit(5)
+
+// Get analytics
+db.strategy_analyses.aggregate([
+  {$match: {symbol: "BTC-USD"}},
+  {$group: {_id: "$strategy_type", count: {$sum: 1}}}
+])
+```
+
+### Troubleshooting
+
+**Backend fails to start:**
+- Check MongoDB is healthy: `docker-compose ps`
+- View backend logs: `docker-compose logs backend`
+- Ensure port 8000 is not in use: `lsof -i :8000`
+
+**MongoDB connection issues:**
+- Verify MongoDB is running: `docker-compose ps mongodb`
+- Check MongoDB logs: `docker-compose logs mongodb`
+- Wait for MongoDB health check to pass (may take 10-20 seconds on first start)
+
+**MCP server issues:**
+- Ensure backend is healthy: `curl http://localhost:8000/health`
+- View MCP logs: `docker-compose logs mcp-server`
+- Check BACKEND_URL environment variable
+
+**Out of memory errors:**
+- PyTorch models require significant memory
+- Increase Docker memory limit (Docker Desktop: Settings → Resources → Memory)
+- Recommended: 8GB+ RAM allocation
+
 ## Quick Start
 
 ### Example: Crypto Trading Strategy

@@ -1,0 +1,8 @@
+# MCP Server dependencies
+mcp==1.0.0
+
+# HTTP client for backend communication
+httpx==0.26.0
+
+# For async operations
+asyncio-atexit==1.0.1

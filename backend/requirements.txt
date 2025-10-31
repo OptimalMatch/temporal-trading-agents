@@ -1,0 +1,30 @@
+# FastAPI backend dependencies
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.9
+
+# Database
+motor==3.3.2
+pymongo==4.6.1
+
+# Data validation
+pydantic==2.5.3
+pydantic-settings==2.1.0
+
+# HTTP client
+httpx==0.26.0
+
+# Strategy dependencies
+numpy==1.24.3
+pandas==2.0.3
+scipy==1.11.4
+matplotlib==3.7.2
+yfinance==0.2.38
+
+# PyTorch (CPU version for lightweight deployments)
+torch==2.2.0
+torchvision==0.17.0
+torchaudio==2.2.0
+
+# Temporal forecasting (assumes local installation or git+https)
+# temporal-forecasting
