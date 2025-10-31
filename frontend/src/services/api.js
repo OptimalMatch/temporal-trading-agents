@@ -51,6 +51,11 @@ class APIService {
     });
   }
 
+  // Get analysis status (for async operations)
+  async getAnalysisStatus(analysisId) {
+    return this.request(`/analysis/${analysisId}`);
+  }
+
   // History
   async getAnalysisHistory(symbol, strategyType = null, limit = 100) {
     const params = new URLSearchParams({ limit: limit.toString() });

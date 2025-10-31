@@ -43,6 +43,9 @@ class WebSocketService {
           return;
         }
 
+        // Log the message to console
+        console.log('📨 WebSocket message:', data);
+
         // Notify all listeners
         this.notifyListeners('message', data);
 
