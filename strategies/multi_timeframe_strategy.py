@@ -96,15 +96,16 @@ def analyze_multi_timeframe_strategy(timeframe_data: Dict, current_price: float)
             raise ValueError("No timeframe data available for analysis")
 
     # Calculate metrics for each timeframe
+    # Convert horizon keys to strings for MongoDB compatibility
     timeframe_metrics = {}
     for horizon, (stats, df) in timeframe_data.items():
         metrics = calculate_forecast_metrics(stats, current_price, horizon)
-        timeframe_metrics[horizon] = metrics
+        timeframe_metrics[str(horizon)] = metrics  # Use string key for MongoDB
 
     # Determine bullish/bearish for each timeframe
     directions = {}
-    for horizon, metrics in timeframe_metrics.items():
-        directions[horizon] = "BULLISH" if metrics['median_change_pct'] > 0 else "BEARISH"
+    for horizon_str, metrics in timeframe_metrics.items():
+        directions[horizon_str] = "BULLISH" if metrics['median_change_pct'] > 0 else "BEARISH"
 
     # Count alignment
     bullish_count = sum(1 for d in directions.values() if d == "BULLISH")
