@@ -67,22 +67,27 @@ python examples/stock_forecasting.py
 - `examples/run_14day_forecast.py` - Utility script for running forecasts
 
 ### Strategy Examples
-- `examples/compare_all_strategies.py` - Compare all 4 advanced strategies on same asset
+- `examples/compare_all_strategies.py` - Compare first 4 advanced strategies on same asset
+- `examples/compare_all_8_strategies.py` - Compare ALL 8 advanced strategies with consensus analysis
 - `strategies/crypto_trading_strategy.py` - Buy-the-dip strategy (7-day vs 14-day comparison)
 - `strategies/forecast_gradient_strategy.py` - Curve shape analysis strategy
 - `strategies/confidence_weighted_strategy.py` - Model agreement-based strategy
 - `strategies/multi_timeframe_strategy.py` - Multiple horizon alignment strategy
 - `strategies/volatility_position_sizing.py` - Uncertainty-based position sizing
+- `strategies/mean_reversion_strategy.py` - Mean reversion with forecast confirmation
+- `strategies/acceleration_strategy.py` - Acceleration/deceleration momentum strategy
+- `strategies/swing_trading_strategy.py` - Intra-forecast swing opportunities
+- `strategies/risk_adjusted_strategy.py` - Advanced risk-adjusted strategy (Sharpe, Sortino, VaR, CVaR)
 
 ## Features
 
 - **Multi-horizon Forecasting**: Generate predictions for 3, 7, 14, and 21-day timeframes
 - **Ensemble Methods**: Combine multiple models for robust predictions
-- **Advanced Trading Strategies**: 5 distinct strategies leveraging forecast capabilities
-- **Dynamic Position Sizing**: Adjust position sizes based on confidence and volatility
-- **Risk Management**: Built-in stop-loss and risk/reward calculations
+- **Advanced Trading Strategies**: 9 distinct strategies leveraging forecast capabilities
+- **Dynamic Position Sizing**: Adjust position sizes based on confidence, volatility, and risk metrics
+- **Risk Management**: Built-in stop-loss, risk/reward calculations, VaR, CVaR, Sharpe/Sortino ratios
 - **Comprehensive Visualization**: Rich charts for forecasts and trading decisions
-- **Strategy Comparison**: Compare multiple strategies side-by-side
+- **Strategy Comparison**: Compare all 8 advanced strategies side-by-side with consensus analysis
 
 ## Trading Strategies
 
@@ -186,19 +191,153 @@ cd strategies
 python volatility_position_sizing.py
 ```
 
-### Compare All Strategies
-Run all strategies and see their recommendations side-by-side:
+### 6. Mean Reversion with Forecast Confirmation (`mean_reversion_strategy.py`)
+**Trades mean reversion only when the forecast confirms the reversion will occur**
 
+Trading signals based on mean reversion + forecast alignment:
+- **OVERSOLD_REVERT**: Price below SMA, Z-score indicates oversold, forecast confirms upward reversion
+- **OVERBOUGHT_REVERT**: Price above SMA, Z-score indicates overbought, forecast confirms downward reversion
+- **FALSE_SIGNAL**: Mean reversion setup but forecast contradicts the expected move
+- **NO_SIGNAL**: No mean reversion opportunity
+
+**Key Features:**
+- Calculates 20-day and 50-day Simple Moving Averages
+- Uses Z-score analysis to identify overbought/oversold conditions
+- Validates mean reversion signals against forecast direction
+- Filters out false signals where price appears mean-reverting but forecast disagrees
+- Measures deviation magnitude for position sizing
+
+**Mean Reversion Metrics:**
+- Z-score < -1.5 (oversold) or > 1.5 (overbought)
+- SMA crossover confirmation
+- Forecast must predict movement toward the mean
+
+**Usage:**
+```bash
+cd strategies
+python mean_reversion_strategy.py
+```
+
+### 7. Acceleration/Deceleration Momentum Strategy (`acceleration_strategy.py`)
+**Analyzes changes in momentum to identify accelerating or decelerating trends**
+
+Trading signals based on momentum acceleration:
+- **ACCELERATING_GAINS**: Momentum is increasing, suggesting strengthening trend
+- **DECELERATING_GAINS**: Momentum is slowing, potential trend exhaustion
+- **ACCELERATION_REVERSAL**: Negative momentum becoming more negative (bearish acceleration)
+- **DECELERATION_REVERSAL**: Negative momentum slowing (potential bottoming)
+
+**Key Features:**
+- Compares first 7 days vs. second 7 days of 14-day forecast
+- Calculates daily returns for each period
+- Measures acceleration (change in momentum between periods)
+- Identifies momentum shifts that precede trend changes
+- Higher position sizes for stronger acceleration
+
+**Momentum Metrics:**
+- Period 1 (Days 0-7) daily return rate
+- Period 2 (Days 7-14) daily return rate
+- Acceleration = Period 2 rate - Period 1 rate
+- Positive acceleration (>0.2% daily) = strong signal
+- Negative acceleration (<-0.2% daily) = trend exhaustion
+
+**Usage:**
+```bash
+cd strategies
+python acceleration_strategy.py
+```
+
+### 8. Swing Trading with Intra-Forecast Strategy (`swing_trading_strategy.py`)
+**Identifies multiple swing opportunities within the forecast window**
+
+Trading signals based on forecast peaks and troughs:
+- **EXCELLENT_SWING_OPP**: Multiple profitable swings detected within forecast period
+- **GOOD_SWING_OPP**: 1-2 profitable swings available
+- **POOR_SWING_OPP**: Swings detected but profit potential too small
+- **NO_SWING**: No clear swing pattern in forecast
+
+**Key Features:**
+- Uses scipy.signal.argrelextrema to detect local peaks and troughs
+- Identifies multiple entry/exit opportunities within forecast window
+- Calculates profit potential for each swing
+- Requires minimum 2% price movement for valid swing
+- Provides specific entry/exit prices and expected returns
+
+**Swing Detection:**
+- Local maxima (peaks) and minima (troughs) in forecast
+- Minimum swing amplitude: 2% price change
+- Expected return calculation for each swing opportunity
+- Filters noise using relative extrema detection (order=2)
+
+**Usage:**
+```bash
+cd strategies
+python swing_trading_strategy.py
+```
+
+### 9. Advanced Risk-Adjusted Strategy (`risk_adjusted_strategy.py`)
+**Comprehensive risk analysis using multiple risk metrics and modern portfolio theory**
+
+Trading signals based on risk-adjusted returns:
+- **EXCELLENT_RISK_ADJUSTED**: High Sharpe (>1.5), low drawdown, favorable VaR/CVaR
+- **GOOD_RISK_ADJUSTED**: Positive Sharpe (>0.8), acceptable risk metrics
+- **MODERATE_RISK**: Positive expected return but elevated risk
+- **POOR_RISK_ADJUSTED**: Negative Sharpe or unacceptable risk profile
+
+**Key Features:**
+- **Sharpe Ratio**: Risk-adjusted return using total volatility
+- **Sortino Ratio**: Risk-adjusted return using downside volatility only
+- **Maximum Drawdown**: Worst peak-to-trough decline in forecast
+- **Value at Risk (VaR 95%)**: Expected loss at 95% confidence level
+- **Conditional VaR (CVaR)**: Expected loss in worst 5% of scenarios
+- **Risk-Adjusted Score**: Weighted composite of all metrics
+
+**Risk Metrics:**
+- Sharpe Ratio > 1.5 = Excellent
+- Sortino Ratio > 1.0 = Good downside protection
+- Max Drawdown < -5% = Elevated risk
+- VaR and CVaR for tail risk assessment
+- Position sizing based on composite risk score
+
+**Usage:**
+```bash
+cd strategies
+python risk_adjusted_strategy.py
+```
+
+### Compare All Strategies
+
+**Compare First 4 Strategies:**
 ```bash
 cd examples
 python compare_all_strategies.py
 ```
 
-This will:
-- Train models for all required horizons
-- Run all 4 advanced strategies
-- Display strategy consensus and recommended action
-- Create comprehensive comparison visualization
+**Compare ALL 8 Advanced Strategies (Recommended):**
+```bash
+cd examples
+python compare_all_8_strategies.py
+```
+
+The comprehensive 8-strategy comparison will:
+- Train ensemble models for all required horizons (3, 7, 14, 21 days)
+- Run all 8 advanced strategies on the same asset
+- Analyze consensus across strategies (bullish/bearish/neutral counts)
+- Calculate average position sizing recommendations
+- Provide clear recommended action based on strategy agreement
+- Create comprehensive visualization with:
+  - 14-day forecast plot
+  - Strategy consensus pie chart
+  - Position sizing comparison
+  - Signal summary table
+  - Key insights from each strategy
+
+**Consensus Signals:**
+- **STRONG BUY**: 6+ strategies bullish
+- **BUY**: 5+ strategies bullish
+- **MODERATE BUY**: 4+ strategies bullish
+- **SELL/AVOID**: 4+ strategies bearish
+- **MIXED SIGNALS**: No clear consensus
 
 ## Strategy Utilities
 
