@@ -64,6 +64,51 @@ class ForecastStats(BaseModel):
     max: List[float]
 
 
+class PricePoint(BaseModel):
+    """Single price data point"""
+    date: str  # ISO format date
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: Optional[float] = None
+
+
+class HistoricalPriceData(BaseModel):
+    """Historical price data stored separately for efficiency"""
+    symbol: str
+    source: str = "polygon"  # Data source (polygon, yfinance, etc.)
+    prices: List[PricePoint]  # Daily price points
+    first_date: str  # First date in dataset
+    last_date: str  # Last date in dataset (most recent)
+    total_days: int  # Total number of data points
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    metadata: Dict[str, Any] = {}
+
+
+class ModelPrediction(BaseModel):
+    """Individual model forecast"""
+    name: str
+    prices: List[float]
+    final_change_pct: float
+
+
+class ForecastData(BaseModel):
+    """Comprehensive forecast data for visualization"""
+    historical_prices: List[float]  # Last 60 days of historical data
+    historical_days: int  # Number of historical days included
+    forecast_horizon: int  # Number of forecast days
+    current_price: float
+    ensemble_median: List[float]
+    ensemble_q25: List[float]
+    ensemble_q75: List[float]
+    ensemble_min: List[float]
+    ensemble_max: List[float]
+    individual_models: List[ModelPrediction]  # Each model's forecast
+    forecast_days: List[int]  # [1, 2, 3, ..., N] for x-axis
+
+
 class StrategySignal(BaseModel):
     """Individual strategy signal"""
     signal: str
@@ -123,6 +168,7 @@ class StrategyAnalysis(BaseModel):
     current_price: float
     signal: StrategySignal
     forecast_stats: Optional[ForecastStats] = None
+    forecast_data: Optional[ForecastData] = None  # Visualization data
     status: AnalysisStatus = AnalysisStatus.COMPLETED
     error: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -147,6 +193,7 @@ class ConsensusResult(BaseModel):
     neutral_strategies: List[str]
     avg_position: float
     strategy_results: List[str]  # References to StrategyAnalysis IDs
+    forecast_data: Optional[ForecastData] = None  # Visualization data
     status: AnalysisStatus = AnalysisStatus.COMPLETED
     error: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)

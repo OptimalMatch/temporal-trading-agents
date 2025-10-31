@@ -8,7 +8,7 @@ from datetime import datetime
 import os
 from bson import ObjectId
 
-from models import (
+from backend.models import (
     StrategyAnalysis, ConsensusResult, ModelTraining,
     PriceForecast, User, ApiKey, StrategyType, ScheduledTask
 )
@@ -84,7 +84,12 @@ class Database:
         await self.db.scheduled_tasks.create_index("symbol")
         await self.db.scheduled_tasks.create_index("is_active")
         await self.db.scheduled_tasks.create_index("next_run")
-        await self.db.scheduled_tasks.create_index([(("is_active", 1), ("next_run", 1))])
+        await self.db.scheduled_tasks.create_index([("is_active", 1), ("next_run", 1)])
+
+        # Historical Price Data indexes
+        await self.db.historical_prices.create_index("symbol", unique=True)
+        await self.db.historical_prices.create_index("last_date")
+        await self.db.historical_prices.create_index("updated_at")
 
     # ==================== Strategy Analysis Methods ====================
 
@@ -434,3 +439,60 @@ class Database:
             del task["_id"]
             tasks.append(task)
         return tasks
+
+    # ==================== Historical Price Data Methods ====================
+
+    async def upsert_historical_prices(self, historical_data: Dict[str, Any]) -> bool:
+        """Insert or update historical price data for a symbol"""
+        try:
+            result = await self.db.historical_prices.update_one(
+                {"symbol": historical_data["symbol"]},
+                {"$set": historical_data},
+                upsert=True
+            )
+            return result.modified_count > 0 or result.upserted_id is not None
+        except Exception as e:
+            print(f"Error upserting historical prices: {e}")
+            return False
+
+    async def get_historical_prices(self, symbol: str) -> Optional[Dict]:
+        """Get historical price data for a symbol"""
+        try:
+            prices = await self.db.historical_prices.find_one({"symbol": symbol})
+            if prices:
+                del prices["_id"]
+            return prices
+        except Exception as e:
+            print(f"Error retrieving historical prices for {symbol}: {e}")
+            return None
+
+    async def get_historical_prices_range(
+        self,
+        symbol: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Optional[List[Dict]]:
+        """Get historical prices within a date range"""
+        try:
+            prices_doc = await self.get_historical_prices(symbol)
+            if not prices_doc or "prices" not in prices_doc:
+                return None
+
+            prices = prices_doc["prices"]
+
+            # Filter by date range if provided
+            if start_date or end_date:
+                filtered = []
+                for price_point in prices:
+                    price_date = price_point["date"]
+                    if start_date and price_date < start_date:
+                        continue
+                    if end_date and price_date > end_date:
+                        continue
+                    filtered.append(price_point)
+                return filtered
+
+            return prices
+        except Exception as e:
+            print(f"Error retrieving historical prices range for {symbol}: {e}")
+            return None

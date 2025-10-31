@@ -92,6 +92,8 @@ class ConnectionManager:
             "details": details or {},
             "timestamp": datetime.utcnow().isoformat()
         }
+        print(f"📡 Sending progress: task_id={task_id}, status={status}, progress={progress}%, msg={message}")
+        print(f"   Task connections: {len(self.active_connections.get(task_id, set()))}, Global: {len(self.global_connections)}")
         await self.broadcast_to_task(update, task_id)
 
 

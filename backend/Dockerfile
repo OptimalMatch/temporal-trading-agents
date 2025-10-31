@@ -25,9 +25,6 @@ COPY strategies/ /app/strategies/
 # Copy examples (for ensemble module loading)
 COPY examples/ /app/examples/
 
-# Copy temporal library if present
-COPY temporal/ /app/temporal/ 2>/dev/null || true
-
 # Set Python path
 ENV PYTHONPATH=/app:$PYTHONPATH
 

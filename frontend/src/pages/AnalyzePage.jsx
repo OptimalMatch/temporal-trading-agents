@@ -4,6 +4,7 @@ import api from '../services/api';
 import useWebSocket from '../hooks/useWebSocket';
 import ProgressIndicator from '../components/ProgressIndicator';
 import StrategyCard from '../components/StrategyCard';
+import ForecastChart from '../components/ForecastChart';
 
 const STRATEGY_OPTIONS = [
   { value: 'gradient', label: 'Forecast Gradient', description: 'Analyzes the shape of the forecast curve' },
@@ -248,7 +249,12 @@ function AnalyzePage() {
           <h2 className="text-xl font-semibold mb-6">Analysis Results</h2>
 
           {selectedStrategy === 'all' ? (
-            <StrategyCard consensus={result} />
+            <div className="space-y-6">
+              <StrategyCard consensus={result} />
+              {result.forecast_data && (
+                <ForecastChart forecastData={result.forecast_data} symbol={result.symbol} />
+              )}
+            </div>
           ) : (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">

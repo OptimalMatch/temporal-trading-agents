@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { TrendingUp, TrendingDown, Activity, Clock, AlertCircle } from 'lucide-react';
 import api from '../services/api';
 import StrategyCard from '../components/StrategyCard';
+import ForecastChart from '../components/ForecastChart';
 import ProgressIndicator from '../components/ProgressIndicator';
 import useWebSocket from '../hooks/useWebSocket';
 
@@ -195,7 +196,12 @@ function Dashboard() {
       {stats?.latest_consensus && (
         <div className="card">
           <h2 className="text-xl font-semibold mb-4">Latest Consensus Analysis</h2>
-          <StrategyCard consensus={stats.latest_consensus} />
+          <div className="space-y-6">
+            <StrategyCard consensus={stats.latest_consensus} />
+            {stats.latest_consensus.forecast_data && (
+              <ForecastChart forecastData={stats.latest_consensus.forecast_data} symbol={stats.latest_consensus.symbol} />
+            )}
+          </div>
         </div>
       )}
 
