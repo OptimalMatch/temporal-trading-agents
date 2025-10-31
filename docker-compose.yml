@@ -9,7 +9,7 @@ services:
     environment:
       MONGO_INITDB_DATABASE: temporal_trading
     ports:
-      - "27017:27017"
+      - "10751:27017"
     volumes:
       - mongodb_data:/data/db
       - mongodb_config:/data/configdb
@@ -33,7 +33,7 @@ services:
       - MONGODB_URL=mongodb://mongodb:27017
       - PYTHONUNBUFFERED=1
     ports:
-      - "8000:8000"
+      - "10750:8000"
     depends_on:
       mongodb:
         condition: service_healthy

@@ -44,7 +44,7 @@ The project includes a complete Docker setup with REST API backend, MCP server f
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
 │   MCP Server    │────▶│  Backend API     │────▶│   MongoDB       │
-│  (Port: stdio)  │     │  (Port: 8000)    │     │ (Port: 27017)   │
+│  (Port: stdio)  │     │ (Port: 10750)    │     │ (Port: 10751)   │
 └─────────────────┘     └──────────────────┘     └─────────────────┘
       AI Agents              REST API              Database Storage
 ```
@@ -70,20 +70,20 @@ docker-compose up --build
 3. Access the API:
 ```bash
 # Health check
-curl http://localhost:8000/health
+curl http://localhost:10750/health
 
 # Run gradient strategy analysis
-curl -X POST "http://localhost:8000/api/v1/analyze/gradient?symbol=BTC-USD"
+curl -X POST "http://localhost:10750/api/v1/analyze/gradient?symbol=BTC-USD"
 
 # Run comprehensive 8-strategy consensus analysis
-curl -X POST http://localhost:8000/api/v1/analyze/consensus \
+curl -X POST http://localhost:10750/api/v1/analyze/consensus \
   -H "Content-Type: application/json" \
   -d '{"symbol": "BTC-USD", "horizons": [3, 7, 14, 21]}'
 ```
 
 ### Docker Services
 
-**Backend API** (Port 8000):
+**Backend API** (Host Port 10750 → Container Port 8000):
 - Health check: `GET /health`
 - Gradient strategy: `POST /api/v1/analyze/gradient?symbol=SYMBOL`
 - Confidence strategy: `POST /api/v1/analyze/confidence?symbol=SYMBOL`
@@ -101,7 +101,7 @@ Available tools:
 - `get_consensus_history` - Get historical consensus results
 - `get_symbol_analytics` - Get comprehensive symbol analytics
 
-**MongoDB** (Port 27017):
+**MongoDB** (Host Port 10751 → Container Port 27017):
 Collections:
 - `strategy_analyses` - Individual strategy analysis results
 - `consensus_results` - Multi-strategy consensus results
@@ -119,9 +119,16 @@ cp .env.example .env
 
 Key environment variables:
 - `MONGODB_URL` - MongoDB connection string (default: `mongodb://mongodb:27017`)
+- `MONGODB_HOST_PORT` - Host port for MongoDB (default: `10751`)
 - `BACKEND_URL` - Backend API URL for MCP server (default: `http://backend:8000`)
+- `BACKEND_HOST_PORT` - Host port for Backend API (default: `10750`)
 - `DEFAULT_FORECAST_HORIZONS` - Default horizons for analysis (default: `3,7,14,21`)
 - `CORS_ORIGINS` - Allowed CORS origins (comma-separated)
+
+**Port Configuration:**
+- Backend API: Host port `10750` maps to container port `8000`
+- MongoDB: Host port `10751` maps to container port `27017`
+- Ports 10750-10780 range used to avoid conflicts with common services
 
 ### Docker Commands
 
@@ -154,12 +161,12 @@ docker-compose ps
 
 **Run Gradient Strategy:**
 ```bash
-curl -X POST "http://localhost:8000/api/v1/analyze/gradient?symbol=ETH-USD"
+curl -X POST "http://localhost:10750/api/v1/analyze/gradient?symbol=ETH-USD"
 ```
 
 **Run All 8 Strategies with Consensus:**
 ```bash
-curl -X POST http://localhost:8000/api/v1/analyze/consensus \
+curl -X POST http://localhost:10750/api/v1/analyze/consensus \
   -H "Content-Type: application/json" \
   -d '{
     "symbol": "BTC-USD",
@@ -169,12 +176,12 @@ curl -X POST http://localhost:8000/api/v1/analyze/consensus \
 
 **Get Analysis History:**
 ```bash
-curl "http://localhost:8000/api/v1/history/analyses/BTC-USD?limit=10"
+curl "http://localhost:10750/api/v1/history/analyses/BTC-USD?limit=10"
 ```
 
 **Get Symbol Analytics:**
 ```bash
-curl "http://localhost:8000/api/v1/analytics/BTC-USD"
+curl "http://localhost:10750/api/v1/analytics/BTC-USD"
 ```
 
 ### MCP Server Usage
@@ -243,15 +250,16 @@ db.strategy_analyses.aggregate([
 **Backend fails to start:**
 - Check MongoDB is healthy: `docker-compose ps`
 - View backend logs: `docker-compose logs backend`
-- Ensure port 8000 is not in use: `lsof -i :8000`
+- Ensure port 10750 is not in use: `lsof -i :10750`
 
 **MongoDB connection issues:**
 - Verify MongoDB is running: `docker-compose ps mongodb`
 - Check MongoDB logs: `docker-compose logs mongodb`
 - Wait for MongoDB health check to pass (may take 10-20 seconds on first start)
+- Ensure port 10751 is not in use: `lsof -i :10751`
 
 **MCP server issues:**
-- Ensure backend is healthy: `curl http://localhost:8000/health`
+- Ensure backend is healthy: `curl http://localhost:10750/health`
 - View MCP logs: `docker-compose logs mcp-server`
 - Check BACKEND_URL environment variable
 
