@@ -201,3 +201,64 @@ class ApiKey(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     last_used: Optional[datetime] = None
     usage_count: int = 0
+
+
+# ==================== Scheduled Tasks ====================
+
+class ScheduleFrequency(str, Enum):
+    """Scheduling frequency options"""
+    HOURLY = "hourly"
+    DAILY = "daily"
+    WEEKLY = "weekly"
+    CUSTOM = "custom"  # Cron expression
+
+
+class ScheduledTask(BaseModel):
+    """Scheduled analysis task"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    symbol: str
+    strategy_type: StrategyType
+    frequency: ScheduleFrequency
+    cron_expression: Optional[str] = None  # For CUSTOM frequency
+    horizons: List[int] = [3, 7, 14, 21]
+    is_active: bool = True
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    last_run: Optional[datetime] = None
+    next_run: Optional[datetime] = None
+    run_count: int = 0
+    metadata: Dict[str, Any] = {}
+
+
+class ScheduledTaskCreate(BaseModel):
+    """Request to create a scheduled task"""
+    name: str
+    symbol: str
+    strategy_type: StrategyType
+    frequency: ScheduleFrequency
+    cron_expression: Optional[str] = None
+    horizons: Optional[List[int]] = [3, 7, 14, 21]
+
+
+class ScheduledTaskUpdate(BaseModel):
+    """Request to update a scheduled task"""
+    name: Optional[str] = None
+    is_active: Optional[bool] = None
+    frequency: Optional[ScheduleFrequency] = None
+    cron_expression: Optional[str] = None
+    horizons: Optional[List[int]] = None
+
+
+# ==================== WebSocket Models ====================
+
+class ProgressUpdate(BaseModel):
+    """Progress update for WebSocket streaming"""
+    task_id: str
+    symbol: str
+    strategy_type: Optional[str] = None
+    status: str  # training, analyzing, completed, error
+    progress: float  # 0-100
+    message: str
+    details: Optional[Dict[str, Any]] = None
+    timestamp: datetime = Field(default_factory=datetime.utcnow)

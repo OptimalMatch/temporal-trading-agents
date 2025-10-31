@@ -10,7 +10,7 @@ from bson import ObjectId
 
 from models import (
     StrategyAnalysis, ConsensusResult, ModelTraining,
-    PriceForecast, User, ApiKey, StrategyType
+    PriceForecast, User, ApiKey, StrategyType, ScheduledTask
 )
 
 
@@ -79,6 +79,12 @@ class Database:
         # API Key indexes (for future auth)
         await self.db.api_keys.create_index("key", unique=True)
         await self.db.api_keys.create_index("user_id")
+
+        # Scheduled Tasks indexes
+        await self.db.scheduled_tasks.create_index("symbol")
+        await self.db.scheduled_tasks.create_index("is_active")
+        await self.db.scheduled_tasks.create_index("next_run")
+        await self.db.scheduled_tasks.create_index([(("is_active", 1), ("next_run", 1))])
 
     # ==================== Strategy Analysis Methods ====================
 
@@ -345,3 +351,86 @@ class Database:
                 "consensus_count": 0,
                 "latest_consensus": None
             }
+
+    # ==================== Scheduled Tasks Methods ====================
+
+    async def create_scheduled_task(self, task: ScheduledTask) -> str:
+        """Create a new scheduled task"""
+        task_dict = task.dict()
+        result = await self.db.scheduled_tasks.insert_one(task_dict)
+        return str(result.inserted_id)
+
+    async def get_scheduled_task(self, task_id: str) -> Optional[Dict]:
+        """Get a scheduled task by ID"""
+        try:
+            query = {"id": task_id}
+            task = await self.db.scheduled_tasks.find_one(query)
+            if task:
+                del task["_id"]
+            return task
+        except Exception as e:
+            print(f"Error retrieving scheduled task {task_id}: {e}")
+            return None
+
+    async def get_scheduled_tasks(
+        self,
+        symbol: Optional[str] = None,
+        is_active: Optional[bool] = None,
+        limit: int = 100
+    ) -> List[Dict]:
+        """Get scheduled tasks with optional filters"""
+        query = {}
+        if symbol:
+            query["symbol"] = symbol
+        if is_active is not None:
+            query["is_active"] = is_active
+
+        cursor = self.db.scheduled_tasks.find(query).sort("created_at", -1).limit(limit)
+        tasks = []
+        async for task in cursor:
+            del task["_id"]
+            tasks.append(task)
+        return tasks
+
+    async def update_scheduled_task(self, task_id: str, updates: Dict[str, Any]) -> bool:
+        """Update a scheduled task"""
+        updates["updated_at"] = datetime.utcnow()
+        result = await self.db.scheduled_tasks.update_one(
+            {"id": task_id},
+            {"$set": updates}
+        )
+        return result.modified_count > 0
+
+    async def delete_scheduled_task(self, task_id: str) -> bool:
+        """Delete a scheduled task"""
+        result = await self.db.scheduled_tasks.delete_one({"id": task_id})
+        return result.deleted_count > 0
+
+    async def update_task_run_time(self, task_id: str, next_run: datetime) -> bool:
+        """Update task run time and increment run count"""
+        result = await self.db.scheduled_tasks.update_one(
+            {"id": task_id},
+            {
+                "$set": {
+                    "last_run": datetime.utcnow(),
+                    "next_run": next_run,
+                    "updated_at": datetime.utcnow()
+                },
+                "$inc": {"run_count": 1}
+            }
+        )
+        return result.modified_count > 0
+
+    async def get_due_tasks(self) -> List[Dict]:
+        """Get tasks that are due to run"""
+        now = datetime.utcnow()
+        query = {
+            "is_active": True,
+            "next_run": {"$lte": now}
+        }
+        cursor = self.db.scheduled_tasks.find(query)
+        tasks = []
+        async for task in cursor:
+            del task["_id"]
+            tasks.append(task)
+        return tasks
