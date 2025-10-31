@@ -1,0 +1,102 @@
+/**
+ * API service for interacting with the backend
+ */
+
+const API_BASE = '/api/v1';
+
+class APIService {
+  async request(endpoint, options = {}) {
+    const url = `${API_BASE}${endpoint}`;
+    const config = {
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+      ...options,
+    };
+
+    try {
+      const response = await fetch(url, config);
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: response.statusText }));
+        throw new Error(error.detail || 'Request failed');
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error(`API Error [${endpoint}]:`, error);
+      throw error;
+    }
+  }
+
+  // Health check
+  async getHealth() {
+    return this.request('/health');
+  }
+
+  // Strategy Analysis
+  async analyzeGradient(symbol) {
+    return this.request(`/analyze/gradient?symbol=${symbol}`, { method: 'POST' });
+  }
+
+  async analyzeConfidence(symbol) {
+    return this.request(`/analyze/confidence?symbol=${symbol}`, { method: 'POST' });
+  }
+
+  async analyzeConsensus(symbol, horizons = [3, 7, 14, 21]) {
+    return this.request('/analyze/consensus', {
+      method: 'POST',
+      body: JSON.stringify({ symbol, horizons }),
+    });
+  }
+
+  // History
+  async getAnalysisHistory(symbol, strategyType = null, limit = 100) {
+    const params = new URLSearchParams({ limit: limit.toString() });
+    if (strategyType) params.append('strategy_type', strategyType);
+    return this.request(`/history/analyses/${symbol}?${params}`);
+  }
+
+  async getConsensusHistory(symbol, limit = 100) {
+    return this.request(`/history/consensus/${symbol}?limit=${limit}`);
+  }
+
+  // Analytics
+  async getSymbolAnalytics(symbol) {
+    return this.request(`/analytics/${symbol}`);
+  }
+
+  // Scheduled Tasks
+  async getScheduledTasks(symbol = null, isActive = null) {
+    const params = new URLSearchParams();
+    if (symbol) params.append('symbol', symbol);
+    if (isActive !== null) params.append('is_active', isActive.toString());
+    const query = params.toString();
+    return this.request(`/schedule${query ? '?' + query : ''}`);
+  }
+
+  async getScheduledTask(taskId) {
+    return this.request(`/schedule/${taskId}`);
+  }
+
+  async createScheduledTask(task) {
+    return this.request('/schedule', {
+      method: 'POST',
+      body: JSON.stringify(task),
+    });
+  }
+
+  async updateScheduledTask(taskId, updates) {
+    return this.request(`/schedule/${taskId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updates),
+    });
+  }
+
+  async deleteScheduledTask(taskId) {
+    return this.request(`/schedule/${taskId}`, { method: 'DELETE' });
+  }
+}
+
+export default new APIService();

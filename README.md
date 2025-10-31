@@ -37,22 +37,38 @@ pip install git+https://github.com/OptimalMatch/temporal.git
 
 ## Docker Deployment
 
-The project includes a complete Docker setup with REST API backend, MCP server for AI agent access, and MongoDB database.
+The project includes a complete Docker setup with React dashboard, REST API backend, MCP server for AI agent access, and MongoDB database with real-time WebSocket updates.
 
 ### Architecture
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│   MCP Server    │────▶│  Backend API     │────▶│   MongoDB       │
-│  (Port: stdio)  │     │ (Port: 10750)    │     │ (Port: 10751)   │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
-      AI Agents              REST API              Database Storage
+┌─────────────────────┐
+│  React Dashboard    │ (Port: 10752)
+│  Real-time UI       │
+└──────────┬──────────┘
+           │ HTTP/WebSocket
+           ▼
+┌──────────────────────┐     ┌─────────────────────┐
+│   Backend API        │────▶│   MongoDB           │
+│   (Port: 10750)      │     │   (Port: 10751)     │
+│   - REST Endpoints   │     │   - Analyses        │
+│   - WebSockets       │     │   - Consensus       │
+│   - Scheduler        │     │   - Schedules       │
+└──────────┬───────────┘     └─────────────────────┘
+           │
+           ▼
+┌──────────────────────┐
+│   MCP Server         │
+│   (Port: stdio)      │
+│   AI Agent Access    │
+└──────────────────────┘
 ```
 
 **Services:**
-- **Backend API**: FastAPI REST endpoints for all 8 trading strategies
-- **MCP Server**: Model Context Protocol server for AI agent integration
-- **MongoDB**: Database for storing analyses, consensus results, and forecasts
+- **React Dashboard** (Port 10752): Modern web UI with real-time updates, charts, and scheduler management
+- **Backend API** (Port 10750): FastAPI REST endpoints, WebSocket streaming, and task scheduling
+- **MCP Server**: Model Context Protocol server for AI agent integration (Claude, etc.)
+- **MongoDB** (Port 10751): Database for storing analyses, consensus results, forecasts, and scheduled tasks
 
 ### Quick Start with Docker
 
@@ -67,7 +83,20 @@ cd temporal-trading-agents
 docker-compose up --build
 ```
 
-3. Access the API:
+3. Access the Dashboard:
+Open your browser and navigate to:
+```
+http://localhost:10752
+```
+
+The dashboard provides:
+- **Real-time** strategy analysis with WebSocket updates
+- **Interactive** charts and visualizations
+- **Historical** analysis browser with filtering
+- **Automated** scheduling for recurring analyses
+- **Live** progress indicators during model training
+
+4. Access the API (optional):
 ```bash
 # Health check
 curl http://localhost:10750/health
@@ -107,8 +136,58 @@ Collections:
 - `consensus_results` - Multi-strategy consensus results
 - `model_trainings` - Model training records
 - `price_forecasts` - Forecast data
+- `scheduled_tasks` - Automated analysis schedules
 - `users` - User accounts (future)
 - `api_keys` - API keys (future)
+
+**Frontend Dashboard** (Host Port 10752 → Container Port 80):
+Built with React + Vite + Tailwind CSS, features:
+- **Dashboard Page**: Real-time overview with stats, latest analyses, and live progress
+- **Analyze Page**: Trigger new strategy analyses with symbol selection and horizon configuration
+- **History Page**: Browse past analyses with filtering by symbol and strategy type
+- **Scheduler Page**: Create and manage automated analysis tasks (hourly, daily, weekly, custom cron)
+- **WebSocket Integration**: Real-time progress updates during model training and analysis
+- **Responsive Design**: Works on desktop, tablet, and mobile devices
+
+### Dashboard Features
+
+**Real-Time Progress Tracking:**
+- Live WebSocket connection shows training and analysis progress
+- Progress bars with percentage completion
+- Status indicators (starting, training, analyzing, completed, error)
+- Detailed messages and metrics during execution
+- Automatic reconnection on disconnect
+
+**Strategy Analysis:**
+- Run individual strategies (Gradient, Confidence, etc.)
+- Run all 8 strategies with consensus calculation
+- Configure forecast horizons (3, 7, 14, 21, 30 days)
+- Popular symbols quick-select (BTC-USD, ETH-USD, AAPL, TSLA, etc.)
+- View detailed signal, position size, confidence, and rationale
+- Interactive consensus breakdown with bullish/bearish/neutral counts
+
+**Historical Analysis:**
+- View past analyses with filtering
+- Filter by symbol and strategy type
+- Separate views for individual analyses and consensus results
+- Date-sorted results with timestamps
+- Signal badges (BUY, SELL, HOLD) color-coded
+
+**Automated Scheduling:**
+- Create recurring analysis tasks
+- Frequency options: Hourly, Daily, Weekly, Custom (cron expressions)
+- Pause/resume scheduled tasks
+- Track run history and next run time
+- Delete tasks with confirmation
+- View all active and inactive schedules
+
+**Analytics Dashboard:**
+- Total analyses count
+- Latest consensus results
+- Strategy breakdown charts
+- Recent analysis timeline
+- Connection status indicator
+- Symbol-specific metrics
 
 ### Environment Configuration
 
@@ -126,6 +205,7 @@ Key environment variables:
 - `CORS_ORIGINS` - Allowed CORS origins (comma-separated)
 
 **Port Configuration:**
+- Frontend Dashboard: Host port `10752` maps to container port `80`
 - Backend API: Host port `10750` maps to container port `8000`
 - MongoDB: Host port `10751` maps to container port `27017`
 - Ports 10750-10780 range used to avoid conflicts with common services
