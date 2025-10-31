@@ -142,6 +142,10 @@ def analyze_volatility_position_sizing(stats_14day: Dict, current_price: float) 
     # Calculate risk amount as percentage of position
     risk_per_position = abs((stop_loss - entry_price) / entry_price) * 100
 
+    # Extract confidence as a single float value (use prediction_cv as the confidence metric)
+    # Lower CV = higher confidence
+    confidence_value = 100.0 - min(confidence.get('prediction_cv', 0), 100.0)
+
     strategy_data = {
         'signal': signal,
         'volatility_level': volatility_level,
@@ -161,7 +165,8 @@ def analyze_volatility_position_sizing(stats_14day: Dict, current_price: float) 
         'avg_loss': avg_loss,
         'current_price': current_price,
         'metrics': metrics,
-        'confidence': confidence,
+        'confidence': confidence_value,  # Single float value instead of dict
+        'confidence_metrics': confidence,  # Full confidence dict in metadata
     }
 
     return strategy_data
