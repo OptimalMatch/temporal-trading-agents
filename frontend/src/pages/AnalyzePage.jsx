@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Play, Loader } from 'lucide-react';
 import api from '../services/api';
 import useWebSocket from '../hooks/useWebSocket';
@@ -28,15 +28,41 @@ function AnalyzePage() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const [analysisId, setAnalysisId] = useState(null);
 
-  const { connected, progress } = useWebSocket();
+  const { connected, progress, subscribe } = useWebSocket(analysisId);
 
   const latestProgress = progress[progress.length - 1];
+
+  // Listen for analysis completion via WebSocket
+  useEffect(() => {
+    if (!analysisId) return;
+
+    const unsubscribe = subscribe('status:completed', async (data) => {
+      if (data.task_id === analysisId) {
+        console.log('Analysis completed via WebSocket:', data);
+
+        // Fetch final results
+        try {
+          const finalResult = await api.getAnalysisStatus(analysisId);
+          setResult(finalResult);
+          setLoading(false);
+        } catch (err) {
+          console.error('Failed to fetch final results:', err);
+          setError(err.message);
+          setLoading(false);
+        }
+      }
+    });
+
+    return () => unsubscribe?.();
+  }, [analysisId, subscribe]);
 
   async function handleAnalyze() {
     setLoading(true);
     setError(null);
     setResult(null);
+    setAnalysisId(null);
 
     try {
       let response;
@@ -51,11 +77,21 @@ function AnalyzePage() {
         throw new Error('Selected strategy not yet implemented in API');
       }
 
-      setResult(response);
+      // Check if response is async (contains analysis_id)
+      if (response.analysis_id && response.status === 'pending') {
+        // Async operation - store analysis_id for WebSocket tracking
+        console.log('Analysis started:', response.analysis_id);
+        setAnalysisId(response.analysis_id);
+        setLoading(false); // Button returns to normal immediately
+        // Progress will be shown via WebSocket updates in ProgressIndicator
+      } else {
+        // Sync operation - display results immediately
+        setResult(response);
+        setLoading(false);
+      }
     } catch (err) {
       setError(err.message);
       console.error('Analysis failed:', err);
-    } finally {
       setLoading(false);
     }
   }

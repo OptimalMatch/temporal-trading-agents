@@ -16,16 +16,18 @@ import time
 from datetime import datetime, timedelta
 import uuid
 import asyncio
+from concurrent.futures import ProcessPoolExecutor
 
-from models import (
+from backend.models import (
     StrategyAnalysisRequest, ConsensusRequest, StrategyResult,
     ConsensusAnalysis, HealthCheck, StrategyType, StrategyAnalysis,
     ConsensusResult, AnalysisStatus, StrategySignal, ForecastStats,
-    ScheduledTask, ScheduledTaskCreate, ScheduledTaskUpdate, ScheduleFrequency
+    ScheduledTask, ScheduledTaskCreate, ScheduledTaskUpdate, ScheduleFrequency,
+    AnalysisStarted
 )
-from database import Database
-from websocket_manager import manager as ws_manager
-from scheduler import get_scheduler
+from backend.database import Database
+from backend.websocket_manager import manager as ws_manager
+from backend.scheduler import get_scheduler
 
 # Import strategies
 from strategies.strategy_utils import load_ensemble_module, train_ensemble, get_default_ensemble_configs
@@ -60,16 +62,24 @@ db = Database()
 # Scheduler instance
 scheduler = None
 
+# Process pool executor for CPU-intensive tasks
+executor = None
+
 
 # ==================== Lifecycle Events ====================
 
 @app.on_event("startup")
 async def startup_event():
     """Connect to database and start scheduler on startup"""
-    global scheduler
+    global scheduler, executor
 
     await db.connect()
     print("🚀 API: Server started successfully")
+
+    # Initialize process pool executor for CPU-intensive tasks
+    # Using max 4 workers to avoid overloading the system
+    executor = ProcessPoolExecutor(max_workers=4)
+    print("⚡ API: ProcessPoolExecutor initialized with 4 workers")
 
     # Initialize and start scheduler
     scheduler = get_scheduler(db)
@@ -81,11 +91,15 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Disconnect from database and shutdown scheduler"""
-    global scheduler
+    global scheduler, executor
 
     if scheduler:
         scheduler.shutdown()
         print("📅 API: Scheduler stopped")
+
+    if executor:
+        executor.shutdown(wait=True)
+        print("⚡ API: ProcessPoolExecutor shutdown")
 
     await db.disconnect()
     print("👋 API: Server shutdown")
@@ -100,8 +114,40 @@ async def get_database():
 
 # ==================== Utility Functions ====================
 
+# Wrapper functions for ProcessPoolExecutor (must be picklable)
+def _train_ensemble_worker(symbol: str, horizon: int, name: str, ensemble_path: str = "examples/crypto_ensemble_forecast.py"):
+    """Worker function for training ensemble in separate process"""
+    ensemble = load_ensemble_module(ensemble_path)
+    configs = get_default_ensemble_configs(horizon)
+    return train_ensemble(symbol, horizon, configs, name, ensemble)
+
+def _train_multiple_timeframes_worker(symbol: str, horizons: list, ensemble_path: str = "examples/crypto_ensemble_forecast.py"):
+    """Worker function for training multiple timeframes in separate process"""
+    ensemble = load_ensemble_module(ensemble_path)
+    return train_multiple_timeframes(symbol, ensemble, horizons)
+
+def convert_numpy_to_native(obj):
+    """Recursively convert numpy types to native Python types"""
+    import numpy as np
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, dict):
+        return {key: convert_numpy_to_native(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy_to_native(item) for item in obj]
+    elif isinstance(obj, tuple):
+        return tuple(convert_numpy_to_native(item) for item in obj)
+    return obj
+
 def convert_strategy_result_to_model(strategy_type: str, result: dict, symbol: str, current_price: float, execution_time_ms: int) -> StrategyAnalysis:
     """Convert strategy result dict to StrategyAnalysis model"""
+    # Convert all numpy types to native Python types
+    result = convert_numpy_to_native(result)
+
     signal = StrategySignal(
         signal=result.get('signal', 'UNKNOWN'),
         position_size_pct=result.get('position_size_pct', 0),
@@ -147,100 +193,165 @@ async def health_check(database: Database = Depends(get_database)):
     )
 
 
-# ==================== Strategy Endpoints ====================
+# ==================== Background Task Functions ====================
 
-@app.post("/api/v1/analyze/gradient", response_model=StrategyResult)
-async def analyze_gradient(
-    symbol: str,
-    database: Database = Depends(get_database)
-):
-    """Run forecast gradient strategy analysis"""
+async def run_gradient_analysis_background(analysis_id: str, symbol: str, database: Database):
+    """Background task to run gradient analysis"""
     try:
+        # Send WebSocket update: Starting
+        await ws_manager.send_progress(
+            task_id=analysis_id,
+            symbol=symbol,
+            strategy_type="gradient",
+            status="running",
+            progress=0,
+            message="Starting gradient analysis..."
+        )
+
+        # Update status to RUNNING
+        await database.db.strategy_analyses.update_one(
+            {"id": analysis_id},
+            {"$set": {"status": AnalysisStatus.RUNNING.value}}
+        )
+
         start_time = time.time()
 
-        # Load ensemble and train
-        ensemble = load_ensemble_module("examples/crypto_ensemble_forecast.py")
-        configs = get_default_ensemble_configs(14)
-        stats, df = train_ensemble(symbol, 14, configs, "14-DAY", ensemble)
+        # Send progress: Loading data
+        await ws_manager.send_progress(
+            task_id=analysis_id,
+            symbol=symbol,
+            strategy_type="gradient",
+            status="running",
+            progress=10,
+            message="Loading market data..."
+        )
+
+        # Send progress: Training models
+        await ws_manager.send_progress(
+            task_id=analysis_id,
+            symbol=symbol,
+            strategy_type="gradient",
+            status="running",
+            progress=30,
+            message="Training ensemble models..."
+        )
+
+        # Run CPU-intensive training in process pool to avoid blocking event loop
+        loop = asyncio.get_event_loop()
+        stats, df = await loop.run_in_executor(
+            executor,
+            _train_ensemble_worker,
+            symbol, 14, "14-DAY"
+        )
         current_price = df['Close'].iloc[-1]
+
+        # Send progress: Running strategy
+        await ws_manager.send_progress(
+            task_id=analysis_id,
+            symbol=symbol,
+            strategy_type="gradient",
+            status="running",
+            progress=80,
+            message="Analyzing forecast gradient..."
+        )
 
         # Run gradient strategy
         result = analyze_gradient_strategy(stats, current_price)
-        result['forecast_median'] = stats['median']
+        result['forecast_median'] = stats['median'].tolist() if hasattr(stats['median'], 'tolist') else list(stats['median'])
 
         execution_time_ms = int((time.time() - start_time) * 1000)
 
-        # Store in database
+        # Convert and store results
         analysis = convert_strategy_result_to_model('gradient', result, symbol, current_price, execution_time_ms)
-        await database.create_strategy_analysis(analysis)
+        analysis.id = analysis_id
+        analysis.status = AnalysisStatus.COMPLETED
 
-        return StrategyResult(
-            strategy_type=StrategyType.GRADIENT,
+        # Update database with completed analysis
+        await database.db.strategy_analyses.update_one(
+            {"id": analysis_id},
+            {"$set": analysis.dict()}
+        )
+
+        # Send WebSocket update: Completed
+        await ws_manager.send_progress(
+            task_id=analysis_id,
             symbol=symbol,
-            current_price=current_price,
-            signal=analysis.signal,
-            forecast_stats=analysis.forecast_stats,
-            execution_time_ms=execution_time_ms
+            strategy_type="gradient",
+            status="completed",
+            progress=100,
+            message=f"Analysis completed in {execution_time_ms}ms",
+            details={
+                "signal": result.get('signal'),
+                "current_price": current_price
+            }
         )
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Strategy analysis failed: {str(e)}")
-
-
-@app.post("/api/v1/analyze/confidence", response_model=StrategyResult)
-async def analyze_confidence(
-    symbol: str,
-    database: Database = Depends(get_database)
-):
-    """Run confidence-weighted strategy analysis"""
-    try:
-        start_time = time.time()
-
-        ensemble = load_ensemble_module("examples/crypto_ensemble_forecast.py")
-        configs = get_default_ensemble_configs(14)
-        stats, df = train_ensemble(symbol, 14, configs, "14-DAY", ensemble)
-        current_price = df['Close'].iloc[-1]
-
-        result = analyze_confidence_weighted_strategy(stats, current_price)
-        execution_time_ms = int((time.time() - start_time) * 1000)
-
-        analysis = convert_strategy_result_to_model('confidence', result, symbol, current_price, execution_time_ms)
-        await database.create_strategy_analysis(analysis)
-
-        return StrategyResult(
-            strategy_type=StrategyType.CONFIDENCE,
-            symbol=symbol,
-            current_price=current_price,
-            signal=analysis.signal,
-            forecast_stats=analysis.forecast_stats,
-            execution_time_ms=execution_time_ms
+        # Update status to FAILED
+        await database.db.strategy_analyses.update_one(
+            {"id": analysis_id},
+            {"$set": {
+                "status": AnalysisStatus.FAILED.value,
+                "error": str(e)
+            }}
         )
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Strategy analysis failed: {str(e)}")
+        # Send WebSocket update: Failed
+        await ws_manager.send_progress(
+            task_id=analysis_id,
+            symbol=symbol,
+            strategy_type="gradient",
+            status="failed",
+            progress=0,
+            message=f"Analysis failed: {str(e)}"
+        )
+
+        print(f"❌ Background analysis failed for {analysis_id}: {e}")
 
 
-@app.post("/api/v1/analyze/consensus", response_model=ConsensusAnalysis)
-async def analyze_consensus(
-    request: ConsensusRequest,
-    database: Database = Depends(get_database)
-):
-    """Run all 8 strategies and return consensus analysis"""
+async def run_consensus_analysis_background(consensus_id: str, request: ConsensusRequest, database: Database):
+    """Background task to run consensus analysis"""
     try:
+        # Send WebSocket update: Starting
+        await ws_manager.send_progress(
+            task_id=consensus_id,
+            symbol=request.symbol,
+            strategy_type="consensus",
+            status="running",
+            progress=0,
+            message="Starting consensus analysis..."
+        )
+
+        # Update status to RUNNING
+        await database.db.consensus_results.update_one(
+            {"id": consensus_id},
+            {"$set": {"status": AnalysisStatus.RUNNING.value}}
+        )
+
         start_time = time.time()
 
-        # Load ensemble
-        ensemble = load_ensemble_module("examples/crypto_ensemble_forecast.py")
-
-        # Train 14-day ensemble
-        configs = get_default_ensemble_configs(14)
-        stats, df = train_ensemble(request.symbol, 14, configs, "14-DAY", ensemble)
+        # Train 14-day ensemble - run in process pool to avoid blocking event loop
+        loop = asyncio.get_event_loop()
+        stats, df = await loop.run_in_executor(
+            executor,
+            _train_ensemble_worker,
+            request.symbol, 14, "14-DAY"
+        )
         current_price = df['Close'].iloc[-1]
 
         results = {}
         strategy_ids = []
 
-        # Run all 8 strategies
+        # Run all 8 strategies with progress updates
+        # Strategy 1: Gradient (0% -> 12%)
+        await ws_manager.send_progress(
+            task_id=consensus_id,
+            symbol=request.symbol,
+            strategy_type="consensus",
+            status="running",
+            progress=0,
+            message="Running Forecast Gradient strategy..."
+        )
         try:
             result = analyze_gradient_strategy(stats, current_price)
             analysis = convert_strategy_result_to_model('gradient', result, request.symbol, current_price, 0)
@@ -251,6 +362,15 @@ async def analyze_consensus(
             print(f"Gradient strategy failed: {e}")
             results['Forecast Gradient'] = {'signal': 'ERROR', 'position_size_pct': 0}
 
+        # Strategy 2: Confidence-Weighted (12% -> 25%)
+        await ws_manager.send_progress(
+            task_id=consensus_id,
+            symbol=request.symbol,
+            strategy_type="consensus",
+            status="running",
+            progress=12,
+            message="Running Confidence-Weighted strategy..."
+        )
         try:
             result = analyze_confidence_weighted_strategy(stats, current_price)
             analysis = convert_strategy_result_to_model('confidence', result, request.symbol, current_price, 0)
@@ -261,8 +381,22 @@ async def analyze_consensus(
             print(f"Confidence strategy failed: {e}")
             results['Confidence-Weighted'] = {'signal': 'ERROR', 'position_size_pct': 0}
 
+        # Strategy 3: Multi-Timeframe (25% -> 37%)
+        await ws_manager.send_progress(
+            task_id=consensus_id,
+            symbol=request.symbol,
+            strategy_type="consensus",
+            status="running",
+            progress=25,
+            message="Running Multi-Timeframe strategy..."
+        )
         try:
-            timeframe_data = train_multiple_timeframes(request.symbol, ensemble, request.horizons)
+            # Run in process pool to avoid blocking
+            timeframe_data = await loop.run_in_executor(
+                executor,
+                _train_multiple_timeframes_worker,
+                request.symbol, request.horizons
+            )
             result = analyze_multi_timeframe_strategy(timeframe_data, current_price)
             analysis = convert_strategy_result_to_model('timeframe', result, request.symbol, current_price, 0)
             analysis_id = await database.create_strategy_analysis(analysis)
@@ -272,6 +406,15 @@ async def analyze_consensus(
             print(f"Timeframe strategy failed: {e}")
             results['Multi-Timeframe'] = {'signal': 'ERROR', 'position_size_pct': 0}
 
+        # Strategy 4: Volatility Sizing (37% -> 50%)
+        await ws_manager.send_progress(
+            task_id=consensus_id,
+            symbol=request.symbol,
+            strategy_type="consensus",
+            status="running",
+            progress=37,
+            message="Running Volatility Sizing strategy..."
+        )
         try:
             result = analyze_volatility_position_sizing(stats, current_price)
             analysis = convert_strategy_result_to_model('volatility', result, request.symbol, current_price, 0)
@@ -282,6 +425,15 @@ async def analyze_consensus(
             print(f"Volatility strategy failed: {e}")
             results['Volatility Sizing'] = {'signal': 'ERROR', 'position_size_pct': 0}
 
+        # Strategy 5: Mean Reversion (50% -> 62%)
+        await ws_manager.send_progress(
+            task_id=consensus_id,
+            symbol=request.symbol,
+            strategy_type="consensus",
+            status="running",
+            progress=50,
+            message="Running Mean Reversion strategy..."
+        )
         try:
             result = analyze_mean_reversion_strategy(stats, df, current_price)
             analysis = convert_strategy_result_to_model('mean_reversion', result, request.symbol, current_price, 0)
@@ -292,6 +444,15 @@ async def analyze_consensus(
             print(f"Mean reversion strategy failed: {e}")
             results['Mean Reversion'] = {'signal': 'ERROR', 'position_size_pct': 0}
 
+        # Strategy 6: Acceleration (62% -> 75%)
+        await ws_manager.send_progress(
+            task_id=consensus_id,
+            symbol=request.symbol,
+            strategy_type="consensus",
+            status="running",
+            progress=62,
+            message="Running Acceleration strategy..."
+        )
         try:
             result = analyze_acceleration_strategy(stats, current_price)
             analysis = convert_strategy_result_to_model('acceleration', result, request.symbol, current_price, 0)
@@ -302,6 +463,15 @@ async def analyze_consensus(
             print(f"Acceleration strategy failed: {e}")
             results['Acceleration'] = {'signal': 'ERROR', 'position_size_pct': 0}
 
+        # Strategy 7: Swing Trading (75% -> 87%)
+        await ws_manager.send_progress(
+            task_id=consensus_id,
+            symbol=request.symbol,
+            strategy_type="consensus",
+            status="running",
+            progress=75,
+            message="Running Swing Trading strategy..."
+        )
         try:
             result = analyze_swing_trading_strategy(stats, current_price)
             analysis = convert_strategy_result_to_model('swing', result, request.symbol, current_price, 0)
@@ -312,6 +482,15 @@ async def analyze_consensus(
             print(f"Swing strategy failed: {e}")
             results['Swing Trading'] = {'signal': 'ERROR', 'position_size_pct': 0}
 
+        # Strategy 8: Risk-Adjusted (87% -> 100%)
+        await ws_manager.send_progress(
+            task_id=consensus_id,
+            symbol=request.symbol,
+            strategy_type="consensus",
+            status="running",
+            progress=87,
+            message="Running Risk-Adjusted strategy..."
+        )
         try:
             result = analyze_risk_adjusted_strategy(stats, current_price)
             analysis = convert_strategy_result_to_model('risk_adjusted', result, request.symbol, current_price, 0)
@@ -370,53 +549,205 @@ async def analyze_consensus(
                            if 'position_size_pct' in results[name] and results[name]['position_size_pct'] > 0]
         avg_position = sum(bullish_positions) / len(bullish_positions) if bullish_positions else 0
 
-        # Convert results to StrategySignal models
-        strategy_signals = {}
-        for name, data in results.items():
-            strategy_signals[name] = StrategySignal(
-                signal=data.get('signal', 'UNKNOWN'),
-                position_size_pct=data.get('position_size_pct', 0),
-                confidence=data.get('confidence'),
-                target_price=data.get('target_price'),
-                stop_loss=data.get('stop_loss')
-            )
+        execution_time_ms = int((time.time() - start_time) * 1000)
 
-        # Store consensus in database
-        consensus_result = ConsensusResult(
-            symbol=request.symbol,
-            current_price=current_price,
-            consensus=consensus,
-            strength=strength,
-            bullish_count=bullish_count,
-            bearish_count=bearish_count,
-            neutral_count=len(neutral_strategies),
-            total_count=total,
-            bullish_strategies=bullish_strategies,
-            bearish_strategies=bearish_strategies,
-            neutral_strategies=neutral_strategies,
-            avg_position=avg_position,
-            strategy_results=strategy_ids
+        # Update consensus result in database
+        await database.db.consensus_results.update_one(
+            {"id": consensus_id},
+            {"$set": {
+                "current_price": current_price,
+                "consensus": consensus,
+                "strength": strength,
+                "bullish_count": bullish_count,
+                "bearish_count": bearish_count,
+                "neutral_count": len(neutral_strategies),
+                "total_count": total,
+                "bullish_strategies": bullish_strategies,
+                "bearish_strategies": bearish_strategies,
+                "neutral_strategies": neutral_strategies,
+                "avg_position": avg_position,
+                "strategy_results": strategy_ids,
+                "status": AnalysisStatus.COMPLETED.value,
+                "execution_time_ms": execution_time_ms
+            }}
         )
-        await database.create_consensus_result(consensus_result)
 
-        return ConsensusAnalysis(
+        # Send WebSocket update: Completed
+        await ws_manager.send_progress(
+            task_id=consensus_id,
             symbol=request.symbol,
-            current_price=current_price,
-            consensus=consensus,
-            strength=strength,
-            bullish_count=bullish_count,
-            bearish_count=bearish_count,
-            neutral_count=len(neutral_strategies),
-            total_count=total,
-            bullish_strategies=bullish_strategies,
-            bearish_strategies=bearish_strategies,
-            neutral_strategies=neutral_strategies,
-            avg_position=avg_position,
-            strategies=strategy_signals
+            strategy_type="consensus",
+            status="completed",
+            progress=100,
+            message=f"Consensus analysis completed in {execution_time_ms}ms",
+            details={
+                "consensus": consensus,
+                "strength": strength,
+                "bullish_count": bullish_count,
+                "bearish_count": bearish_count,
+                "current_price": current_price
+            }
         )
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Consensus analysis failed: {str(e)}")
+        # Update status to FAILED
+        await database.db.consensus_results.update_one(
+            {"id": consensus_id},
+            {"$set": {
+                "status": AnalysisStatus.FAILED.value,
+                "error": str(e)
+            }}
+        )
+
+        # Send WebSocket update: Failed
+        await ws_manager.send_progress(
+            task_id=consensus_id,
+            symbol=request.symbol,
+            strategy_type="consensus",
+            status="failed",
+            progress=0,
+            message=f"Consensus analysis failed: {str(e)}"
+        )
+
+        print(f"❌ Background consensus analysis failed for {consensus_id}: {e}")
+
+
+# ==================== Strategy Endpoints ====================
+
+@app.post("/api/v1/analyze/gradient", response_model=AnalysisStarted)
+async def analyze_gradient(
+    symbol: str,
+    background_tasks: BackgroundTasks,
+    database: Database = Depends(get_database)
+):
+    """Start forecast gradient strategy analysis (async)"""
+    try:
+        # Create pending analysis record
+        analysis_id = str(uuid.uuid4())
+        pending_analysis = StrategyAnalysis(
+            id=analysis_id,
+            symbol=symbol,
+            strategy_type=StrategyType.GRADIENT,
+            current_price=0.0,  # Will be updated when analysis runs
+            signal=StrategySignal(signal="PENDING", position_size_pct=0),
+            status=AnalysisStatus.PENDING
+        )
+
+        # Store in database
+        await database.create_strategy_analysis(pending_analysis)
+
+        # Add to background tasks
+        background_tasks.add_task(run_gradient_analysis_background, analysis_id, symbol, database)
+
+        return AnalysisStarted(
+            analysis_id=analysis_id,
+            symbol=symbol,
+            strategy_type=StrategyType.GRADIENT,
+            status=AnalysisStatus.PENDING
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start analysis: {str(e)}")
+
+
+@app.post("/api/v1/analyze/confidence", response_model=StrategyResult)
+async def analyze_confidence(
+    symbol: str,
+    database: Database = Depends(get_database)
+):
+    """Run confidence-weighted strategy analysis"""
+    try:
+        start_time = time.time()
+
+        ensemble = load_ensemble_module("examples/crypto_ensemble_forecast.py")
+        configs = get_default_ensemble_configs(14)
+        stats, df = train_ensemble(symbol, 14, configs, "14-DAY", ensemble)
+        current_price = df['Close'].iloc[-1]
+
+        result = analyze_confidence_weighted_strategy(stats, current_price)
+        execution_time_ms = int((time.time() - start_time) * 1000)
+
+        analysis = convert_strategy_result_to_model('confidence', result, symbol, current_price, execution_time_ms)
+        await database.create_strategy_analysis(analysis)
+
+        return StrategyResult(
+            strategy_type=StrategyType.CONFIDENCE,
+            symbol=symbol,
+            current_price=current_price,
+            signal=analysis.signal,
+            forecast_stats=analysis.forecast_stats,
+            execution_time_ms=execution_time_ms
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Strategy analysis failed: {str(e)}")
+
+
+# ==================== Analysis Status Endpoint ====================
+
+@app.get("/api/v1/analysis/{analysis_id}")
+async def get_analysis_status(
+    analysis_id: str,
+    database: Database = Depends(get_database)
+):
+    """Get status and results of an analysis"""
+    try:
+        analysis = await database.get_strategy_analysis(analysis_id)
+
+        if not analysis:
+            raise HTTPException(status_code=404, detail=f"Analysis {analysis_id} not found")
+
+        return analysis
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get analysis status: {str(e)}")
+
+
+@app.post("/api/v1/analyze/consensus", response_model=AnalysisStarted)
+async def analyze_consensus(
+    request: ConsensusRequest,
+    background_tasks: BackgroundTasks,
+    database: Database = Depends(get_database)
+):
+    """Start consensus analysis (async) - runs all 8 strategies"""
+    try:
+        # Create pending consensus record
+        consensus_id = str(uuid.uuid4())
+        pending_consensus = ConsensusResult(
+            id=consensus_id,
+            symbol=request.symbol,
+            current_price=0.0,  # Will be updated when analysis runs
+            consensus="PENDING",
+            strength="PENDING",
+            bullish_count=0,
+            bearish_count=0,
+            neutral_count=0,
+            total_count=0,
+            bullish_strategies=[],
+            bearish_strategies=[],
+            neutral_strategies=[],
+            avg_position=0.0,
+            strategy_results=[],
+            status=AnalysisStatus.PENDING
+        )
+
+        # Store in database
+        await database.create_consensus_result(pending_consensus)
+
+        # Add to background tasks
+        background_tasks.add_task(run_consensus_analysis_background, consensus_id, request, database)
+
+        return AnalysisStarted(
+            analysis_id=consensus_id,
+            symbol=request.symbol,
+            strategy_type=StrategyType.ALL,
+            status=AnalysisStatus.PENDING
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start consensus analysis: {str(e)}")
 
 
 # ==================== History Endpoints ====================
