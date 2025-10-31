@@ -88,14 +88,15 @@ class MassiveS3DataSource:
             symbol: Symbol like 'BTC-USD', 'ETH-USD'
 
         Returns:
-            Massive.com compatible symbol (e.g., 'BTC', 'ETH')
+            Massive.com compatible symbol (e.g., 'X:BTC-USD', 'X:ETH-USD')
         """
-        # Convert crypto symbols
+        # Convert crypto symbols - Massive.com uses X: prefix for crypto
         if '-USD' in symbol:
-            # BTC-USD -> BTC
-            return symbol.replace('-USD', '')
+            # BTC-USD -> X:BTC-USD
+            return f'X:{symbol}'
         else:
-            return symbol
+            # If no suffix, assume USD and add it
+            return f'X:{symbol}-USD'
 
     def _list_available_files(self, prefix: str, start_date: datetime, end_date: datetime) -> list:
         """
