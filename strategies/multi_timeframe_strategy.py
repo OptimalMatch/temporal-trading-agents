@@ -37,7 +37,7 @@ from strategies.strategy_utils import (
 def train_multiple_timeframes(symbol: str, ensemble_module,
                               horizons: List[int] = [3, 7, 14, 21]) -> Dict:
     """
-    Train ensembles for multiple forecast horizons.
+    Train ensembles for multiple forecast horizons with error handling.
 
     Args:
         symbol: Trading symbol
@@ -50,9 +50,29 @@ def train_multiple_timeframes(symbol: str, ensemble_module,
     results = {}
 
     for horizon in horizons:
-        configs = get_default_ensemble_configs(horizon)
-        stats, df = train_ensemble(symbol, horizon, configs, f"{horizon}-DAY", ensemble_module)
-        results[horizon] = (stats, df)
+        max_retries = 2
+        retry_count = 0
+
+        while retry_count < max_retries:
+            try:
+                configs = get_default_ensemble_configs(horizon)
+                stats, df = train_ensemble(symbol, horizon, configs, f"{horizon}-DAY", ensemble_module)
+                results[horizon] = (stats, df)
+                break  # Success, exit retry loop
+            except Exception as e:
+                retry_count += 1
+                if retry_count < max_retries:
+                    print(f"\n⚠️  Training failed for {horizon}-day horizon (attempt {retry_count}/{max_retries})")
+                    print(f"   Error: {str(e)}")
+                    print(f"   Retrying...")
+                else:
+                    print(f"\n✗ Failed to train {horizon}-day horizon after {max_retries} attempts")
+                    print(f"  Error: {str(e)}")
+                    print(f"  Skipping this horizon and continuing...")
+                    # Continue with other horizons instead of failing completely
+
+    if not results:
+        raise RuntimeError("Failed to train any timeframe models")
 
     return results
 
@@ -68,6 +88,13 @@ def analyze_multi_timeframe_strategy(timeframe_data: Dict, current_price: float)
     Returns:
         Dictionary with strategy recommendation
     """
+    # Validate we have at least 2 timeframes to analyze
+    if len(timeframe_data) < 2:
+        print(f"\n⚠️  Warning: Only {len(timeframe_data)} timeframe(s) available")
+        print(f"   Multi-timeframe analysis requires at least 2 horizons")
+        if len(timeframe_data) == 0:
+            raise ValueError("No timeframe data available for analysis")
+
     # Calculate metrics for each timeframe
     timeframe_metrics = {}
     for horizon, (stats, df) in timeframe_data.items():

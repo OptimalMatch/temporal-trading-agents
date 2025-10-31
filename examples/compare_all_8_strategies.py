@@ -60,38 +60,70 @@ def run_all_strategies(symbol: str, ensemble_module):
 
     # Strategy 1: Forecast Gradient
     print("\n1/8 Forecast Gradient Strategy...")
-    results['gradient'] = analyze_gradient_strategy(stats_14day, current_price)
-    results['gradient']['forecast_median'] = stats_14day['median']
+    try:
+        results['gradient'] = analyze_gradient_strategy(stats_14day, current_price)
+        results['gradient']['forecast_median'] = stats_14day['median']
+    except Exception as e:
+        print(f"  ✗ Failed: {e}")
+        results['gradient'] = {'signal': 'ERROR', 'position_size_pct': 0}
 
     # Strategy 2: Confidence-Weighted
     print("2/8 Confidence-Weighted Strategy...")
-    results['confidence'] = analyze_confidence_weighted_strategy(stats_14day, current_price)
+    try:
+        results['confidence'] = analyze_confidence_weighted_strategy(stats_14day, current_price)
+    except Exception as e:
+        print(f"  ✗ Failed: {e}")
+        results['confidence'] = {'signal': 'ERROR', 'position_size_pct': 0}
 
     # Strategy 3: Multi-Timeframe
     print("3/8 Multi-Timeframe Strategy...")
-    horizons = [3, 7, 14, 21]
-    timeframe_data = train_multiple_timeframes(symbol, ensemble_module, horizons)
-    results['timeframe'] = analyze_multi_timeframe_strategy(timeframe_data, current_price)
+    try:
+        horizons = [3, 7, 14, 21]
+        timeframe_data = train_multiple_timeframes(symbol, ensemble_module, horizons)
+        results['timeframe'] = analyze_multi_timeframe_strategy(timeframe_data, current_price)
+    except Exception as e:
+        print(f"  ✗ Failed: {e}")
+        results['timeframe'] = {'signal': 'ERROR', 'position_size_pct': 0}
 
     # Strategy 4: Volatility Position Sizing
     print("4/8 Volatility Position Sizing...")
-    results['volatility'] = analyze_volatility_position_sizing(stats_14day, current_price)
+    try:
+        results['volatility'] = analyze_volatility_position_sizing(stats_14day, current_price)
+    except Exception as e:
+        print(f"  ✗ Failed: {e}")
+        results['volatility'] = {'signal': 'ERROR', 'position_size_pct': 0}
 
     # Strategy 5: Mean Reversion
     print("5/8 Mean Reversion Strategy...")
-    results['mean_reversion'] = analyze_mean_reversion_strategy(stats_14day, df_14day, current_price)
+    try:
+        results['mean_reversion'] = analyze_mean_reversion_strategy(stats_14day, df_14day, current_price)
+    except Exception as e:
+        print(f"  ✗ Failed: {e}")
+        results['mean_reversion'] = {'signal': 'ERROR', 'position_size_pct': 0}
 
     # Strategy 6: Acceleration/Deceleration
     print("6/8 Acceleration/Deceleration...")
-    results['acceleration'] = analyze_acceleration_strategy(stats_14day, current_price)
+    try:
+        results['acceleration'] = analyze_acceleration_strategy(stats_14day, current_price)
+    except Exception as e:
+        print(f"  ✗ Failed: {e}")
+        results['acceleration'] = {'signal': 'ERROR', 'position_size_pct': 0}
 
     # Strategy 7: Swing Trading
     print("7/8 Swing Trading Strategy...")
-    results['swing'] = analyze_swing_trading_strategy(stats_14day, current_price)
+    try:
+        results['swing'] = analyze_swing_trading_strategy(stats_14day, current_price)
+    except Exception as e:
+        print(f"  ✗ Failed: {e}")
+        results['swing'] = {'signal': 'ERROR', 'position_size_pct': 0}
 
     # Strategy 8: Risk-Adjusted
     print("8/8 Risk-Adjusted Strategy...")
-    results['risk_adjusted'] = analyze_risk_adjusted_strategy(stats_14day, current_price)
+    try:
+        results['risk_adjusted'] = analyze_risk_adjusted_strategy(stats_14day, current_price)
+    except Exception as e:
+        print(f"  ✗ Failed: {e}")
+        results['risk_adjusted'] = {'signal': 'ERROR', 'position_size_pct': 0}
 
     results['stats_14day'] = stats_14day
     results['current_price'] = current_price
@@ -114,16 +146,22 @@ def analyze_strategy_consensus(results):
         'Risk-Adjusted': results['risk_adjusted'],
     }
 
-    # Categorize signals
+    # Categorize signals (filter out ERROR signals)
     bullish_keywords = ['BUY', 'BULLISH', 'MOMENTUM', 'REVERT', 'REVERSAL', 'EXCELLENT', 'GOOD']
     bearish_keywords = ['SELL', 'BEARISH', 'OUT', 'STAY', 'EXIT', 'POOR', 'FALSE']
 
     bullish_strategies = []
     bearish_strategies = []
     neutral_strategies = []
+    error_strategies = []
 
     for name, data in strategies.items():
         signal = data['signal']
+
+        # Skip ERROR signals in consensus calculation
+        if signal == 'ERROR':
+            error_strategies.append(name)
+            continue
 
         if any(keyword in signal for keyword in bullish_keywords) and 'POOR' not in signal and 'FALSE' not in signal:
             bullish_strategies.append(name)
@@ -141,10 +179,16 @@ def analyze_strategy_consensus(results):
 
     avg_position = np.mean(bullish_positions) if bullish_positions else 0
 
-    # Determine consensus
-    total = len(strategies)
+    # Determine consensus (exclude ERROR strategies from total)
+    total = len(strategies) - len(error_strategies)
     bullish_count = len(bullish_strategies)
     bearish_count = len(bearish_strategies)
+
+    # Warn if some strategies failed
+    if error_strategies:
+        print(f"\n⚠️  Warning: {len(error_strategies)} strategy/strategies failed and excluded from consensus:")
+        for name in error_strategies:
+            print(f"   - {name}")
 
     if bullish_count >= 6:
         consensus = "STRONG BUY CONSENSUS"
@@ -171,10 +215,12 @@ def analyze_strategy_consensus(results):
         'bullish_count': bullish_count,
         'bearish_count': bearish_count,
         'neutral_count': len(neutral_strategies),
+        'error_count': len(error_strategies),
         'total_count': total,
         'bullish_strategies': bullish_strategies,
         'bearish_strategies': bearish_strategies,
         'neutral_strategies': neutral_strategies,
+        'error_strategies': error_strategies,
         'avg_position': avg_position,
         'strategies': strategies,
     }
@@ -382,7 +428,9 @@ def main():
     print(f"{'='*70}")
 
     # Load ensemble module
-    ensemble = load_ensemble_module("crypto_ensemble_forecast.py")
+    examples_dir = os.path.dirname(os.path.abspath(__file__))
+    ensemble_path = os.path.join(examples_dir, "crypto_ensemble_forecast.py")
+    ensemble = load_ensemble_module(ensemble_path)
 
     # Run all strategies
     results = run_all_strategies(symbol, ensemble)
