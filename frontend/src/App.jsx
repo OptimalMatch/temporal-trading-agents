@@ -1,10 +1,11 @@
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { Activity, Calendar, History, Play, TrendingUp, Database } from 'lucide-react';
+import { Activity, Calendar, History, Play, TrendingUp, Database, BarChart3 } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import HistoryPage from './pages/HistoryPage';
 import SchedulerPage from './pages/SchedulerPage';
 import AnalyzePage from './pages/AnalyzePage';
 import DataSyncPage from './pages/DataSyncPage';
+import BacktestPage from './pages/BacktestPage';
 
 function Navigation() {
   const location = useLocation();
@@ -12,6 +13,7 @@ function Navigation() {
   const navItems = [
     { path: '/', label: 'Dashboard', icon: TrendingUp },
     { path: '/analyze', label: 'Analyze', icon: Play },
+    { path: '/backtest', label: 'Backtest', icon: BarChart3 },
     { path: '/history', label: 'History', icon: History },
     { path: '/scheduler', label: 'Scheduler', icon: Calendar },
     { path: '/data-sync', label: 'Data Sync', icon: Database },
@@ -60,6 +62,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/analyze" element={<AnalyzePage />} />
+            <Route path="/backtest" element={<BacktestPage />} />
             <Route path="/history" element={<HistoryPage />} />
             <Route path="/scheduler" element={<SchedulerPage />} />
             <Route path="/data-sync" element={<DataSyncPage />} />

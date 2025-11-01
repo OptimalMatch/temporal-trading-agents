@@ -117,6 +117,59 @@ class APIService {
   async deleteScheduledTask(taskId) {
     return this.request(`/schedule/${taskId}`, { method: 'DELETE' });
   }
+
+  // Backtesting
+  async createBacktest(config) {
+    return this.request('/backtest', {
+      method: 'POST',
+      body: JSON.stringify(config),
+    });
+  }
+
+  async getBacktests(symbol = null, limit = 50) {
+    const params = new URLSearchParams({ limit: limit.toString() });
+    if (symbol) params.append('symbol', symbol);
+    return this.request(`/backtest?${params}`);
+  }
+
+  async getBacktest(runId) {
+    return this.request(`/backtest/${runId}`);
+  }
+
+  async deleteBacktest(runId) {
+    return this.request(`/backtest/${runId}`, { method: 'DELETE' });
+  }
+
+  // Paper Trading
+  async createPaperTradingSession(config) {
+    return this.request('/paper-trading', {
+      method: 'POST',
+      body: JSON.stringify(config),
+    });
+  }
+
+  async getPaperTradingSessions(status = null, limit = 50) {
+    const params = new URLSearchParams({ limit: limit.toString() });
+    if (status) params.append('status', status);
+    return this.request(`/paper-trading?${params}`);
+  }
+
+  async getPaperTradingSession(sessionId) {
+    return this.request(`/paper-trading/${sessionId}`);
+  }
+
+  async pausePaperTradingSession(sessionId) {
+    return this.request(`/paper-trading/${sessionId}/pause`, { method: 'POST' });
+  }
+
+  async resumePaperTradingSession(sessionId) {
+    return this.request(`/paper-trading/${sessionId}/resume`, { method: 'POST' });
+  }
+
+  async stopPaperTradingSession(sessionId) {
+    return this.request(`/paper-trading/${sessionId}/stop`, { method: 'POST' });
+  }
 }
 
-export default new APIService();
+export const api = new APIService();
+export default api;

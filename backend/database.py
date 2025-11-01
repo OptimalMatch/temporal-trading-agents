@@ -10,7 +10,8 @@ from bson import ObjectId
 
 from backend.models import (
     StrategyAnalysis, ConsensusResult, ModelTraining,
-    PriceForecast, User, ApiKey, StrategyType, ScheduledTask
+    PriceForecast, User, ApiKey, StrategyType, ScheduledTask,
+    BacktestRun, BacktestStatus, PaperTradingSession, PaperTradingStatus
 )
 
 
@@ -90,6 +91,19 @@ class Database:
         await self.db.historical_prices.create_index("symbol", unique=True)
         await self.db.historical_prices.create_index("last_date")
         await self.db.historical_prices.create_index("updated_at")
+
+        # Backtest indexes
+        await self.db.backtests.create_index("run_id", unique=True)
+        await self.db.backtests.create_index("symbol")
+        await self.db.backtests.create_index("status")
+        await self.db.backtests.create_index("created_at")
+        await self.db.backtests.create_index([("symbol", 1), ("created_at", -1)])
+
+        # Paper Trading indexes
+        await self.db.paper_trading_sessions.create_index("session_id", unique=True)
+        await self.db.paper_trading_sessions.create_index("symbol")
+        await self.db.paper_trading_sessions.create_index("status")
+        await self.db.paper_trading_sessions.create_index("started_at")
 
     # ==================== Strategy Analysis Methods ====================
 
@@ -496,3 +510,193 @@ class Database:
         except Exception as e:
             print(f"Error retrieving historical prices range for {symbol}: {e}")
             return None
+
+    async def get_historical_prices_dataframe(
+        self,
+        symbol: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ):
+        """Get historical prices as pandas DataFrame for backtesting"""
+        try:
+            import pandas as pd
+
+            prices = await self.get_historical_prices_range(symbol, start_date, end_date)
+            if not prices:
+                return None
+
+            # Convert to DataFrame
+            df = pd.DataFrame(prices)
+            if 'date' in df.columns:
+                df['date'] = pd.to_datetime(df['date'])
+                df = df.sort_values('date')
+
+            return df
+        except Exception as e:
+            print(f"Error retrieving historical prices dataframe for {symbol}: {e}")
+            return None
+
+    # ==================== Backtesting Methods ====================
+
+    async def store_backtest(self, backtest: BacktestRun) -> bool:
+        """Store a backtest run"""
+        try:
+            backtest_dict = backtest.dict()
+            await self.db.backtests.insert_one(backtest_dict)
+            return True
+        except Exception as e:
+            print(f"Error storing backtest: {e}")
+            return False
+
+    async def get_backtest(self, run_id: str) -> Optional[BacktestRun]:
+        """Get backtest by run_id"""
+        try:
+            backtest = await self.db.backtests.find_one({"run_id": run_id})
+            if backtest:
+                del backtest["_id"]
+                return BacktestRun(**backtest)
+            return None
+        except Exception as e:
+            print(f"Error retrieving backtest {run_id}: {e}")
+            return None
+
+    async def get_backtests(
+        self,
+        symbol: Optional[str] = None,
+        status: Optional[BacktestStatus] = None,
+        limit: int = 50
+    ) -> List[BacktestRun]:
+        """Get list of backtests with optional filters"""
+        try:
+            query = {}
+            if symbol:
+                query["config.symbol"] = symbol
+            if status:
+                query["status"] = status
+
+            cursor = self.db.backtests.find(query).sort("created_at", -1).limit(limit)
+            backtests = []
+            async for backtest in cursor:
+                del backtest["_id"]
+                backtests.append(BacktestRun(**backtest))
+            return backtests
+        except Exception as e:
+            print(f"Error retrieving backtests: {e}")
+            return []
+
+    async def update_backtest_status(
+        self,
+        run_id: str,
+        status: BacktestStatus,
+        error_message: Optional[str] = None
+    ) -> bool:
+        """Update backtest status"""
+        try:
+            updates = {"status": status}
+            if status == BacktestStatus.RUNNING:
+                updates["started_at"] = datetime.utcnow()
+            elif status in [BacktestStatus.COMPLETED, BacktestStatus.FAILED]:
+                updates["completed_at"] = datetime.utcnow()
+            if error_message:
+                updates["error_message"] = error_message
+
+            result = await self.db.backtests.update_one(
+                {"run_id": run_id},
+                {"$set": updates}
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            print(f"Error updating backtest status: {e}")
+            return False
+
+    async def update_backtest_results(self, backtest: BacktestRun) -> bool:
+        """Update backtest with results"""
+        try:
+            backtest_dict = backtest.dict()
+            result = await self.db.backtests.update_one(
+                {"run_id": backtest.run_id},
+                {"$set": backtest_dict}
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            print(f"Error updating backtest results: {e}")
+            return False
+
+    async def delete_backtest(self, run_id: str) -> bool:
+        """Delete a backtest"""
+        try:
+            result = await self.db.backtests.delete_one({"run_id": run_id})
+            return result.deleted_count > 0
+        except Exception as e:
+            print(f"Error deleting backtest: {e}")
+            return False
+
+    # ==================== Paper Trading Methods ====================
+
+    async def store_paper_trading_session(self, session: PaperTradingSession) -> bool:
+        """Store a paper trading session"""
+        try:
+            session_dict = session.dict()
+            await self.db.paper_trading_sessions.insert_one(session_dict)
+            return True
+        except Exception as e:
+            print(f"Error storing paper trading session: {e}")
+            return False
+
+    async def get_paper_trading_session(self, session_id: str) -> Optional[PaperTradingSession]:
+        """Get paper trading session by session_id"""
+        try:
+            session = await self.db.paper_trading_sessions.find_one({"session_id": session_id})
+            if session:
+                del session["_id"]
+                return PaperTradingSession(**session)
+            return None
+        except Exception as e:
+            print(f"Error retrieving paper trading session {session_id}: {e}")
+            return None
+
+    async def get_paper_trading_sessions(
+        self,
+        symbol: Optional[str] = None,
+        status: Optional[PaperTradingStatus] = None,
+        limit: int = 50
+    ) -> List[PaperTradingSession]:
+        """Get list of paper trading sessions with optional filters"""
+        try:
+            query = {}
+            if symbol:
+                query["config.symbol"] = symbol
+            if status:
+                query["status"] = status
+
+            cursor = self.db.paper_trading_sessions.find(query).sort("started_at", -1).limit(limit)
+            sessions = []
+            async for session in cursor:
+                del session["_id"]
+                sessions.append(PaperTradingSession(**session))
+            return sessions
+        except Exception as e:
+            print(f"Error retrieving paper trading sessions: {e}")
+            return []
+
+    async def update_paper_trading_session(self, session: PaperTradingSession) -> bool:
+        """Update paper trading session"""
+        try:
+            session_dict = session.dict()
+            result = await self.db.paper_trading_sessions.update_one(
+                {"session_id": session.session_id},
+                {"$set": session_dict}
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            print(f"Error updating paper trading session: {e}")
+            return False
+
+    async def delete_paper_trading_session(self, session_id: str) -> bool:
+        """Delete a paper trading session"""
+        try:
+            result = await self.db.paper_trading_sessions.delete_one({"session_id": session_id})
+            return result.deleted_count > 0
+        except Exception as e:
+            print(f"Error deleting paper trading session: {e}")
+            return False

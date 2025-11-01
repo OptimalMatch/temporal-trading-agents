@@ -398,3 +398,236 @@ class WatchlistAddRequest(BaseModel):
     auto_sync: bool = True
     priority: int = 0
     tags: List[str] = []
+
+
+# ==================== Backtesting Models ====================
+
+class BacktestStatus(str, Enum):
+    """Status of backtest run"""
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class TransactionCostConfig(BaseModel):
+    """Transaction cost model configuration"""
+    taker_fee_bps: float = 5.0  # Exchange taker fees
+    maker_rebate_bps: float = 0.0  # Market maker rebates (usually 0 for retail)
+    half_spread_bps: float = 2.0  # Half of bid-ask spread
+    slippage_coefficient: float = 0.1  # Slippage per $100k notional
+    adverse_selection_bps: float = 2.0  # Adverse selection cost
+    sec_fee_bps: float = 0.23  # SEC regulatory fees
+
+
+class WalkForwardConfig(BaseModel):
+    """Walk-forward validation configuration"""
+    enabled: bool = True
+    train_window_days: int = 252  # 1 year training
+    test_window_days: int = 63  # 1 quarter testing
+    retrain_frequency_days: int = 21  # Monthly retraining
+
+
+class BacktestConfig(BaseModel):
+    """Complete backtest configuration"""
+    symbol: str
+    start_date: str  # ISO format YYYY-MM-DD
+    end_date: str  # ISO format YYYY-MM-DD
+    initial_capital: float = 100000.0
+    position_size_pct: float = 10.0  # % of portfolio per position
+    min_edge_bps: float = 55.0  # Minimum edge to trade (3x costs)
+    transaction_costs: TransactionCostConfig = Field(default_factory=TransactionCostConfig)
+    walk_forward: WalkForwardConfig = Field(default_factory=WalkForwardConfig)
+    use_consensus: bool = True  # Use consensus strategies
+    individual_strategies: List[StrategyType] = []  # Or test individual strategies
+
+
+class BacktestTrade(BaseModel):
+    """Individual trade in backtest"""
+    trade_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    backtest_run_id: str
+    timestamp: datetime
+    symbol: str
+    side: str  # 'buy' or 'sell'
+    shares: float  # Support fractional shares for crypto
+    price: float
+    notional: float
+    transaction_cost: float
+    strategy_signal: Optional[str] = None  # Which strategy triggered this
+    metadata: Dict[str, Any] = {}
+
+
+class BacktestPeriodMetrics(BaseModel):
+    """Metrics for a single walk-forward period"""
+    period_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    backtest_run_id: str
+    period_number: int
+    train_start: datetime
+    train_end: datetime
+    test_start: datetime
+    test_end: datetime
+    total_return: float
+    annualized_return: float
+    sharpe_ratio: float
+    max_drawdown: float
+    win_rate: float
+    total_trades: int
+    total_costs: float
+    final_equity: float
+    avg_capital_deployed: Optional[float] = None  # Average capital in positions
+    peak_capital_deployed: Optional[float] = None  # Maximum capital in positions
+    capital_utilization: Optional[float] = None  # Avg deployed / avg portfolio value
+
+
+class BacktestMetrics(BaseModel):
+    """Aggregate backtest metrics"""
+    total_return: float
+    annualized_return: float
+    sharpe_ratio: float
+    sortino_ratio: Optional[float] = None
+    max_drawdown: float
+    avg_drawdown: float
+    win_rate: float  # % of winning trades
+    profit_factor: float  # Gross profit / gross loss
+    total_trades: int
+    winning_trades: int
+    losing_trades: int
+    avg_win: float
+    avg_loss: float
+    total_costs: float
+    costs_pct_of_capital: float
+    # Walk-forward specific metrics
+    median_period_sharpe: Optional[float] = None
+    period_win_rate: Optional[float] = None  # % of periods with positive return
+    worst_period_drawdown: Optional[float] = None
+
+
+class BacktestRun(BaseModel):
+    """Complete backtest run record"""
+    run_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str  # User-friendly name
+    config: BacktestConfig
+    status: BacktestStatus = BacktestStatus.PENDING
+    metrics: Optional[BacktestMetrics] = None
+    period_metrics: List[BacktestPeriodMetrics] = []  # Walk-forward periods
+    trades: List[BacktestTrade] = []
+    equity_curve: List[Dict[str, Any]] = []  # [{timestamp, equity, drawdown}, ...]
+    error_message: Optional[str] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    execution_time_ms: Optional[int] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class BacktestCreateRequest(BaseModel):
+    """Request to create and run a backtest"""
+    name: str
+    config: BacktestConfig
+
+
+class BacktestSummary(BaseModel):
+    """Summary of backtest for list view"""
+    run_id: str
+    name: str
+    symbol: str
+    start_date: str
+    end_date: str
+    status: BacktestStatus
+    total_return: Optional[float] = None
+    sharpe_ratio: Optional[float] = None
+    max_drawdown: Optional[float] = None
+    total_trades: Optional[int] = None
+    created_at: datetime
+    completed_at: Optional[datetime] = None
+
+
+# ==================== Paper Trading Models ====================
+
+class PaperTradingStatus(str, Enum):
+    """Status of paper trading session"""
+    ACTIVE = "active"
+    PAUSED = "paused"
+    STOPPED = "stopped"
+    ERROR = "error"
+
+
+class PaperTradingConfig(BaseModel):
+    """Paper trading configuration"""
+    symbol: str
+    initial_capital: float = 100000.0
+    position_size_pct: float = 10.0
+    min_edge_bps: float = 55.0
+    transaction_costs: TransactionCostConfig = Field(default_factory=TransactionCostConfig)
+    use_consensus: bool = True
+    check_interval_minutes: int = 60  # How often to check for signals
+    auto_execute: bool = True  # Automatically execute signals
+
+
+class PaperTrade(BaseModel):
+    """Individual paper trade"""
+    trade_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    session_id: str
+    timestamp: datetime
+    symbol: str
+    side: str  # 'buy' or 'sell'
+    shares: float  # Support fractional shares for crypto
+    price: float
+    notional: float
+    transaction_cost: float
+    strategy_signal: Optional[str] = None
+    was_executed: bool  # True if simulated, False if rejected
+    rejection_reason: Optional[str] = None
+    metadata: Dict[str, Any] = {}
+
+
+class PaperPosition(BaseModel):
+    """Current paper trading position"""
+    symbol: str
+    shares: float  # Support fractional shares for crypto
+    avg_cost_basis: float
+    current_price: float
+    unrealized_pnl: float
+    unrealized_pnl_pct: float
+
+
+class PaperTradingSession(BaseModel):
+    """Paper trading session"""
+    session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    config: PaperTradingConfig
+    status: PaperTradingStatus = PaperTradingStatus.ACTIVE
+    cash: float  # Current cash balance
+    starting_capital: float
+    current_equity: float
+    total_pnl: float
+    total_pnl_pct: float
+    positions: List[PaperPosition] = []
+    trades: List[PaperTrade] = []
+    total_trades: int = 0
+    winning_trades: int = 0
+    losing_trades: int = 0
+    last_signal_check: Optional[datetime] = None
+    next_signal_check: Optional[datetime] = None
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+    stopped_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+
+
+class PaperTradingCreateRequest(BaseModel):
+    """Request to create paper trading session"""
+    name: str
+    config: PaperTradingConfig
+
+
+class PaperTradingSummary(BaseModel):
+    """Summary for paper trading list"""
+    session_id: str
+    name: str
+    symbol: str
+    status: PaperTradingStatus
+    current_equity: float
+    total_pnl: float
+    total_pnl_pct: float
+    total_trades: int
+    started_at: datetime
