@@ -200,7 +200,8 @@ class BacktestEngine:
         self.positions: Dict[str, Position] = {}
         self.trades: List[BacktestTrade] = []
         self.equity_curve: List[Dict[str, Any]] = []
-        self.consensus_stats: Optional[Dict] = None  # Trained model stats for consensus
+        self.consensus_stats: Optional[Dict] = None  # Trained model stats for consensus (14-day)
+        self.multi_horizon_stats: Optional[Dict] = None  # Multi-horizon stats for multi-timeframe strategy
 
     def reset(self):
         """Reset backtest state (but preserve trained model stats)"""
@@ -464,12 +465,44 @@ class BacktestEngine:
                 logger.info("Model training completed")
                 print(f"✅ Model training completed\n")
 
+                # Train multi-horizon models for multi-timeframe strategy
+                print(f"{'='*60}")
+                print(f"TRAINING MULTI-HORIZON MODELS FOR MULTI-TIMEFRAME STRATEGY")
+                print(f"{'='*60}\n")
+
+                multi_horizon_stats = {}
+                horizons = [7, 14, 30]
+
+                for horizon in horizons:
+                    try:
+                        print(f"Training {horizon}-day horizon model...")
+                        configs_h = get_default_ensemble_configs(horizon=horizon)
+                        stats_h, _ = train_ensemble(
+                            symbol=self.config.symbol,
+                            forecast_horizon=horizon,
+                            configs=configs_h,
+                            name=f"Backtest-Horizon-{horizon}d",
+                            ensemble_module=ensemble
+                        )
+                        multi_horizon_stats[horizon] = (stats_h, None)  # (stats, df) - df not needed
+                        print(f"✅ {horizon}-day model training completed\n")
+                    except Exception as e:
+                        logger.warning(f"Training {horizon}-day horizon failed: {e}")
+                        print(f"⚠️  {horizon}-day model training failed: {e}\n")
+
+                self.multi_horizon_stats = multi_horizon_stats if len(multi_horizon_stats) >= 2 else None
+                if self.multi_horizon_stats:
+                    print(f"✅ Multi-horizon training completed ({len(multi_horizon_stats)} horizons)\n")
+                else:
+                    print(f"⚠️  Multi-horizon training incomplete, skipping multi-timeframe strategy\n")
+
             except Exception as e:
                 logger.error(f"Model training failed: {e}")
                 logger.warning("Falling back to dummy signals")
                 print(f"⚠️  Model training failed: {e}")
                 print(f"⚠️  Falling back to dummy signals\n")
                 self.consensus_stats = None
+                self.multi_horizon_stats = None
 
         self.reset()
         current_position = None
@@ -482,9 +515,17 @@ class BacktestEngine:
             current_date = pd.to_datetime(row['date'])
             adv = row.get('volume', 1_000_000)
 
+            # Get historical data up to current bar for mean reversion strategy
+            historical_df = price_data.loc[:idx].copy() if len(price_data.loc[:idx]) >= 20 else None
+
             # Get trading signal - use consensus if model stats available, otherwise dummy
             if self.consensus_stats is not None:
-                signal = self._get_consensus_signal(self.consensus_stats, current_price)
+                signal = self._get_consensus_signal(
+                    self.consensus_stats,
+                    current_price,
+                    historical_df=historical_df,
+                    multi_horizon_stats=self.multi_horizon_stats
+                )
             else:
                 signal = self._get_dummy_signal(bar_counter, current_price)
 
@@ -667,10 +708,42 @@ class BacktestEngine:
             self.consensus_stats = stats
             logger.info("Model training completed")
 
+            # Train multi-horizon models for multi-timeframe strategy
+            print(f"{'='*60}")
+            print(f"TRAINING MULTI-HORIZON MODELS FOR MULTI-TIMEFRAME STRATEGY")
+            print(f"{'='*60}\n")
+
+            multi_horizon_stats = {}
+            horizons = [7, 14, 30]
+
+            for horizon in horizons:
+                try:
+                    print(f"Training {horizon}-day horizon model...")
+                    configs_h = get_default_ensemble_configs(horizon=horizon)
+                    stats_h, _ = train_ensemble(
+                        symbol=self.config.symbol,
+                        forecast_horizon=horizon,
+                        configs=configs_h,
+                        name=f"Backtest-Horizon-{horizon}d",
+                        ensemble_module=ensemble
+                    )
+                    multi_horizon_stats[horizon] = (stats_h, None)  # (stats, df) - df not needed
+                    print(f"✅ {horizon}-day model training completed\n")
+                except Exception as e:
+                    logger.warning(f"Training {horizon}-day horizon failed: {e}")
+                    print(f"⚠️  {horizon}-day model training failed: {e}\n")
+
+            self.multi_horizon_stats = multi_horizon_stats if len(multi_horizon_stats) >= 2 else None
+            if self.multi_horizon_stats:
+                print(f"✅ Multi-horizon training completed ({len(multi_horizon_stats)} horizons)\n")
+            else:
+                print(f"⚠️  Multi-horizon training incomplete, skipping multi-timeframe strategy\n")
+
         except Exception as e:
             logger.error(f"Model training failed: {e}")
             logger.warning("Falling back to dummy signals for all periods")
             self.consensus_stats = None
+            self.multi_horizon_stats = None
 
         for period_num, (train_df, test_df) in enumerate(splits, 1):
             logger.info(f"Period {period_num}/{len(splits)}")
@@ -854,27 +927,28 @@ class BacktestEngine:
             completed_at=datetime.utcnow()
         )
 
-    def _get_consensus_signal(self, stats: Dict, current_price: float) -> Dict[str, Any]:
+    def _get_consensus_signal(self, stats: Dict, current_price: float, historical_df: pd.DataFrame = None,
+                            multi_horizon_stats: Dict = None) -> Dict[str, Any]:
         """
-        Generate consensus trading signal by running all 8 strategies and voting.
+        Generate consensus trading signal by running all strategies and voting.
 
         Args:
-            stats: Trained model forecast statistics
+            stats: Trained model forecast statistics (14-day horizon)
             current_price: Current asset price
+            historical_df: Historical price DataFrame for mean reversion (optional)
+            multi_horizon_stats: Dictionary of stats for multiple horizons (optional)
 
         Returns:
             Dictionary with action ('buy', 'sell', 'hold'), strategy name, and consensus info
 
-        Note: Currently using 6 strategies for backtest consensus:
-        - Forecast Gradient, Confidence-Weighted, Volatility Sizing,
-          Acceleration, Swing Trading, Risk-Adjusted
-
-        Skipped strategies:
-        - Multi-Timeframe (requires multiple horizon training)
-        - Mean Reversion (requires historical price DataFrame)
+        Note: Using 6-8 strategies for backtest consensus depending on available data:
+        - Core 6: Forecast Gradient, Confidence-Weighted, Volatility Sizing,
+                 Acceleration, Swing Trading, Risk-Adjusted
+        - Optional: Mean Reversion (if historical_df provided)
+        - Optional: Multi-Timeframe (if multi_horizon_stats provided)
         """
         try:
-            # Run 6 strategies that work with single-horizon stats
+            # Run core 6 strategies that work with single-horizon stats
             results = {}
 
             try:
@@ -913,8 +987,24 @@ class BacktestEngine:
                 logger.warning(f"Risk-adjusted strategy failed: {e}")
                 results['risk_adjusted'] = {'signal': 'ERROR', 'position_size_pct': 0}
 
+            # Add Mean Reversion if historical data provided
+            if historical_df is not None and len(historical_df) > 0:
+                try:
+                    results['mean_reversion'] = analyze_mean_reversion_strategy(stats, historical_df, current_price)
+                except Exception as e:
+                    logger.warning(f"Mean Reversion strategy failed: {e}")
+                    results['mean_reversion'] = {'signal': 'ERROR', 'position_size_pct': 0}
+
+            # Add Multi-Timeframe if multi-horizon stats provided
+            if multi_horizon_stats is not None:
+                try:
+                    results['multi_timeframe'] = analyze_multi_timeframe_strategy(multi_horizon_stats, current_price)
+                except Exception as e:
+                    logger.warning(f"Multi-Timeframe strategy failed: {e}")
+                    results['multi_timeframe'] = {'signal': 'ERROR', 'position_size_pct': 0}
+
             # Apply consensus voting logic (adapted from compare_all_8_strategies.py)
-            # Using 6 strategies for backtest consensus
+            # Using 6-8 strategies depending on available data
             strategies = {
                 'Forecast Gradient': results['gradient'],
                 'Confidence-Weighted': results['confidence'],
@@ -923,6 +1013,12 @@ class BacktestEngine:
                 'Swing Trading': results['swing'],
                 'Risk-Adjusted': results['risk_adjusted'],
             }
+
+            # Add optional strategies if they ran
+            if 'mean_reversion' in results:
+                strategies['Mean Reversion'] = results['mean_reversion']
+            if 'multi_timeframe' in results:
+                strategies['Multi-Timeframe'] = results['multi_timeframe']
 
             # Categorize signals
             bullish_keywords = ['BUY', 'BULLISH', 'MOMENTUM', 'REVERT', 'REVERSAL', 'EXCELLENT', 'GOOD']
@@ -953,23 +1049,27 @@ class BacktestEngine:
             bullish_count = len(bullish_strategies)
             bearish_count = len(bearish_strategies)
 
-            # Determine consensus action (adjusted for 6 strategies instead of 8)
-            # Strong majority: 5/6 (83%)
-            # Clear majority: 4/6 (67%)
-            # Simple majority: 3/6 (50%)
-            if bullish_count >= 5:
+            # Determine consensus action using percentage-based thresholds
+            # Works for 6, 7, or 8 strategies
+            # Strong majority: >= 80% (5/6, 6/7, 7/8)
+            # Clear majority: >= 60% (4/6, 5/7, 5/8)
+            # Simple majority: >= 50% (3/6, 4/7, 4/8)
+            bullish_pct = bullish_count / total if total > 0 else 0
+            bearish_pct = bearish_count / total if total > 0 else 0
+
+            if bullish_pct >= 0.80:
                 action = 'buy'
                 consensus = 'STRONG_BUY'
-            elif bullish_count >= 4:
+            elif bullish_pct >= 0.60:
                 action = 'buy'
                 consensus = 'BUY'
-            elif bullish_count >= 3:
+            elif bullish_pct >= 0.50:
                 action = 'buy'
                 consensus = 'MODERATE_BUY'
-            elif bearish_count >= 4:
+            elif bearish_pct >= 0.60:
                 action = 'sell'
                 consensus = 'SELL_AVOID'
-            elif bearish_count >= 3:
+            elif bearish_pct >= 0.50:
                 action = 'sell'
                 consensus = 'MODERATE_SELL'
             else:

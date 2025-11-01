@@ -29,8 +29,16 @@ export default function BacktestPage() {
   });
 
   useEffect(() => {
+    // Initial load
     loadBacktests();
-  }, []);
+
+    // Poll for updates every 3 seconds
+    const pollInterval = setInterval(() => {
+      loadBacktests();
+    }, 3000);
+
+    return () => clearInterval(pollInterval);
+  }, []); // Empty dependency array - only run once on mount
 
   const loadBacktests = async () => {
     try {
@@ -43,53 +51,53 @@ export default function BacktestPage() {
 
   const handleCreateBacktest = async (e) => {
     e.preventDefault();
-    setLoading(true);
 
-    try {
-      const config = {
-        symbol: formData.symbol,
-        start_date: formData.start_date,
-        end_date: formData.end_date,
-        initial_capital: parseFloat(formData.initial_capital),
-        position_size_pct: parseFloat(formData.position_size_pct),
-        min_edge_bps: parseFloat(formData.min_edge_bps),
-        transaction_costs: {
-          taker_fee_bps: 5.0,
-          maker_rebate_bps: 0.0,
-          half_spread_bps: 2.0,
-          slippage_coefficient: 0.1,
-          adverse_selection_bps: 2.0,
-          sec_fee_bps: 0.23,
-        },
-        walk_forward: {
-          enabled: formData.walk_forward_enabled,
-          train_window_days: parseInt(formData.train_window_days),
-          test_window_days: parseInt(formData.test_window_days),
-          retrain_frequency_days: parseInt(formData.retrain_frequency_days),
-        },
-        use_consensus: true,
-        individual_strategies: [],
-      };
+    const config = {
+      symbol: formData.symbol,
+      start_date: formData.start_date,
+      end_date: formData.end_date,
+      initial_capital: parseFloat(formData.initial_capital),
+      position_size_pct: parseFloat(formData.position_size_pct),
+      min_edge_bps: parseFloat(formData.min_edge_bps),
+      transaction_costs: {
+        taker_fee_bps: 5.0,
+        maker_rebate_bps: 0.0,
+        half_spread_bps: 2.0,
+        slippage_coefficient: 0.1,
+        adverse_selection_bps: 2.0,
+        sec_fee_bps: 0.23,
+      },
+      walk_forward: {
+        enabled: formData.walk_forward_enabled,
+        train_window_days: parseInt(formData.train_window_days),
+        test_window_days: parseInt(formData.test_window_days),
+        retrain_frequency_days: parseInt(formData.retrain_frequency_days),
+      },
+      use_consensus: true,
+      individual_strategies: [],
+    };
 
-      await api.createBacktest({
-        name: formData.name || `Backtest ${formData.symbol}`,
-        config,
-      });
+    // Close form immediately and fire off API call in background
+    setShowCreateForm(false);
 
-      setShowCreateForm(false);
+    // Reset form
+    setFormData({
+      ...formData,
+      name: '',
+    });
+
+    // Fire off API call without blocking (don't await)
+    api.createBacktest({
+      name: formData.name || `Backtest ${formData.symbol}`,
+      config,
+    }).then(() => {
+      // Reload backtests after successful creation
       loadBacktests();
-
-      // Reset form
-      setFormData({
-        ...formData,
-        name: '',
-      });
-    } catch (error) {
+    }).catch((error) => {
       console.error('Failed to create backtest:', error);
       alert('Failed to create backtest: ' + error.message);
-    } finally {
-      setLoading(false);
-    }
+      loadBacktests(); // Still reload to show any partial state
+    });
   };
 
   const handleDeleteBacktest = async (runId) => {
