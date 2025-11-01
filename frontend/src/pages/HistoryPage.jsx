@@ -22,7 +22,7 @@ function HistoryPage() {
   const [analyses, setAnalyses] = useState([]);
   const [consensusHistory, setConsensusHistory] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [viewMode, setViewMode] = useState('analyses'); // 'analyses' or 'consensus'
+  const [viewMode, setViewMode] = useState('consensus'); // 'analyses' or 'consensus'
   const [selectedAnalysis, setSelectedAnalysis] = useState(null); // For logs modal
 
   useEffect(() => {
