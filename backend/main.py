@@ -18,7 +18,7 @@ import time
 from datetime import datetime, timedelta
 import uuid
 import asyncio
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
 from backend.models import (
     StrategyAnalysisRequest, ConsensusRequest, StrategyResult,
@@ -73,13 +73,16 @@ scheduler = None
 # Process pool executor for CPU-intensive tasks
 executor = None
 
+# Thread pool executor for long-running backtests
+backtest_executor = None
+
 
 # ==================== Lifecycle Events ====================
 
 @app.on_event("startup")
 async def startup_event():
     """Connect to database and start scheduler on startup"""
-    global scheduler, executor
+    global scheduler, executor, backtest_executor
 
     await db.connect()
     print("🚀 API: Server started successfully")
@@ -88,6 +91,11 @@ async def startup_event():
     # Using max 4 workers to avoid overloading the system
     executor = ProcessPoolExecutor(max_workers=4)
     print("⚡ API: ProcessPoolExecutor initialized with 4 workers")
+
+    # Initialize thread pool executor for backtests
+    # Using max 2 workers to limit concurrent backtests
+    backtest_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="backtest")
+    print("🔬 API: ThreadPoolExecutor for backtests initialized with 2 workers")
 
     # Initialize and start scheduler
     scheduler = get_scheduler(db)
@@ -99,11 +107,15 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Disconnect from database and shutdown scheduler"""
-    global scheduler, executor
+    global scheduler, executor, backtest_executor
 
     if scheduler:
         scheduler.shutdown()
         print("📅 API: Scheduler stopped")
+
+    if backtest_executor:
+        backtest_executor.shutdown(wait=True)
+        print("🔬 API: Backtest ThreadPoolExecutor shutdown")
 
     if executor:
         executor.shutdown(wait=True)
@@ -1917,13 +1929,12 @@ async def get_available_tickers(market: str = "all"):
 
 @app.post("/api/v1/backtest", response_model=BacktestSummary)
 async def create_backtest(
-    request: BacktestCreateRequest,
-    background_tasks: BackgroundTasks
+    request: BacktestCreateRequest
 ) -> BacktestSummary:
     """
     Create and run a backtest.
 
-    Runs backtest in background and returns immediately with run_id.
+    Runs backtest in separate thread pool to avoid blocking the event loop.
     """
     try:
         run_id = str(uuid.uuid4())
@@ -1939,8 +1950,14 @@ async def create_backtest(
         # Store in database
         await db.store_backtest(backtest_run)
 
-        # Run backtest in background
-        background_tasks.add_task(run_backtest_background, run_id, request.config)
+        # Submit backtest to thread pool (non-blocking)
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(
+            backtest_executor,
+            run_backtest_in_thread,
+            run_id,
+            request.config.dict()
+        )
 
         return BacktestSummary(
             run_id=run_id,
@@ -1956,8 +1973,109 @@ async def create_backtest(
         raise HTTPException(status_code=500, detail=f"Failed to create backtest: {str(e)}")
 
 
+def run_backtest_in_thread(run_id: str, config_dict: dict):
+    """
+    Run backtest in a separate thread to avoid blocking the event loop.
+    Uses synchronous MongoDB operations (pymongo) instead of Motor.
+    """
+    import pymongo
+    import os
+    import traceback
+
+    # Create synchronous MongoDB client for this thread
+    mongodb_url = os.getenv("MONGODB_URL", "mongodb://mongodb:27017")
+    sync_client = pymongo.MongoClient(mongodb_url)
+    sync_db = sync_client["temporal_trading"]
+
+    try:
+        # Reconstruct BacktestConfig from dict
+        config = BacktestConfig(**config_dict)
+
+        # Update status to running (synchronous)
+        sync_db.backtests.update_one(
+            {"run_id": run_id},
+            {"$set": {
+                "status": BacktestStatus.RUNNING.value,
+                "started_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow()
+            }}
+        )
+
+        # Load historical price data from cache
+        is_crypto = '-' in config.symbol
+        period = '2y' if is_crypto else '5y'
+
+        # Check inventory for 5y data availability
+        inventory = sync_db.data_inventory.find_one({
+            "symbol": config.symbol,
+            "is_complete": True
+        })
+        if inventory and inventory.get('period') == '5y':
+            period = '5y'
+
+        from strategies.data_cache import get_cache
+        cache = get_cache()
+        price_data = cache.get(config.symbol, period, interval='1d')
+
+        if price_data is None or len(price_data) == 0:
+            raise ValueError(f"No price data found for {config.symbol} in cache. Please sync data first.")
+
+        # Filter by date range
+        if config.start_date or config.end_date:
+            if config.start_date:
+                price_data = price_data[price_data.index >= config.start_date]
+            if config.end_date:
+                price_data = price_data[price_data.index <= config.end_date]
+
+        # Reset index and normalize column names
+        price_data = price_data.reset_index()
+        price_data = price_data.rename(columns={
+            'Date': 'date', 'Close': 'close', 'Open': 'open',
+            'High': 'high', 'Low': 'low', 'Volume': 'volume'
+        })
+        price_data.columns = [c.lower() for c in price_data.columns]
+
+        if len(price_data) == 0:
+            raise ValueError(f"No price data in date range {config.start_date} to {config.end_date}")
+
+        # Initialize and run backtest engine
+        engine = BacktestEngine(config)
+
+        if config.walk_forward.enabled:
+            result = engine.run_walkforward_backtest(price_data, run_id)
+        else:
+            result = engine.run_simple_backtest(price_data, run_id)
+
+        # Store results (synchronous)
+        sync_db.backtests.update_one(
+            {"run_id": run_id},
+            {"$set": result.dict()},
+            upsert=True
+        )
+
+        print(f"✅ Backtest {run_id} completed successfully")
+
+    except Exception as e:
+        print(f"❌ Backtest {run_id} failed: {str(e)}")
+        traceback.print_exc()
+
+        # Update status to failed (synchronous)
+        sync_db.backtests.update_one(
+            {"run_id": run_id},
+            {"$set": {
+                "status": BacktestStatus.FAILED.value,
+                "error_message": str(e),
+                "completed_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow()
+            }}
+        )
+
+    finally:
+        sync_client.close()
+
+
 async def run_backtest_background(run_id: str, config: BacktestConfig):
-    """Run backtest in background"""
+    """Run backtest in background (DEPRECATED - use run_backtest_in_thread instead)"""
     try:
         # Update status to running
         await db.update_backtest_status(run_id, BacktestStatus.RUNNING)

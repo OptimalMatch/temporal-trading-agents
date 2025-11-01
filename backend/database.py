@@ -566,7 +566,7 @@ class Database:
         status: Optional[BacktestStatus] = None,
         limit: int = 50
     ) -> List[BacktestRun]:
-        """Get list of backtests with optional filters"""
+        """Get list of backtests with optional filters (summary only, no trades/equity)"""
         try:
             query = {}
             if symbol:
@@ -574,10 +574,21 @@ class Database:
             if status:
                 query["status"] = status
 
-            cursor = self.db.backtests.find(query).sort("created_at", -1).limit(limit)
+            # Use exclusion-only projection to avoid loading massive arrays
+            # MongoDB doesn't allow mixing inclusion/exclusion (except _id)
+            projection = {
+                "_id": 0,
+                "trades": 0,
+                "equity_curve": 0
+            }
+
+            cursor = self.db.backtests.find(query, projection).sort("created_at", -1).limit(limit)
             backtests = []
             async for backtest in cursor:
-                del backtest["_id"]
+                # Add empty arrays for fields that are excluded but required by model
+                backtest["trades"] = []
+                backtest["equity_curve"] = []
+                backtest["period_metrics"] = []
                 backtests.append(BacktestRun(**backtest))
             return backtests
         except Exception as e:
