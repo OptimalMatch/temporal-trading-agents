@@ -376,11 +376,20 @@ function DataSyncPage() {
                 className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-brand-500 disabled:opacity-50"
               />
               <datalist id="available-symbols">
-                {availableTickers.map((ticker) => (
-                  <option key={ticker.symbol} value={ticker.symbol}>
-                    {ticker.name}
-                  </option>
-                ))}
+                <optgroup label="Cryptocurrencies">
+                  {availableTickers.filter(t => t.market === 'crypto').map((ticker) => (
+                    <option key={ticker.symbol} value={ticker.symbol}>
+                      {ticker.name}
+                    </option>
+                  ))}
+                </optgroup>
+                <optgroup label="Stocks">
+                  {availableTickers.filter(t => t.market === 'stocks').map((ticker) => (
+                    <option key={ticker.symbol} value={ticker.symbol}>
+                      {ticker.name}
+                    </option>
+                  ))}
+                </optgroup>
               </datalist>
               {!tickersLoading && availableTickers.length > 0 && (
                 <div className="absolute right-3 top-1/2 transform -translate-y-1/2 text-xs text-gray-500">
