@@ -55,6 +55,8 @@ def fetch_crypto_data_cached(symbol: str, period: str = '2y', interval: str = '1
         # Cache the result
         if data is not None and not data.empty:
             cache.set(data, symbol, period, interval=interval)
+            # Clear progress marker since download is complete
+            cache.clear_progress(symbol, period, interval)
             print(f"💾 Cached {len(data)} rows for {symbol}")
         else:
             print(f"⚠️  Received empty data for {symbol}, not caching")

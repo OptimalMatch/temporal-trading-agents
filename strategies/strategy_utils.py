@@ -46,11 +46,17 @@ def train_ensemble(symbol: str, forecast_horizon: int, configs: List[Dict],
     print(f"TRAINING {name} ENSEMBLE ({forecast_horizon}-day forecast)")
     print(f"{'='*70}")
 
+    # Determine period based on asset type
+    # Stocks have 5 years of historical data, crypto has 2 years
+    is_crypto = '-USD' in symbol or '-EUR' in symbol or '-GBP' in symbol
+    period = '2y' if is_crypto else '5y'
+    print(f"📊 Using {period} of historical data for {'crypto' if is_crypto else 'stock'} analysis")
+
     ensemble_models = []
     for config in configs:
         model_info = ensemble_module.train_ensemble_model(
             symbol=symbol,
-            period='2y',
+            period=period,
             lookback=config['lookback'],
             forecast_horizon=forecast_horizon,
             epochs=config['epochs'],

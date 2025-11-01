@@ -25,6 +25,9 @@ COPY strategies/ /app/strategies/
 # Copy examples (for ensemble module loading)
 COPY examples/ /app/examples/
 
+# Copy scripts (for data preloading utilities)
+COPY scripts/ /app/scripts/
+
 # Set Python path
 ENV PYTHONPATH=/app:$PYTHONPATH
 

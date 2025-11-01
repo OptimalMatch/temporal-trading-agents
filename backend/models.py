@@ -323,3 +323,78 @@ class ProgressUpdate(BaseModel):
     message: str
     details: Optional[Dict[str, Any]] = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ==================== Data Synchronization Models ====================
+
+class SyncJobStatus(str, Enum):
+    """Status of data sync job"""
+    PENDING = "pending"
+    RUNNING = "running"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class DataSyncJob(BaseModel):
+    """Data synchronization job for downloading market data"""
+    job_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    symbol: str
+    period: str  # e.g., '2y', '5y'
+    interval: str = '1d'
+    status: SyncJobStatus = SyncJobStatus.PENDING
+    progress_percent: float = 0.0
+    total_files: int = 0
+    completed_files: int = 0
+    failed_files: int = 0
+    elapsed_seconds: float = 0.0
+    eta_seconds: float = 0.0
+    error_message: Optional[str] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    # Control flags
+    pause_requested: bool = False
+    cancel_requested: bool = False
+
+
+class TickerWatchlist(BaseModel):
+    """Ticker in the watchlist for automatic synchronization"""
+    symbol: str
+    period: str  # e.g., '2y' for crypto, '5y' for stocks
+    interval: str = '1d'
+    enabled: bool = True
+    auto_sync: bool = True  # Automatically sync daily deltas
+    priority: int = 0  # Higher priority tickers sync first
+    tags: List[str] = []  # e.g., ['crypto', 'high-volume', 'watchlist']
+    added_at: datetime = Field(default_factory=datetime.utcnow)
+    last_synced_at: Optional[datetime] = None
+    next_sync_at: Optional[datetime] = None
+
+
+class DataInventory(BaseModel):
+    """Inventory of what market data we have cached"""
+    symbol: str
+    period: str
+    interval: str
+    total_days: int = 0
+    date_range_start: Optional[datetime] = None
+    date_range_end: Optional[datetime] = None
+    file_size_bytes: int = 0
+    file_count: int = 0  # Number of S3 files processed
+    last_updated_at: datetime = Field(default_factory=datetime.utcnow)
+    is_complete: bool = False  # Whether we have all available data
+    missing_dates: List[str] = []  # List of missing date ranges
+
+
+class WatchlistAddRequest(BaseModel):
+    """Request to add ticker to watchlist"""
+    symbol: str
+    period: Optional[str] = None  # Auto-detect if not provided
+    interval: str = '1d'
+    auto_sync: bool = True
+    priority: int = 0
+    tags: List[str] = []

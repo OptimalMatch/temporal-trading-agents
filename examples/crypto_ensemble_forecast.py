@@ -186,12 +186,16 @@ def make_ensemble_predictions(ensemble_models, symbol, forecast_horizon=7):
     print("GENERATING ENSEMBLE PREDICTIONS")
     print(f"{'='*70}")
 
+    # Determine period based on asset type to match training data
+    is_crypto = '-USD' in symbol or '-EUR' in symbol or '-GBP' in symbol
+    period = '2y' if is_crypto else '5y'
+
     all_predictions = []
     prediction_details = []
 
     for model_info in ensemble_models:
-        # Fetch latest data - use 2 years to match training data and enable saving full history
-        df_latest = fetch_crypto_data(symbol, period='2y')
+        # Fetch latest data - use period to match training data and enable saving full history
+        df_latest = fetch_crypto_data(symbol, period=period)
         df_latest, _ = add_technical_indicators(df_latest, focus=model_info['focus'])
 
         # Prepare features

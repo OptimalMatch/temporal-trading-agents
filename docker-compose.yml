@@ -39,6 +39,8 @@ services:
       - MASSIVE_S3_BUCKET=${MASSIVE_S3_BUCKET}
     ports:
       - "10750:8000"
+    volumes:
+      - market_data_cache:/tmp/crypto_data_cache
     depends_on:
       mongodb:
         condition: service_healthy
@@ -106,4 +108,6 @@ volumes:
   mongodb_data:
     driver: local
   mongodb_config:
+    driver: local
+  market_data_cache:
     driver: local

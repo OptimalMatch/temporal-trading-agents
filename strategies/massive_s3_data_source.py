@@ -7,9 +7,11 @@ import gzip
 import io
 import pandas as pd
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Callable
 import boto3
 from botocore.config import Config
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 
 
 class MassiveS3DataSource:
@@ -80,27 +82,32 @@ class MassiveS3DataSource:
 
         return start_date, end_date
 
+    def _is_crypto(self, symbol: str) -> bool:
+        """Check if symbol is a cryptocurrency."""
+        return '-USD' in symbol or '-EUR' in symbol or '-GBP' in symbol
+
     def _get_ticker_symbol(self, symbol: str) -> str:
         """
         Convert yfinance symbol to Massive.com format.
 
         Args:
-            symbol: Symbol like 'BTC-USD', 'ETH-USD'
+            symbol: Symbol like 'BTC-USD' (crypto) or 'AAPL' (stock)
 
         Returns:
-            Massive.com compatible symbol (e.g., 'X:BTC-USD', 'X:ETH-USD')
+            Massive.com compatible symbol
+            - Crypto: 'X:BTC-USD'
+            - Stocks: 'AAPL' (unchanged)
         """
-        # Convert crypto symbols - Massive.com uses X: prefix for crypto
-        if '-USD' in symbol:
-            # BTC-USD -> X:BTC-USD
+        if self._is_crypto(symbol):
+            # Crypto: BTC-USD -> X:BTC-USD
             return f'X:{symbol}'
         else:
-            # If no suffix, assume USD and add it
-            return f'X:{symbol}-USD'
+            # US Stock: AAPL -> AAPL (keep as-is)
+            return symbol
 
     def _list_available_files(self, prefix: str, start_date: datetime, end_date: datetime) -> list:
         """
-        List available S3 files for the given prefix and date range.
+        List available S3 files for the given prefix and date range with metadata.
 
         Args:
             prefix: S3 prefix (e.g., 'global_crypto/day_aggs_v1')
@@ -108,7 +115,7 @@ class MassiveS3DataSource:
             end_date: End date
 
         Returns:
-            List of S3 object keys
+            List of tuples (key, size) for S3 objects
         """
         files = []
 
@@ -121,6 +128,7 @@ class MassiveS3DataSource:
 
                 for obj in page['Contents']:
                     key = obj['Key']
+                    size = obj['Size']
                     # Extract date from filename (format: YYYY-MM-DD.csv.gz)
                     try:
                         # Example: global_crypto/day_aggs_v1/2024/01/2024-01-15.csv.gz
@@ -129,21 +137,22 @@ class MassiveS3DataSource:
                         file_date = datetime.strptime(date_str, '%Y-%m-%d')
 
                         if start_date <= file_date <= end_date:
-                            files.append(key)
+                            files.append((key, size))
                     except:
                         continue
 
         except Exception as e:
             print(f"⚠️  Error listing S3 files: {e}")
 
-        return sorted(files)
+        return sorted(files, key=lambda x: x[0])
 
-    def _download_and_parse_file(self, key: str) -> Optional[pd.DataFrame]:
+    def _download_and_parse_file(self, key: str, expected_size: Optional[int] = None) -> Optional[pd.DataFrame]:
         """
-        Download and parse a single S3 CSV file.
+        Download and parse a single S3 CSV file with size verification.
 
         Args:
             key: S3 object key
+            expected_size: Expected file size in bytes for verification
 
         Returns:
             DataFrame with parsed data
@@ -151,9 +160,17 @@ class MassiveS3DataSource:
         try:
             # Download file
             response = self.s3.get_object(Bucket=self.bucket_name, Key=key)
+            content_bytes = response['Body'].read()
+
+            # Verify file size if provided
+            if expected_size is not None:
+                actual_size = len(content_bytes)
+                if actual_size != expected_size:
+                    print(f"\n⚠️  Size mismatch for {key}: expected {expected_size} bytes, got {actual_size} bytes")
+                    return None
 
             # Decompress gzip
-            with gzip.GzipFile(fileobj=io.BytesIO(response['Body'].read())) as gzipfile:
+            with gzip.GzipFile(fileobj=io.BytesIO(content_bytes)) as gzipfile:
                 content = gzipfile.read()
 
             # Parse CSV
@@ -165,13 +182,92 @@ class MassiveS3DataSource:
             print(f"⚠️  Error downloading/parsing {key}: {e}")
             return None
 
+    def _download_files_parallel(self, file_metadata: list, ticker: str,
+                                 max_workers: int = 20,
+                                 progress_callback: Optional[Callable] = None,
+                                 processed_cache: Optional[set] = None,
+                                 symbol: str = None,
+                                 period: str = None,
+                                 interval: str = None) -> list:
+        """
+        Download and parse multiple S3 files in parallel with progress tracking and resume support.
+
+        Args:
+            file_metadata: List of tuples (key, size) for S3 objects
+            ticker: Ticker symbol to filter for
+            max_workers: Maximum number of parallel downloads
+            progress_callback: Optional callback function(completed, total, elapsed_time, skipped)
+            processed_cache: Optional set of already-processed keys for resume support
+            symbol: Symbol for progress marker saving
+            period: Period for progress marker saving
+            interval: Interval for progress marker saving
+
+        Returns:
+            List of filtered DataFrames
+        """
+        all_data = []
+        completed = 0
+        skipped = 0
+        start_time = time.time()
+
+        # Filter out already-processed files if resuming
+        if processed_cache:
+            files_to_process = [(key, size) for key, size in file_metadata if key not in processed_cache]
+            skipped = len(file_metadata) - len(files_to_process)
+            if skipped > 0:
+                print(f"🔄 Resuming: Skipping {skipped} already-processed files")
+        else:
+            files_to_process = file_metadata
+
+        if not files_to_process:
+            return all_data
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all download tasks with size verification
+            future_to_metadata = {
+                executor.submit(self._download_and_parse_file, key, size): (key, size)
+                for key, size in files_to_process
+            }
+
+            # Process completed downloads
+            for future in as_completed(future_to_metadata):
+                completed += 1
+                elapsed = time.time() - start_time
+                key, size = future_to_metadata[future]
+
+                try:
+                    df = future.result()
+                    if df is not None and not df.empty:
+                        # Filter for our ticker
+                        if 'ticker' in df.columns:
+                            ticker_data = df[df['ticker'] == ticker]
+                            if not ticker_data.empty:
+                                all_data.append(ticker_data)
+                                # Mark as successfully processed
+                                if processed_cache is not None:
+                                    processed_cache.add(key)
+                except Exception as e:
+                    print(f"\n⚠️  Error processing {key}: {e}")
+
+                # Call progress callback
+                if progress_callback:
+                    progress_callback(completed, len(files_to_process), elapsed, skipped)
+
+                # Save progress marker every 100 files
+                if processed_cache is not None and symbol and completed % 100 == 0:
+                    from strategies.data_cache import get_cache
+                    cache = get_cache()
+                    cache.save_progress(processed_cache, symbol, period, interval)
+
+        return all_data
+
     def fetch_data(self, symbol: str, period: str = '2y', interval: str = '1d') -> pd.DataFrame:
         """
         Fetch OHLCV data from Massive.com S3 flat files.
 
         Args:
-            symbol: Trading symbol (e.g., 'BTC-USD', 'ETH-USD')
-            period: Time period (e.g., '1y', '2y', '6mo')
+            symbol: Trading symbol (e.g., 'BTC-USD' for crypto, 'AAPL' for stocks)
+            period: Time period (e.g., '1y', '2y', '5y', '6mo')
             interval: Data interval ('1d' for day aggregates, '1h' for minute/hour aggregates)
 
         Returns:
@@ -179,16 +275,28 @@ class MassiveS3DataSource:
         """
         ticker = self._get_ticker_symbol(symbol)
         start_date, end_date = self._convert_period_to_dates(period)
+        is_crypto = self._is_crypto(symbol)
 
-        # Determine S3 prefix based on interval
-        if interval == '1d':
-            prefix = 'global_crypto/day_aggs_v1'
-        elif interval == '1h':
-            prefix = 'global_crypto/minute_aggs_v1'  # We'll filter to hourly later
-        elif interval == '1m':
-            prefix = 'global_crypto/minute_aggs_v1'
+        # Determine S3 prefix based on asset type and interval
+        if is_crypto:
+            if interval == '1d':
+                prefix = 'global_crypto/day_aggs_v1'
+            elif interval == '1h':
+                prefix = 'global_crypto/minute_aggs_v1'  # We'll filter to hourly later
+            elif interval == '1m':
+                prefix = 'global_crypto/minute_aggs_v1'
+            else:
+                prefix = 'global_crypto/day_aggs_v1'
         else:
-            prefix = 'global_crypto/day_aggs_v1'
+            # US Stocks
+            if interval == '1d':
+                prefix = 'us_stocks_sip/day_aggs_v1'
+            elif interval == '1h':
+                prefix = 'us_stocks_sip/minute_aggs_v1'  # We'll filter to hourly later
+            elif interval == '1m':
+                prefix = 'us_stocks_sip/minute_aggs_v1'
+            else:
+                prefix = 'us_stocks_sip/day_aggs_v1'
 
         print(f"📊 Fetching {symbol} from Massive.com S3 ({start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')})...")
 
@@ -201,16 +309,31 @@ class MassiveS3DataSource:
 
         print(f"📁 Found {len(files)} files to process")
 
-        # Download and parse all files
-        all_data = []
-        for file_key in files:
-            df = self._download_and_parse_file(file_key)
-            if df is not None and not df.empty:
-                # Filter for our ticker
-                if 'ticker' in df.columns:
-                    ticker_data = df[df['ticker'] == ticker]
-                    if not ticker_data.empty:
-                        all_data.append(ticker_data)
+        # Try to get progress marker for resume support
+        from strategies.data_cache import get_cache
+        cache = get_cache()
+        processed_cache = cache.get_progress(symbol, period, interval) or set()
+
+        # Download and parse all files in parallel
+        all_data = self._download_files_parallel(
+            files, ticker,
+            max_workers=20,  # Parallel downloads
+            progress_callback=lambda completed, total, elapsed, skipped:
+                print(f"\r⏳ Progress: {completed}/{total} files ({completed/total*100:.1f}%) | "
+                      f"Elapsed: {elapsed:.1f}s | "
+                      f"ETA: {(elapsed/completed*(total-completed)) if completed > 0 else 0:.1f}s " +
+                      (f"| Resumed: {skipped} skipped" if skipped > 0 else ""),
+                      end='', flush=True) if completed % 10 == 0 or completed == total else None,
+            processed_cache=processed_cache,
+            symbol=symbol,
+            period=period,
+            interval=interval
+        )
+        print()  # New line after progress
+
+        # Save final progress marker
+        if processed_cache:
+            cache.save_progress(processed_cache, symbol, period, interval)
 
         if not all_data:
             print(f"⚠️  No data found for ticker {ticker}")

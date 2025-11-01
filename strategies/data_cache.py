@@ -12,7 +12,7 @@ from typing import Optional
 class DataCache:
     """File-based cache for market data."""
 
-    def __init__(self, cache_dir: str = "/tmp/market_data_cache", ttl_hours: int = 24):
+    def __init__(self, cache_dir: str = "/tmp/crypto_data_cache", ttl_hours: int = 24):
         """
         Initialize the data cache.
 
@@ -103,14 +103,82 @@ class DataCache:
                 # Clear specific symbol
                 for cache_file in self.cache_dir.glob(f"{symbol}_*.pkl"):
                     cache_file.unlink()
+                # Also clear progress marker
+                progress_file = self.cache_dir / f".progress_{symbol}"
+                if progress_file.exists():
+                    progress_file.unlink()
                 print(f"💾 Cleared cache for {symbol}")
             else:
                 # Clear all
                 for cache_file in self.cache_dir.glob("*.pkl"):
                     cache_file.unlink()
+                for progress_file in self.cache_dir.glob(".progress_*"):
+                    progress_file.unlink()
                 print("💾 Cleared all cache")
         except Exception as e:
             print(f"⚠️  Error clearing cache: {e}")
+
+    def get_progress(self, symbol: str, period: str, interval: str = '1d') -> Optional[set]:
+        """
+        Get progress marker (set of processed file keys) for resuming downloads.
+
+        Args:
+            symbol: Trading symbol
+            period: Data period
+            interval: Data interval
+
+        Returns:
+            Set of processed file keys, or None if no progress marker exists
+        """
+        progress_key = f".progress_{symbol}_{period}_{interval}"
+        progress_path = self.cache_dir / progress_key
+
+        if not progress_path.exists():
+            return None
+
+        try:
+            with open(progress_path, 'rb') as f:
+                return pickle.load(f)
+        except Exception as e:
+            print(f"⚠️  Error loading progress marker: {e}")
+            return None
+
+    def save_progress(self, processed_keys: set, symbol: str, period: str, interval: str = '1d'):
+        """
+        Save progress marker for resuming downloads.
+
+        Args:
+            processed_keys: Set of successfully processed file keys
+            symbol: Trading symbol
+            period: Data period
+            interval: Data interval
+        """
+        progress_key = f".progress_{symbol}_{period}_{interval}"
+        progress_path = self.cache_dir / progress_key
+
+        try:
+            with open(progress_path, 'wb') as f:
+                pickle.dump(processed_keys, f)
+        except Exception as e:
+            print(f"⚠️  Error saving progress marker: {e}")
+
+    def clear_progress(self, symbol: str, period: str, interval: str = '1d'):
+        """
+        Clear progress marker after successful completion.
+
+        Args:
+            symbol: Trading symbol
+            period: Data period
+            interval: Data interval
+        """
+        progress_key = f".progress_{symbol}_{period}_{interval}"
+        progress_path = self.cache_dir / progress_key
+
+        if progress_path.exists():
+            try:
+                progress_path.unlink()
+            except Exception as e:
+                print(f"⚠️  Error clearing progress marker: {e}")
 
 
 # Global cache instance

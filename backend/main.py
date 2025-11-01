@@ -30,6 +30,7 @@ from backend.models import (
 from backend.database import Database
 from backend.websocket_manager import manager as ws_manager
 from backend.scheduler import get_scheduler
+from backend.cache_manager import get_cache_manager
 
 # Import strategies
 from strategies.strategy_utils import load_ensemble_module, train_ensemble, get_default_ensemble_configs
@@ -1267,6 +1268,133 @@ async def run_strategy_analysis(symbol: str, strategy_type: StrategyType,
             f"Analysis failed: {str(e)}"
         )
         raise
+
+
+# ==================== Cache Management Endpoints ====================
+
+@app.get("/api/v1/cache/list")
+async def list_cached_data():
+    """
+    List all cached market data files.
+
+    Returns a list of cached data with symbol, period, interval, size, and modification time.
+    """
+    cache_manager = get_cache_manager()
+    cached_files = cache_manager.list_cached_data()
+
+    return {
+        "count": len(cached_files),
+        "cached_data": cached_files
+    }
+
+
+@app.post("/api/v1/cache/preload/{symbol}")
+async def start_preload(
+    symbol: str,
+    period: Optional[str] = None,
+    interval: str = '1d'
+):
+    """
+    Start a background data preload job for the given symbol.
+
+    Args:
+        symbol: Trading symbol (e.g., 'BTC-USD', 'AAPL')
+        period: Optional data period ('2y', '5y', etc.). Auto-detected if not provided.
+        interval: Data interval (default: '1d')
+
+    Returns the job status with progress tracking information.
+    """
+    cache_manager = get_cache_manager()
+    job_status = cache_manager.start_preload(symbol, period, interval)
+
+    return {
+        "message": f"Preload started for {symbol}",
+        "job": job_status
+    }
+
+
+@app.get("/api/v1/cache/status/{symbol}")
+async def get_preload_status(
+    symbol: str,
+    period: Optional[str] = None,
+    interval: str = '1d'
+):
+    """
+    Get the status of a preload job or check if data is cached.
+
+    Args:
+        symbol: Trading symbol
+        period: Optional data period (auto-detected if not provided)
+        interval: Data interval (default: '1d')
+
+    Returns job status if downloading, or indicates if data is already cached.
+    """
+    cache_manager = get_cache_manager()
+    status = cache_manager.get_job_status(symbol, period, interval)
+
+    if status is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No cached data or active download found for {symbol}"
+        )
+
+    return status
+
+
+@app.delete("/api/v1/cache/{symbol}")
+async def delete_cached_data(
+    symbol: str,
+    period: Optional[str] = None,
+    interval: str = '1d'
+):
+    """
+    Delete cached data for a symbol.
+
+    Args:
+        symbol: Trading symbol
+        period: Optional data period (auto-detected if not provided)
+        interval: Data interval (default: '1d')
+
+    Cancels any running download and removes the cached data file.
+    """
+    cache_manager = get_cache_manager()
+    deleted = cache_manager.delete_cached_data(symbol, period, interval)
+
+    if deleted:
+        return {"message": f"Deleted cached data for {symbol}"}
+    else:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No cached data found for {symbol}"
+        )
+
+
+@app.delete("/api/v1/cache/preload/{symbol}")
+async def cancel_preload(
+    symbol: str,
+    period: Optional[str] = None,
+    interval: str = '1d'
+):
+    """
+    Cancel a running preload job.
+
+    Args:
+        symbol: Trading symbol
+        period: Optional data period (auto-detected if not provided)
+        interval: Data interval (default: '1d')
+
+    Cancels the download and clears the progress marker.
+    """
+    cache_manager = get_cache_manager()
+    cancelled = cache_manager.cancel_preload(symbol, period, interval)
+
+    if cancelled:
+        return {"message": f"Cancelled preload for {symbol}"}
+    else:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No active preload job found for {symbol}"
+        )
 
 
 if __name__ == "__main__":
