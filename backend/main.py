@@ -25,12 +25,13 @@ from backend.models import (
     ConsensusAnalysis, HealthCheck, StrategyType, StrategyAnalysis,
     ConsensusResult, AnalysisStatus, StrategySignal, ForecastStats,
     ScheduledTask, ScheduledTaskCreate, ScheduledTaskUpdate, ScheduleFrequency,
-    AnalysisStarted, ForecastData, ModelPrediction, HistoricalPriceData, PricePoint
+    AnalysisStarted, ForecastData, ModelPrediction, HistoricalPriceData, PricePoint,
+    WatchlistAddRequest, DataSyncJob, TickerWatchlist, DataInventory
 )
 from backend.database import Database
 from backend.websocket_manager import manager as ws_manager
 from backend.scheduler import get_scheduler
-from backend.cache_manager import get_cache_manager
+from backend.data_sync_manager import get_sync_manager
 
 # Import strategies
 from strategies.strategy_utils import load_ensemble_module, train_ensemble, get_default_ensemble_configs
@@ -1270,131 +1271,213 @@ async def run_strategy_analysis(symbol: str, strategy_type: StrategyType,
         raise
 
 
-# ==================== Cache Management Endpoints ====================
+# ==================== Data Synchronization Endpoints ====================
 
-@app.get("/api/v1/cache/list")
-async def list_cached_data():
-    """
-    List all cached market data files.
-
-    Returns a list of cached data with symbol, period, interval, size, and modification time.
-    """
-    cache_manager = get_cache_manager()
-    cached_files = cache_manager.list_cached_data()
-
-    return {
-        "count": len(cached_files),
-        "cached_data": cached_files
-    }
-
-
-@app.post("/api/v1/cache/preload/{symbol}")
-async def start_preload(
+@app.post("/api/v1/sync/jobs")
+async def create_sync_job(
     symbol: str,
     period: Optional[str] = None,
     interval: str = '1d'
 ):
     """
-    Start a background data preload job for the given symbol.
+    Create and start a new data synchronization job.
 
     Args:
         symbol: Trading symbol (e.g., 'BTC-USD', 'AAPL')
         period: Optional data period ('2y', '5y', etc.). Auto-detected if not provided.
         interval: Data interval (default: '1d')
 
-    Returns the job status with progress tracking information.
+    Returns the created job with status and progress information.
     """
-    cache_manager = get_cache_manager()
-    job_status = cache_manager.start_preload(symbol, period, interval)
+    sync_manager = await get_sync_manager(db.client.temporal_trading)
+
+    # Create job
+    job = await sync_manager.create_sync_job(symbol, period, interval)
+
+    # Try to start it
+    started = await sync_manager.start_sync_job(job.job_id)
 
     return {
-        "message": f"Preload started for {symbol}",
-        "job": job_status
+        "message": f"Sync job created for {symbol}",
+        "job": job.dict(),
+        "started": started
     }
 
 
-@app.get("/api/v1/cache/status/{symbol}")
-async def get_preload_status(
-    symbol: str,
-    period: Optional[str] = None,
-    interval: str = '1d'
+@app.get("/api/v1/sync/jobs")
+async def list_sync_jobs(
+    status: Optional[str] = None,
+    symbol: Optional[str] = None,
+    limit: int = 50
 ):
     """
-    Get the status of a preload job or check if data is cached.
+    List synchronization jobs with optional filtering.
 
     Args:
-        symbol: Trading symbol
-        period: Optional data period (auto-detected if not provided)
-        interval: Data interval (default: '1d')
+        status: Filter by status (running, completed, failed, etc.)
+        symbol: Filter by symbol
+        limit: Maximum number of jobs to return
 
-    Returns job status if downloading, or indicates if data is already cached.
+    Returns list of sync jobs.
     """
-    cache_manager = get_cache_manager()
-    status = cache_manager.get_job_status(symbol, period, interval)
+    query = {}
+    if status:
+        query["status"] = status
+    if symbol:
+        query["symbol"] = symbol
 
-    if status is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No cached data or active download found for {symbol}"
-        )
+    cursor = db.client.temporal_trading.data_sync_jobs.find(query).sort("created_at", -1).limit(limit)
+    jobs = []
+    async for doc in cursor:
+        jobs.append(DataSyncJob(**doc).dict())
 
-    return status
+    return {
+        "count": len(jobs),
+        "jobs": jobs
+    }
 
 
-@app.delete("/api/v1/cache/{symbol}")
-async def delete_cached_data(
-    symbol: str,
-    period: Optional[str] = None,
-    interval: str = '1d'
-):
+@app.get("/api/v1/sync/jobs/{job_id}")
+async def get_sync_job(job_id: str):
+    """Get details of a specific sync job."""
+    job_doc = await db.client.temporal_trading.data_sync_jobs.find_one({"job_id": job_id})
+
+    if not job_doc:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    return DataSyncJob(**job_doc).dict()
+
+
+@app.post("/api/v1/sync/jobs/{job_id}/pause")
+async def pause_sync_job(job_id: str):
+    """Pause a running sync job."""
+    sync_manager = await get_sync_manager(db.client.temporal_trading)
+    paused = await sync_manager.pause_job(job_id)
+
+    if not paused:
+        raise HTTPException(status_code=400, detail="Job not found or cannot be paused")
+
+    return {"message": f"Job {job_id} paused"}
+
+
+@app.post("/api/v1/sync/jobs/{job_id}/resume")
+async def resume_sync_job(job_id: str):
+    """Resume a paused sync job."""
+    sync_manager = await get_sync_manager(db.client.temporal_trading)
+    resumed = await sync_manager.resume_job(job_id)
+
+    if not resumed:
+        raise HTTPException(status_code=400, detail="Job not found or cannot be resumed")
+
+    return {"message": f"Job {job_id} resumed"}
+
+
+@app.post("/api/v1/sync/jobs/{job_id}/cancel")
+async def cancel_sync_job(job_id: str):
+    """Cancel a sync job."""
+    sync_manager = await get_sync_manager(db.client.temporal_trading)
+    cancelled = await sync_manager.cancel_job(job_id)
+
+    if not cancelled:
+        raise HTTPException(status_code=400, detail="Job not found or cannot be cancelled")
+
+    return {"message": f"Job {job_id} cancelled"}
+
+
+# ==================== Watchlist Management Endpoints ====================
+
+@app.post("/api/v1/watchlist")
+async def add_to_watchlist(request: 'WatchlistAddRequest'):
     """
-    Delete cached data for a symbol.
+    Add a ticker to the watchlist for automatic synchronization.
 
     Args:
-        symbol: Trading symbol
-        period: Optional data period (auto-detected if not provided)
-        interval: Data interval (default: '1d')
+        request: Watchlist add request with symbol, period, tags, etc.
 
-    Cancels any running download and removes the cached data file.
+    Returns the created watchlist item.
     """
-    cache_manager = get_cache_manager()
-    deleted = cache_manager.delete_cached_data(symbol, period, interval)
+    sync_manager = await get_sync_manager(db.client.temporal_trading)
 
-    if deleted:
-        return {"message": f"Deleted cached data for {symbol}"}
-    else:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No cached data found for {symbol}"
-        )
+    watchlist_item = await sync_manager.add_to_watchlist(
+        symbol=request.symbol,
+        period=request.period,
+        interval=request.interval,
+        auto_sync=request.auto_sync,
+        priority=request.priority,
+        tags=request.tags
+    )
+
+    return {
+        "message": f"Added {request.symbol} to watchlist",
+        "watchlist_item": watchlist_item.dict()
+    }
 
 
-@app.delete("/api/v1/cache/preload/{symbol}")
-async def cancel_preload(
-    symbol: str,
-    period: Optional[str] = None,
-    interval: str = '1d'
-):
+@app.get("/api/v1/watchlist")
+async def get_watchlist(enabled_only: bool = True):
     """
-    Cancel a running preload job.
+    Get the watchlist of tickers for automatic synchronization.
 
     Args:
-        symbol: Trading symbol
-        period: Optional data period (auto-detected if not provided)
-        interval: Data interval (default: '1d')
+        enabled_only: Only return enabled tickers (default: True)
 
-    Cancels the download and clears the progress marker.
+    Returns list of watchlist tickers.
     """
-    cache_manager = get_cache_manager()
-    cancelled = cache_manager.cancel_preload(symbol, period, interval)
+    sync_manager = await get_sync_manager(db.client.temporal_trading)
+    watchlist = await sync_manager.get_watchlist(enabled_only=enabled_only)
 
-    if cancelled:
-        return {"message": f"Cancelled preload for {symbol}"}
-    else:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No active preload job found for {symbol}"
-        )
+    return {
+        "count": len(watchlist),
+        "watchlist": [item.dict() for item in watchlist]
+    }
+
+
+@app.delete("/api/v1/watchlist/{symbol}")
+async def remove_from_watchlist(symbol: str):
+    """Remove a ticker from the watchlist."""
+    sync_manager = await get_sync_manager(db.client.temporal_trading)
+    removed = await sync_manager.remove_from_watchlist(symbol)
+
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"Symbol {symbol} not in watchlist")
+
+    return {"message": f"Removed {symbol} from watchlist"}
+
+
+# ==================== Data Inventory Endpoints ====================
+
+@app.get("/api/v1/inventory")
+async def get_inventory(symbol: Optional[str] = None):
+    """
+    Get data inventory showing what market data is cached.
+
+    Args:
+        symbol: Optional symbol filter
+
+    Returns inventory of cached data with coverage information.
+    """
+    sync_manager = await get_sync_manager(db.client.temporal_trading)
+    inventory = await sync_manager.get_inventory(symbol=symbol)
+
+    return {
+        "count": len(inventory),
+        "inventory": [item.dict() for item in inventory]
+    }
+
+
+@app.get("/api/v1/inventory/{symbol}")
+async def get_symbol_inventory(symbol: str):
+    """Get inventory details for a specific symbol."""
+    sync_manager = await get_sync_manager(db.client.temporal_trading)
+    inventory = await sync_manager.get_inventory(symbol=symbol)
+
+    if not inventory:
+        raise HTTPException(status_code=404, detail=f"No inventory found for {symbol}")
+
+    return {
+        "symbol": symbol,
+        "coverage": [item.dict() for item in inventory]
+    }
 
 
 if __name__ == "__main__":
