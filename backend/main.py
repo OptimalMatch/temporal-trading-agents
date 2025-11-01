@@ -118,6 +118,97 @@ async def get_database():
 
 # ==================== Utility Functions ====================
 
+async def ensure_dataset_available(symbol: str, database: Database, interval: str = '1d') -> bool:
+    """
+    Ensure the required dataset is available in cache before analysis.
+    If not available, triggers a sync job and waits for completion.
+
+    Args:
+        symbol: Trading symbol
+        database: Database instance
+        interval: Data interval (default '1d')
+
+    Returns:
+        True when dataset is ready, False if failed
+    """
+    from strategies.data_cache import get_cache
+
+    # Determine required period based on asset type
+    is_crypto = '-USD' in symbol or '-EUR' in symbol or '-GBP' in symbol
+    required_period = '2y' if is_crypto else '5y'
+
+    print(f"📊 Checking dataset availability for {symbol} (required period: {required_period})")
+
+    # Check if data exists in cache
+    cache = get_cache()
+    cached_data = cache.get(symbol, required_period, interval=interval)
+
+    if cached_data is not None and not cached_data.empty:
+        print(f"✓ Dataset already available in cache for {symbol} ({len(cached_data)} rows)")
+        return True
+
+    # Check inventory to see if data exists with correct period
+    sync_manager = await get_sync_manager(database.client.temporal_trading)
+    inventory_items = await sync_manager.get_inventory(symbol=symbol)
+
+    for item in inventory_items:
+        if item.interval == interval and item.period == required_period:
+            print(f"✓ Dataset found in inventory for {symbol}, loading from cache")
+            # Data exists in inventory, try loading from cache again (may have been TTL expired)
+            cached_data = cache.get(symbol, required_period, interval=interval)
+            if cached_data is not None and not cached_data.empty:
+                return True
+
+    # Data not available - trigger sync job
+    print(f"📥 Dataset not available for {symbol}, triggering sync job ({required_period})")
+
+    # Create sync job
+    job = await sync_manager.create_sync_job(symbol, required_period, interval)
+    job_id = job.job_id
+
+    # Start the job
+    started = await sync_manager.start_sync_job(job_id)
+    if not started:
+        print(f"❌ Failed to start sync job for {symbol}")
+        return False
+
+    print(f"⏳ Waiting for sync job {job_id} to complete...")
+
+    # Poll for job completion (check every 2 seconds)
+    max_wait_time = 600  # 10 minutes max
+    elapsed = 0
+
+    while elapsed < max_wait_time:
+        await asyncio.sleep(2)
+        elapsed += 2
+
+        # Check job status
+        job_doc = await database.client.temporal_trading.data_sync_jobs.find_one({"job_id": job_id})
+        if not job_doc:
+            print(f"❌ Sync job {job_id} not found")
+            return False
+
+        status = job_doc.get('status')
+
+        if status == 'completed':
+            print(f"✓ Sync job completed for {symbol} in {elapsed}s")
+            return True
+        elif status == 'failed':
+            error = job_doc.get('error_message', 'Unknown error')
+            print(f"❌ Sync job failed for {symbol}: {error}")
+            return False
+        elif status == 'cancelled':
+            print(f"❌ Sync job cancelled for {symbol}")
+            return False
+
+        # Show progress
+        progress = job_doc.get('progress_percent', 0)
+        if elapsed % 10 == 0:  # Log every 10 seconds
+            print(f"⏳ Sync job progress: {progress:.1f}% ({elapsed}s elapsed)")
+
+    print(f"⏰ Sync job timed out after {max_wait_time}s")
+    return False
+
 # Wrapper functions for ProcessPoolExecutor (must be picklable)
 def _train_ensemble_worker(symbol: str, horizon: int, name: str, ensemble_path: str = "examples/crypto_ensemble_forecast.py"):
     """Worker function for training ensemble in separate process"""
@@ -300,6 +391,17 @@ async def run_gradient_analysis_background(analysis_id: str, symbol: str, databa
 
         start_time = time.time()
 
+        # Ensure dataset is available before analysis
+        logs.append(f"[{datetime.utcnow().isoformat()}] Checking dataset availability for {symbol}")
+        dataset_ready = await ensure_dataset_available(symbol, database)
+
+        if not dataset_ready:
+            error_msg = f"Failed to ensure dataset availability for {symbol}"
+            logs.append(f"[{datetime.utcnow().isoformat()}] ERROR: {error_msg}")
+            raise Exception(error_msg)
+
+        logs.append(f"[{datetime.utcnow().isoformat()}] Dataset confirmed available")
+
         # Log and send progress: Loading data
         logs.append(f"[{datetime.utcnow().isoformat()}] Loading market data for {symbol}")
         await ws_manager.send_progress(
@@ -430,6 +532,17 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
         )
 
         start_time = time.time()
+
+        # Ensure dataset is available before analysis
+        logs.append(f"[{datetime.utcnow().isoformat()}] Checking dataset availability for {request.symbol}")
+        dataset_ready = await ensure_dataset_available(request.symbol, database)
+
+        if not dataset_ready:
+            error_msg = f"Failed to ensure dataset availability for {request.symbol}"
+            logs.append(f"[{datetime.utcnow().isoformat()}] ERROR: {error_msg}")
+            raise Exception(error_msg)
+
+        logs.append(f"[{datetime.utcnow().isoformat()}] Dataset confirmed available")
 
         # Log: Training models
         logs.append(f"[{datetime.utcnow().isoformat()}] Training ensemble models for consensus analysis")
