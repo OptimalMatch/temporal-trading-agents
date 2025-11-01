@@ -226,7 +226,9 @@ class DataSyncManager:
             )
 
             # Update inventory (using sync client)
-            self._update_inventory_sync(sync_db, job.symbol, job.period, job.interval, data)
+            # For delta jobs, also pass the old period to clean up duplicate entries
+            old_period = job_doc.get('old_period')
+            self._update_inventory_sync(sync_db, job.symbol, job.period, job.interval, data, old_period)
 
             # Clear progress marker
             self.cache.clear_progress(job.symbol, job.period, job.interval)
@@ -265,7 +267,7 @@ class DataSyncManager:
             if pending_job:
                 await self.start_sync_job(pending_job["job_id"])
 
-    def _update_inventory_sync(self, sync_db, symbol: str, period: str, interval: str, data):
+    def _update_inventory_sync(self, sync_db, symbol: str, period: str, interval: str, data, old_period: str = None):
         """Update data inventory after successful download (synchronous version for background threads)"""
         if data is None or data.empty:
             return
@@ -287,6 +289,15 @@ class DataSyncManager:
         cache_path = self.cache._get_cache_path(cache_key)
         if cache_path.exists():
             inventory.file_size_bytes = cache_path.stat().st_size
+
+        # For delta jobs, delete the old inventory entry with the old period
+        if old_period and old_period != period:
+            print(f"🗑️  Deleting old inventory entry for {symbol} ({old_period})")
+            sync_db.data_inventory.delete_one({
+                "symbol": symbol,
+                "period": old_period,
+                "interval": interval
+            })
 
         # Upsert inventory (using sync client)
         sync_db.data_inventory.update_one(

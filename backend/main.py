@@ -1611,10 +1611,12 @@ async def extend_data_range(
     job = await sync_manager.create_sync_job(symbol, new_period, interval)
 
     # Add metadata to track that this is a delta/merge job
+    # Store the old period so we can clean up the old inventory entry after completion
     await db.client.temporal_trading.data_sync_jobs.update_one(
         {"job_id": job.job_id},
         {"$set": {
             "is_delta_job": True,
+            "old_period": existing_inventory.period,  # Store old period for cleanup
             "delta_ranges": [
                 {"type": r[0], "start": r[1].isoformat(), "end": r[2].isoformat()}
                 for r in delta_ranges
