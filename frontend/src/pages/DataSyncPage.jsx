@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Download, Plus, Trash2, Pause, Play, X, Database, Clock, CheckCircle, AlertCircle } from 'lucide-react';
 
-const API_BASE = 'http://localhost:10750/api/v1';
+const API_BASE = '/api/v1';
 
 function DataSyncPage() {
   const [activeJobs, setActiveJobs] = useState([]);
