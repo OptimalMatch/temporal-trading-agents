@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Download, Plus, Trash2, Pause, Play, X, Database, Clock, CheckCircle, AlertCircle } from 'lucide-react';
+import { Download, Plus, Trash2, Pause, Play, X, Database, Clock, CheckCircle, AlertCircle, RefreshCw } from 'lucide-react';
 
 const API_BASE = '/api/v1';
 
@@ -131,6 +131,44 @@ function DataSyncPage() {
       await fetch(`${API_BASE}/sync/jobs/${jobId}/cancel`, { method: 'POST' });
     } catch (err) {
       console.error('Error cancelling job:', err);
+    }
+  };
+
+  const handleDeleteCache = async (symbol, period, interval) => {
+    if (!confirm(`Delete cached data for ${symbol} (${period}, ${interval})?`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/inventory/${symbol}/${period}/${interval}`, {
+        method: 'DELETE'
+      });
+
+      if (res.ok) {
+        setInventory(inventory.filter(item =>
+          !(item.symbol === symbol && item.period === period && item.interval === interval)
+        ));
+      }
+    } catch (err) {
+      console.error('Error deleting cache:', err);
+    }
+  };
+
+  const handleReDownload = async (symbol, period, interval) => {
+    try {
+      // Start a new sync job with the same parameters
+      const res = await fetch(`${API_BASE}/sync/jobs?symbol=${symbol}&period=${period}&interval=${interval}`, {
+        method: 'POST'
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.started) {
+          // Job will show up in next poll
+        }
+      }
+    } catch (err) {
+      console.error('Error re-downloading:', err);
     }
   };
 
@@ -362,6 +400,7 @@ function DataSyncPage() {
                   <th className="text-left py-3 px-4 text-gray-400 font-medium">Date Range</th>
                   <th className="text-left py-3 px-4 text-gray-400 font-medium">Size</th>
                   <th className="text-left py-3 px-4 text-gray-400 font-medium">Last Updated</th>
+                  <th className="text-left py-3 px-4 text-gray-400 font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -381,6 +420,24 @@ function DataSyncPage() {
                     <td className="py-3 px-4 text-gray-300">{formatBytes(item.file_size_bytes)}</td>
                     <td className="py-3 px-4 text-gray-300 text-sm">
                       {new Date(item.last_updated_at).toLocaleDateString()}
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={() => handleReDownload(item.symbol, item.period, item.interval)}
+                          className="p-2 hover:bg-gray-600 rounded transition-colors"
+                          title="Re-download"
+                        >
+                          <RefreshCw className="w-4 h-4 text-gray-300" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteCache(item.symbol, item.period, item.interval)}
+                          className="p-2 hover:bg-red-900/50 rounded transition-colors"
+                          title="Delete cache"
+                        >
+                          <Trash2 className="w-4 h-4 text-red-400" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

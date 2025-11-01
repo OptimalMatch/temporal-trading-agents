@@ -1502,6 +1502,37 @@ async def get_inventory(symbol: Optional[str] = None):
     }
 
 
+@app.delete("/api/v1/inventory/{symbol}/{period}/{interval}")
+async def delete_cached_data(symbol: str, period: str, interval: str):
+    """
+    Delete cached data for a specific symbol/period/interval combination.
+
+    Args:
+        symbol: Trading symbol
+        period: Data period
+        interval: Data interval
+
+    Returns success message
+    """
+    sync_manager = await get_sync_manager(db.client.temporal_trading)
+
+    # Delete from cache
+    cache_key = sync_manager.cache._get_cache_key(symbol, period, interval)
+    cache_path = sync_manager.cache._get_cache_path(cache_key)
+
+    if cache_path.exists():
+        cache_path.unlink()
+
+    # Delete from inventory
+    await db.client.temporal_trading.data_inventory.delete_one({
+        "symbol": symbol,
+        "period": period,
+        "interval": interval
+    })
+
+    return {"message": f"Deleted cached data for {symbol} ({period}, {interval})"}
+
+
 @app.get("/api/v1/inventory/{symbol}")
 async def get_symbol_inventory(symbol: str):
     """Get inventory details for a specific symbol."""
