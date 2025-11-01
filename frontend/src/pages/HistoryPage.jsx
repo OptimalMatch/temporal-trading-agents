@@ -17,7 +17,7 @@ const STRATEGY_TYPES = [
 ];
 
 function HistoryPage() {
-  const [symbol, setSymbol] = useState('BTC-USD');
+  const [symbol, setSymbol] = useState('');
   const [strategyFilter, setStrategyFilter] = useState('');
   const [analyses, setAnalyses] = useState([]);
   const [consensusHistory, setConsensusHistory] = useState([]);
@@ -33,10 +33,16 @@ function HistoryPage() {
     setLoading(true);
     try {
       if (viewMode === 'analyses') {
-        const data = await api.getAnalysisHistory(symbol, strategyFilter || null, 50);
+        // If symbol is empty, fetch all analyses; otherwise fetch for specific symbol
+        const data = symbol
+          ? await api.getAnalysisHistory(symbol, strategyFilter || null, 50)
+          : await api.getAllRecentAnalyses(strategyFilter || null, 50);
         setAnalyses(data.analyses || []);
       } else {
-        const data = await api.getConsensusHistory(symbol, 50);
+        // If symbol is empty, fetch all consensus; otherwise fetch for specific symbol
+        const data = symbol
+          ? await api.getConsensusHistory(symbol, 50)
+          : await api.getAllConsensus(50);
         setConsensusHistory(data.results || []);
       }
     } catch (error) {
@@ -57,13 +63,15 @@ function HistoryPage() {
       <div className="card">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">Symbol</label>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Symbol {symbol === '' && <span className="text-xs text-gray-500">(showing all)</span>}
+            </label>
             <input
               type="text"
               value={symbol}
               onChange={(e) => setSymbol(e.target.value.toUpperCase())}
               className="input w-full"
-              placeholder="BTC-USD"
+              placeholder="Leave empty for all symbols, or enter BTC-USD, TSLA, etc."
             />
           </div>
 
