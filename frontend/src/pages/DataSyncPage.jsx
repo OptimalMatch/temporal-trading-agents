@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Download, Plus, Trash2, Pause, Play, X, Database, Clock, CheckCircle, AlertCircle, RefreshCw, ArrowUpCircle } from 'lucide-react';
+import api from '../services/api';
 
 const API_BASE = '/api/v1';
 
@@ -11,6 +12,25 @@ function DataSyncPage() {
   const [newPeriod, setNewPeriod] = useState('2y');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [availableTickers, setAvailableTickers] = useState([]);
+  const [tickersLoading, setTickersLoading] = useState(true);
+  const [selectedMarket, setSelectedMarket] = useState('crypto');
+
+  // Load available tickers once on mount
+  useEffect(() => {
+    const loadTickers = async () => {
+      try {
+        const data = await api.getAvailableTickers('all');
+        setAvailableTickers(data.tickers || []);
+        setTickersLoading(false);
+      } catch (err) {
+        console.error('Error loading tickers:', err);
+        setTickersLoading(false);
+      }
+    };
+
+    loadTickers();
+  }, []);
 
   // Poll for active jobs every 2 seconds
   useEffect(() => {
@@ -343,16 +363,68 @@ function DataSyncPage() {
           Watchlist
         </h2>
 
+        {/* Market Type Toggle */}
+        <div className="mb-4 flex items-center justify-center">
+          <div className="inline-flex rounded-lg bg-gray-700 p-1">
+            <button
+              type="button"
+              onClick={() => setSelectedMarket('crypto')}
+              className={`px-6 py-2 rounded-md font-medium transition-colors ${
+                selectedMarket === 'crypto'
+                  ? 'bg-brand-600 text-white'
+                  : 'text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              Crypto
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedMarket('stocks')}
+              className={`px-6 py-2 rounded-md font-medium transition-colors ${
+                selectedMarket === 'stocks'
+                  ? 'bg-brand-600 text-white'
+                  : 'text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              Stocks
+            </button>
+          </div>
+        </div>
+
         {/* Add to Watchlist Form */}
         <form onSubmit={handleAddToWatchlist} className="mb-6">
           <div className="flex space-x-3">
-            <input
-              type="text"
-              value={newSymbol}
-              onChange={(e) => setNewSymbol(e.target.value)}
-              placeholder="Symbol (e.g., BTC-USD, AAPL)"
-              className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-brand-500"
-            />
+            <div className="flex-1 relative">
+              <input
+                type="text"
+                value={newSymbol}
+                onChange={(e) => setNewSymbol(e.target.value.toUpperCase())}
+                placeholder={
+                  tickersLoading
+                    ? "Loading symbols..."
+                    : selectedMarket === 'crypto'
+                    ? "Type or select a crypto (e.g., BTC-USD, ETH-USD)"
+                    : "Type or select a stock (e.g., AAPL, TSLA)"
+                }
+                list="available-symbols"
+                disabled={tickersLoading}
+                className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-brand-500 disabled:opacity-50"
+              />
+              <datalist id="available-symbols">
+                {availableTickers
+                  .filter(t => t.market === selectedMarket)
+                  .map((ticker) => (
+                    <option key={ticker.symbol} value={ticker.symbol}>
+                      {ticker.name}
+                    </option>
+                  ))}
+              </datalist>
+              {!tickersLoading && availableTickers.length > 0 && (
+                <div className="absolute right-3 top-1/2 transform -translate-y-1/2 text-xs text-gray-500">
+                  {availableTickers.filter(t => t.market === selectedMarket).length} {selectedMarket === 'crypto' ? 'cryptos' : 'stocks'}
+                </div>
+              )}
+            </div>
             <select
               value={newPeriod}
               onChange={(e) => setNewPeriod(e.target.value)}
@@ -366,7 +438,8 @@ function DataSyncPage() {
             </select>
             <button
               type="submit"
-              className="bg-brand-600 hover:bg-brand-700 text-white px-6 py-2 rounded-lg font-medium transition-colors flex items-center space-x-2"
+              disabled={tickersLoading}
+              className="bg-brand-600 hover:bg-brand-700 text-white px-6 py-2 rounded-lg font-medium transition-colors flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Plus className="w-4 h-4" />
               <span>Add</span>
