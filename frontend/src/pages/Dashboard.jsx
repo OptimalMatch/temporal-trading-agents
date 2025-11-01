@@ -90,13 +90,21 @@ function Dashboard() {
   async function loadDashboardData() {
     try {
       setLoading(true);
-      // Load analytics for a default symbol (could be configurable)
-      const [btcAnalytics, allRecentAnalyses] = await Promise.all([
-        api.getSymbolAnalytics('BTC-USD'),
+
+      // First, get the most recent consensus from any symbol
+      const allConsensus = await api.getAllConsensus(1);
+      const latestConsensus = allConsensus.results?.[0];
+
+      // Determine which symbol to show analytics for
+      const symbolToShow = latestConsensus?.symbol || 'BTC-USD';
+
+      // Load analytics for the symbol with latest consensus and all recent analyses
+      const [symbolAnalytics, allRecentAnalyses] = await Promise.all([
+        api.getSymbolAnalytics(symbolToShow),
         api.getAllRecentAnalyses(null, 20),  // Get recent analyses from all symbols
       ]);
 
-      setStats(btcAnalytics);
+      setStats(symbolAnalytics);
       setRecentAnalyses(allRecentAnalyses.analyses || []);
       setError(null);
     } catch (err) {
