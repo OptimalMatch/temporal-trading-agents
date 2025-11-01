@@ -261,7 +261,8 @@ class MassiveS3DataSource:
 
         return all_data
 
-    def fetch_data(self, symbol: str, period: str = '2y', interval: str = '1d') -> pd.DataFrame:
+    def fetch_data(self, symbol: str, period: str = '2y', interval: str = '1d',
+                   progress_callback: Optional[Callable] = None) -> pd.DataFrame:
         """
         Fetch OHLCV data from Massive.com S3 flat files.
 
@@ -269,6 +270,7 @@ class MassiveS3DataSource:
             symbol: Trading symbol (e.g., 'BTC-USD' for crypto, 'AAPL' for stocks)
             period: Time period (e.g., '1y', '2y', '5y', '6mo')
             interval: Data interval ('1d' for day aggregates, '1h' for minute/hour aggregates)
+            progress_callback: Optional callback function(completed, total, elapsed, skipped)
 
         Returns:
             DataFrame with OHLCV data (Date, Open, High, Low, Close, Volume)
@@ -315,21 +317,27 @@ class MassiveS3DataSource:
         processed_cache = cache.get_progress(symbol, period, interval) or set()
 
         # Download and parse all files in parallel
-        all_data = self._download_files_parallel(
-            files, ticker,
-            max_workers=20,  # Parallel downloads
-            progress_callback=lambda completed, total, elapsed, skipped:
+        # Use provided callback or fall back to console print callback
+        if progress_callback is None:
+            progress_callback = lambda completed, total, elapsed, skipped: \
                 print(f"\r⏳ Progress: {completed}/{total} files ({completed/total*100:.1f}%) | "
                       f"Elapsed: {elapsed:.1f}s | "
                       f"ETA: {(elapsed/completed*(total-completed)) if completed > 0 else 0:.1f}s " +
                       (f"| Resumed: {skipped} skipped" if skipped > 0 else ""),
-                      end='', flush=True) if completed % 10 == 0 or completed == total else None,
+                      end='', flush=True) if completed % 10 == 0 or completed == total else None
+
+        all_data = self._download_files_parallel(
+            files, ticker,
+            max_workers=20,  # Parallel downloads
+            progress_callback=progress_callback,
             processed_cache=processed_cache,
             symbol=symbol,
             period=period,
             interval=interval
         )
-        print()  # New line after progress
+
+        if progress_callback.__name__ == '<lambda>':  # Only print newline for console callback
+            print()  # New line after progress
 
         # Save final progress marker
         if processed_cache:

@@ -138,16 +138,17 @@ class DataSyncManager:
         asyncio.set_event_loop(loop)
 
         try:
-            loop.run_until_complete(self._run_sync_job_async(job_id))
+            loop.run_until_complete(self._run_sync_job_async(job_id, loop))
         finally:
             loop.close()
 
-    async def _run_sync_job_async(self, job_id: str):
+    async def _run_sync_job_async(self, job_id: str, loop):
         """
         Run the sync job asynchronously.
 
         Args:
             job_id: Job ID to run
+            loop: Event loop for this thread
         """
         from strategies.massive_s3_data_source import get_massive_s3_source
 
@@ -179,16 +180,22 @@ class DataSyncManager:
             # Get S3 data source
             s3_source = get_massive_s3_source()
 
+            # Create synchronous wrapper for async progress callback
+            # This allows the sync S3 downloader to call our async MongoDB update
+            def sync_progress_callback(completed: int, total: int, elapsed: float, skipped: int = 0):
+                """Synchronous wrapper that schedules async callback in this thread's event loop"""
+                asyncio.run_coroutine_threadsafe(
+                    progress_callback(completed, total, elapsed, skipped),
+                    loop
+                )
+
             # Fetch data with progress callback
             # Note: This is synchronous, we need to run in executor
             from concurrent.futures import ThreadPoolExecutor
             with ThreadPoolExecutor(max_workers=1) as executor:
-                data = await asyncio.get_event_loop().run_in_executor(
+                data = await loop.run_in_executor(
                     executor,
-                    s3_source.fetch_data,
-                    job.symbol,
-                    job.period,
-                    job.interval
+                    lambda: s3_source.fetch_data(job.symbol, job.period, job.interval, sync_progress_callback)
                 )
 
             # Update job as completed
