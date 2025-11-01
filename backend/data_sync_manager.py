@@ -204,6 +204,10 @@ class DataSyncManager:
                     lambda: s3_source.fetch_data(job.symbol, job.period, job.interval, sync_progress_callback)
                 )
 
+            # Save to cache
+            if data is not None and not data.empty:
+                self.cache.set(data, job.symbol, job.period, job.interval)
+
             # Update job as completed (using sync client)
             sync_db.data_sync_jobs.update_one(
                 {"job_id": job_id},
