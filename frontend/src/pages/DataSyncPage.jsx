@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Download, Plus, Trash2, Pause, Play, X, Database, Clock, CheckCircle, AlertCircle, RefreshCw } from 'lucide-react';
+import { Download, Plus, Trash2, Pause, Play, X, Database, Clock, CheckCircle, AlertCircle, RefreshCw, ArrowUpCircle } from 'lucide-react';
 
 const API_BASE = '/api/v1';
 
@@ -169,6 +169,36 @@ function DataSyncPage() {
       }
     } catch (err) {
       console.error('Error re-downloading:', err);
+    }
+  };
+
+  const handleExtendRange = async (symbol, currentPeriod, interval) => {
+    const newPeriod = prompt(
+      `Extend data range for ${symbol}\n\nCurrent period: ${currentPeriod}\nEnter new period (must be wider, e.g., '5y', '10y'):`,
+      '5y'
+    );
+
+    if (!newPeriod) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/inventory/${symbol}/extend?new_period=${newPeriod}&interval=${interval}`, {
+        method: 'POST'
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        if (data.started) {
+          alert(`Delta download started!\n\nFetching missing data:\n${data.delta_ranges.map(r => `- ${r.type}: ${r.start.split('T')[0]} to ${r.end.split('T')[0]}`).join('\n')}`);
+        } else {
+          alert(data.message);
+        }
+      } else {
+        alert(`Error: ${data.detail || 'Failed to extend data range'}`);
+      }
+    } catch (err) {
+      console.error('Error extending range:', err);
+      alert('Error extending data range');
     }
   };
 
@@ -423,6 +453,13 @@ function DataSyncPage() {
                     </td>
                     <td className="py-3 px-4">
                       <div className="flex items-center space-x-2">
+                        <button
+                          onClick={() => handleExtendRange(item.symbol, item.period, item.interval)}
+                          className="p-2 hover:bg-blue-900/50 rounded transition-colors"
+                          title="Extend date range"
+                        >
+                          <ArrowUpCircle className="w-4 h-4 text-blue-400" />
+                        </button>
                         <button
                           onClick={() => handleReDownload(item.symbol, item.period, item.interval)}
                           className="p-2 hover:bg-gray-600 rounded transition-colors"

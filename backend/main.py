@@ -11,7 +11,7 @@ import traceback
 # Add parent directory to path for strategy imports
 sys.path.append(str(Path(__file__).parent.parent))
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 import time
@@ -1531,6 +1531,113 @@ async def delete_cached_data(symbol: str, period: str, interval: str):
     })
 
     return {"message": f"Deleted cached data for {symbol} ({period}, {interval})"}
+
+
+@app.post("/api/v1/inventory/{symbol}/extend")
+async def extend_data_range(
+    symbol: str,
+    new_period: str = Query(..., description="New period to extend to (e.g., '5y')"),
+    interval: str = Query(default='1d', description="Data interval")
+):
+    """
+    Extend data range for a symbol by fetching only the delta (missing dates).
+    Merges new data with existing cached data.
+
+    Args:
+        symbol: Trading symbol
+        new_period: New period to extend to (must be wider than current)
+        interval: Data interval
+
+    Returns:
+        Job information for the delta download
+    """
+    from strategies.massive_s3_data_source import get_massive_s3_source
+    from datetime import datetime
+
+    sync_manager = await get_sync_manager(db.client.temporal_trading)
+
+    # Get existing inventory to find current coverage
+    inventory_items = await sync_manager.get_inventory(symbol=symbol)
+
+    # Find matching inventory item for this interval
+    existing_inventory = None
+    for item in inventory_items:
+        if item.interval == interval:
+            existing_inventory = item
+            break
+
+    if not existing_inventory:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No existing data found for {symbol} with interval {interval}. Use regular sync instead."
+        )
+
+    # Convert new period to dates
+    s3_source = get_massive_s3_source()
+    new_start, new_end = s3_source._convert_period_to_dates(new_period)
+
+    # Get existing date range
+    existing_start = existing_inventory.date_range_start
+    existing_end = existing_inventory.date_range_end
+
+    if not existing_start or not existing_end:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Existing data has incomplete date range information. Use re-download instead."
+        )
+
+    # Calculate delta ranges to fetch
+    delta_ranges = []
+
+    # Check if we need to fetch earlier data
+    if new_start < existing_start:
+        delta_ranges.append(("before", new_start, existing_start))
+
+    # Check if we need to fetch later data
+    if new_end > existing_end:
+        delta_ranges.append(("after", existing_end, new_end))
+
+    if not delta_ranges:
+        return {
+            "message": "No new data to fetch. Existing coverage already includes the requested period.",
+            "existing_start": existing_start.isoformat(),
+            "existing_end": existing_end.isoformat(),
+            "requested_start": new_start.isoformat(),
+            "requested_end": new_end.isoformat()
+        }
+
+    # Create a special sync job for delta download
+    # We'll mark it differently so it knows to merge instead of replace
+    job = await sync_manager.create_sync_job(symbol, new_period, interval)
+
+    # Add metadata to track that this is a delta/merge job
+    await db.client.temporal_trading.data_sync_jobs.update_one(
+        {"job_id": job.job_id},
+        {"$set": {
+            "is_delta_job": True,
+            "delta_ranges": [
+                {"type": r[0], "start": r[1].isoformat(), "end": r[2].isoformat()}
+                for r in delta_ranges
+            ]
+        }}
+    )
+
+    # Start the job
+    started = await sync_manager.start_sync_job(job.job_id)
+
+    return {
+        "message": f"Started delta download for {symbol}",
+        "job_id": job.job_id,
+        "started": started,
+        "delta_ranges": [
+            {"type": r[0], "start": r[1].isoformat(), "end": r[2].isoformat()}
+            for r in delta_ranges
+        ],
+        "existing_coverage": {
+            "start": existing_start.isoformat(),
+            "end": existing_end.isoformat()
+        }
+    }
 
 
 @app.get("/api/v1/inventory/{symbol}")

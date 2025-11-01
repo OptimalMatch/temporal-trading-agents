@@ -180,6 +180,50 @@ class DataCache:
             except Exception as e:
                 print(f"⚠️  Error clearing progress marker: {e}")
 
+    def merge_and_set(self, new_data: pd.DataFrame, symbol: str, period: str, interval: str = '1d'):
+        """
+        Merge new data with existing cached data and save the result.
+        Useful for extending date ranges without re-downloading everything.
+
+        Args:
+            new_data: New DataFrame to merge
+            symbol: Trading symbol
+            period: Data period
+            interval: Data interval
+        """
+        if new_data is None or new_data.empty:
+            print(f"⚠️  No new data to merge for {symbol}")
+            return
+
+        # Load existing data (bypass TTL check)
+        cache_key = self._get_cache_key(symbol, period, interval)
+        cache_path = self._get_cache_path(cache_key)
+
+        existing_data = None
+        if cache_path.exists():
+            try:
+                with open(cache_path, 'rb') as f:
+                    existing_data = pickle.load(f)
+                print(f"💾 Loaded {len(existing_data)} existing rows for {symbol}")
+            except Exception as e:
+                print(f"⚠️  Error loading existing cache for merge: {e}")
+
+        if existing_data is not None and not existing_data.empty:
+            # Merge: concat and remove duplicates based on index (date)
+            merged_data = pd.concat([existing_data, new_data])
+            # Remove duplicate indices, keeping the last occurrence (newer data)
+            merged_data = merged_data[~merged_data.index.duplicated(keep='last')]
+            # Sort by index
+            merged_data = merged_data.sort_index()
+            print(f"💾 Merged data: {len(existing_data)} existing + {len(new_data)} new = {len(merged_data)} total rows")
+        else:
+            # No existing data, just use new data
+            merged_data = new_data
+            print(f"💾 No existing data, using {len(merged_data)} new rows")
+
+        # Save merged result
+        self.set(merged_data, symbol, period, interval)
+
 
 # Global cache instance
 _cache = None

@@ -204,9 +204,15 @@ class DataSyncManager:
                     lambda: s3_source.fetch_data(job.symbol, job.period, job.interval, sync_progress_callback)
                 )
 
-            # Save to cache
+            # Save to cache (merge if delta job, replace if normal job)
             if data is not None and not data.empty:
-                self.cache.set(data, job.symbol, job.period, job.interval)
+                # Check if this is a delta/merge job
+                is_delta = job_doc.get('is_delta_job', False)
+                if is_delta:
+                    print(f"🔀 Delta job detected, merging data for {job.symbol}")
+                    self.cache.merge_and_set(data, job.symbol, job.period, job.interval)
+                else:
+                    self.cache.set(data, job.symbol, job.period, job.interval)
 
             # Update job as completed (using sync client)
             sync_db.data_sync_jobs.update_one(
