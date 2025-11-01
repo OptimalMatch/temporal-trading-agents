@@ -18,20 +18,27 @@ function DataSyncPage() {
       try {
         const [jobsRes, watchlistRes, inventoryRes] = await Promise.all([
           fetch(`${API_BASE}/sync/jobs`),
-          fetch(`${API_BASE}/sync/watchlist`),
-          fetch(`${API_BASE}/sync/inventory`)
+          fetch(`${API_BASE}/watchlist`),
+          fetch(`${API_BASE}/inventory`)
         ]);
 
         if (jobsRes.ok) {
-          const jobs = await jobsRes.json();
+          const data = await jobsRes.json();
           // Filter for active/pending/paused jobs
-          setActiveJobs(jobs.filter(j =>
+          setActiveJobs(data.jobs.filter(j =>
             ['running', 'pending', 'paused'].includes(j.status)
           ));
         }
 
-        if (watchlistRes.ok) setWatchlist(await watchlistRes.json());
-        if (inventoryRes.ok) setInventory(await inventoryRes.json());
+        if (watchlistRes.ok) {
+          const data = await watchlistRes.json();
+          setWatchlist(data.watchlist || []);
+        }
+
+        if (inventoryRes.ok) {
+          const data = await inventoryRes.json();
+          setInventory(data.inventory || []);
+        }
 
         setLoading(false);
       } catch (err) {
@@ -51,7 +58,7 @@ function DataSyncPage() {
     if (!newSymbol.trim()) return;
 
     try {
-      const res = await fetch(`${API_BASE}/sync/watchlist`, {
+      const res = await fetch(`${API_BASE}/watchlist`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -63,8 +70,8 @@ function DataSyncPage() {
       });
 
       if (res.ok) {
-        const item = await res.json();
-        setWatchlist([...watchlist, item]);
+        const data = await res.json();
+        setWatchlist([...watchlist, data.watchlist_item]);
         setNewSymbol('');
       }
     } catch (err) {
@@ -74,7 +81,7 @@ function DataSyncPage() {
 
   const handleRemoveFromWatchlist = async (symbol) => {
     try {
-      const res = await fetch(`${API_BASE}/sync/watchlist/${symbol}`, {
+      const res = await fetch(`${API_BASE}/watchlist/${symbol}`, {
         method: 'DELETE'
       });
 
