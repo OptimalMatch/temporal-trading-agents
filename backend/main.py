@@ -13,7 +13,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import time
 from datetime import datetime, timedelta
 import uuid
@@ -26,12 +26,16 @@ from backend.models import (
     ConsensusResult, AnalysisStatus, StrategySignal, ForecastStats,
     ScheduledTask, ScheduledTaskCreate, ScheduledTaskUpdate, ScheduleFrequency,
     AnalysisStarted, ForecastData, ModelPrediction, HistoricalPriceData, PricePoint,
-    WatchlistAddRequest, DataSyncJob, TickerWatchlist, DataInventory
+    WatchlistAddRequest, DataSyncJob, TickerWatchlist, DataInventory,
+    BacktestConfig, BacktestRun, BacktestCreateRequest, BacktestSummary,
+    BacktestStatus, PaperTradingConfig, PaperTradingSession, PaperTradingCreateRequest,
+    PaperTradingSummary, PaperTradingStatus
 )
 from backend.database import Database
 from backend.websocket_manager import manager as ws_manager
 from backend.scheduler import get_scheduler
 from backend.data_sync_manager import get_sync_manager
+from backend.backtesting_engine import BacktestEngine
 
 # Import strategies
 from strategies.strategy_utils import load_ensemble_module, train_ensemble, get_default_ensemble_configs
@@ -1907,6 +1911,407 @@ async def get_available_tickers(market: str = "all"):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch tickers: {str(e)}")
+
+
+# ==================== Backtesting Endpoints ====================
+
+@app.post("/api/v1/backtest", response_model=BacktestSummary)
+async def create_backtest(
+    request: BacktestCreateRequest,
+    background_tasks: BackgroundTasks
+) -> BacktestSummary:
+    """
+    Create and run a backtest.
+
+    Runs backtest in background and returns immediately with run_id.
+    """
+    try:
+        run_id = str(uuid.uuid4())
+
+        # Create initial backtest record
+        backtest_run = BacktestRun(
+            run_id=run_id,
+            name=request.name,
+            config=request.config,
+            status=BacktestStatus.PENDING
+        )
+
+        # Store in database
+        await db.store_backtest(backtest_run)
+
+        # Run backtest in background
+        background_tasks.add_task(run_backtest_background, run_id, request.config)
+
+        return BacktestSummary(
+            run_id=run_id,
+            name=request.name,
+            symbol=request.config.symbol,
+            start_date=request.config.start_date,
+            end_date=request.config.end_date,
+            status=BacktestStatus.PENDING,
+            created_at=datetime.utcnow()
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create backtest: {str(e)}")
+
+
+async def run_backtest_background(run_id: str, config: BacktestConfig):
+    """Run backtest in background"""
+    try:
+        # Update status to running
+        await db.update_backtest_status(run_id, BacktestStatus.RUNNING)
+
+        # Load historical price data from cache (where data sync stores it)
+        # Determine period based on asset type
+        is_crypto = '-' in config.symbol
+        period = '2y' if is_crypto else '5y'
+
+        # Check inventory to see if we have 5y data available
+        inventory = await db.db.data_inventory.find_one({
+            "symbol": config.symbol,
+            "is_complete": True
+        })
+        if inventory and inventory.get('period') == '5y':
+            period = '5y'
+
+        from strategies.data_cache import get_cache
+        cache = get_cache()
+        price_data = cache.get(config.symbol, period, interval='1d')
+
+        if price_data is None or len(price_data) == 0:
+            raise ValueError(f"No price data found for {config.symbol} in cache. Please sync data first using the Dashboard → Data page.")
+
+        # Filter by date range
+        if config.start_date or config.end_date:
+            if config.start_date:
+                price_data = price_data[price_data.index >= config.start_date]
+            if config.end_date:
+                price_data = price_data[price_data.index <= config.end_date]
+
+        # Reset index to make date a column for backtesting
+        price_data = price_data.reset_index()
+        price_data = price_data.rename(columns={'Date': 'date', 'Close': 'close', 'Open': 'open', 'High': 'high', 'Low': 'low', 'Volume': 'volume'})
+
+        # Convert column names to lowercase if needed
+        price_data.columns = [c.lower() for c in price_data.columns]
+
+        if len(price_data) == 0:
+            raise ValueError(f"No price data found for {config.symbol} in date range {config.start_date} to {config.end_date}")
+
+        # Initialize backtest engine
+        engine = BacktestEngine(config)
+
+        # Run appropriate backtest type
+        if config.walk_forward.enabled:
+            result = engine.run_walkforward_backtest(price_data, run_id)
+        else:
+            result = engine.run_simple_backtest(price_data, run_id)
+
+        # Store results
+        await db.update_backtest_results(result)
+
+        print(f"✅ Backtest {run_id} completed successfully")
+
+    except Exception as e:
+        print(f"❌ Backtest {run_id} failed: {str(e)}")
+        traceback.print_exc()
+        await db.update_backtest_status(run_id, BacktestStatus.FAILED, str(e))
+
+
+@app.get("/api/v1/backtest", response_model=List[BacktestSummary])
+async def list_backtests(
+    symbol: Optional[str] = None,
+    limit: int = 50
+) -> List[BacktestSummary]:
+    """
+    List all backtest runs, optionally filtered by symbol.
+    """
+    try:
+        backtests = await db.get_backtests(symbol=symbol, limit=limit)
+
+        return [
+            BacktestSummary(
+                run_id=bt.run_id,
+                name=bt.name,
+                symbol=bt.config.symbol,
+                start_date=bt.config.start_date,
+                end_date=bt.config.end_date,
+                status=bt.status,
+                total_return=bt.metrics.total_return if bt.metrics else None,
+                sharpe_ratio=bt.metrics.sharpe_ratio if bt.metrics else None,
+                max_drawdown=bt.metrics.max_drawdown if bt.metrics else None,
+                total_trades=bt.metrics.total_trades if bt.metrics else None,
+                created_at=bt.created_at,
+                completed_at=bt.completed_at
+            )
+            for bt in backtests
+        ]
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list backtests: {str(e)}")
+
+
+@app.get("/api/v1/backtest/{run_id}", response_model=BacktestRun)
+async def get_backtest(run_id: str) -> BacktestRun:
+    """
+    Get detailed backtest results by run_id.
+    """
+    try:
+        backtest = await db.get_backtest(run_id)
+
+        if not backtest:
+            raise HTTPException(status_code=404, detail=f"Backtest {run_id} not found")
+
+        return backtest
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get backtest: {str(e)}")
+
+
+@app.delete("/api/v1/backtest/{run_id}")
+async def delete_backtest(run_id: str):
+    """
+    Delete a backtest run.
+    """
+    try:
+        success = await db.delete_backtest(run_id)
+
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Backtest {run_id} not found")
+
+        return {"message": f"Backtest {run_id} deleted successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete backtest: {str(e)}")
+
+
+# ==================== Paper Trading Endpoints ====================
+
+@app.post("/api/v1/paper-trading", response_model=PaperTradingSummary)
+async def create_paper_trading_session(
+    request: PaperTradingCreateRequest
+) -> PaperTradingSummary:
+    """
+    Create and start a paper trading session.
+    """
+    try:
+        session_id = str(uuid.uuid4())
+
+        # Create paper trading session
+        session = PaperTradingSession(
+            session_id=session_id,
+            name=request.name,
+            config=request.config,
+            status=PaperTradingStatus.ACTIVE,
+            cash=request.config.initial_capital,
+            starting_capital=request.config.initial_capital,
+            current_equity=request.config.initial_capital,
+            total_pnl=0.0,
+            total_pnl_pct=0.0
+        )
+
+        # Store in database
+        await db.store_paper_trading_session(session)
+
+        # Start paper trading monitoring (in background)
+        # This will check for signals at the specified interval
+        asyncio.create_task(monitor_paper_trading_session(session_id))
+
+        return PaperTradingSummary(
+            session_id=session_id,
+            name=request.name,
+            symbol=request.config.symbol,
+            status=PaperTradingStatus.ACTIVE,
+            current_equity=request.config.initial_capital,
+            total_pnl=0.0,
+            total_pnl_pct=0.0,
+            total_trades=0,
+            started_at=session.started_at
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create paper trading session: {str(e)}")
+
+
+async def monitor_paper_trading_session(session_id: str):
+    """
+    Monitor a paper trading session and execute signals.
+    Runs continuously in background.
+    """
+    while True:
+        try:
+            # Get session
+            session = await db.get_paper_trading_session(session_id)
+
+            if not session or session.status != PaperTradingStatus.ACTIVE:
+                print(f"Paper trading session {session_id} stopped or not found")
+                break
+
+            # Check if it's time to check for signals
+            now = datetime.utcnow()
+            if session.next_signal_check and now < session.next_signal_check:
+                # Wait until next check time
+                sleep_seconds = (session.next_signal_check - now).total_seconds()
+                await asyncio.sleep(min(sleep_seconds, 60))  # Check at least every minute
+                continue
+
+            # Get consensus signal
+            # TODO: Integrate with actual consensus analysis
+            signal = await get_paper_trading_signal(session.config.symbol)
+
+            if signal and session.config.auto_execute:
+                # Execute trade based on signal
+                await execute_paper_trade(session, signal)
+
+            # Update next check time
+            session.last_signal_check = now
+            session.next_signal_check = now + timedelta(minutes=session.config.check_interval_minutes)
+            await db.update_paper_trading_session(session)
+
+            # Wait for next interval
+            await asyncio.sleep(session.config.check_interval_minutes * 60)
+
+        except Exception as e:
+            print(f"Error monitoring paper trading session {session_id}: {str(e)}")
+            traceback.print_exc()
+            await asyncio.sleep(60)  # Wait a minute before retrying
+
+
+async def get_paper_trading_signal(symbol: str) -> Optional[Dict]:
+    """Get current consensus signal for symbol"""
+    # TODO: Implement actual consensus signal retrieval
+    # For now, return None (no signal)
+    return None
+
+
+async def execute_paper_trade(session: PaperTradingSession, signal: Dict):
+    """Execute a paper trade based on signal"""
+    # TODO: Implement paper trade execution logic
+    pass
+
+
+@app.get("/api/v1/paper-trading", response_model=List[PaperTradingSummary])
+async def list_paper_trading_sessions(
+    status: Optional[PaperTradingStatus] = None,
+    limit: int = 50
+) -> List[PaperTradingSummary]:
+    """
+    List all paper trading sessions.
+    """
+    try:
+        sessions = await db.get_paper_trading_sessions(status=status, limit=limit)
+
+        return [
+            PaperTradingSummary(
+                session_id=s.session_id,
+                name=s.name,
+                symbol=s.config.symbol,
+                status=s.status,
+                current_equity=s.current_equity,
+                total_pnl=s.total_pnl,
+                total_pnl_pct=s.total_pnl_pct,
+                total_trades=s.total_trades,
+                started_at=s.started_at
+            )
+            for s in sessions
+        ]
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list paper trading sessions: {str(e)}")
+
+
+@app.get("/api/v1/paper-trading/{session_id}", response_model=PaperTradingSession)
+async def get_paper_trading_session(session_id: str) -> PaperTradingSession:
+    """
+    Get detailed paper trading session by session_id.
+    """
+    try:
+        session = await db.get_paper_trading_session(session_id)
+
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Paper trading session {session_id} not found")
+
+        return session
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get paper trading session: {str(e)}")
+
+
+@app.post("/api/v1/paper-trading/{session_id}/pause")
+async def pause_paper_trading_session(session_id: str):
+    """
+    Pause a paper trading session.
+    """
+    try:
+        session = await db.get_paper_trading_session(session_id)
+
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+        session.status = PaperTradingStatus.PAUSED
+        await db.update_paper_trading_session(session)
+
+        return {"message": f"Paper trading session {session_id} paused"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to pause session: {str(e)}")
+
+
+@app.post("/api/v1/paper-trading/{session_id}/resume")
+async def resume_paper_trading_session(session_id: str):
+    """
+    Resume a paused paper trading session.
+    """
+    try:
+        session = await db.get_paper_trading_session(session_id)
+
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+        session.status = PaperTradingStatus.ACTIVE
+        await db.update_paper_trading_session(session)
+
+        # Restart monitoring
+        asyncio.create_task(monitor_paper_trading_session(session_id))
+
+        return {"message": f"Paper trading session {session_id} resumed"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to resume session: {str(e)}")
+
+
+@app.post("/api/v1/paper-trading/{session_id}/stop")
+async def stop_paper_trading_session(session_id: str):
+    """
+    Stop a paper trading session.
+    """
+    try:
+        session = await db.get_paper_trading_session(session_id)
+
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+        session.status = PaperTradingStatus.STOPPED
+        session.stopped_at = datetime.utcnow()
+        await db.update_paper_trading_session(session)
+
+        return {"message": f"Paper trading session {session_id} stopped"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to stop session: {str(e)}")
 
 
 if __name__ == "__main__":
