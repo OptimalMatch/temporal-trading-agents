@@ -1384,6 +1384,43 @@ async def cancel_sync_job(job_id: str):
     return {"message": f"Job {job_id} cancelled"}
 
 
+@app.post("/api/v1/sync/jobs/process-queue")
+async def process_pending_jobs():
+    """
+    Process pending jobs in the queue.
+    Starts pending jobs up to the concurrency limit.
+    """
+    sync_manager = await get_sync_manager(db.client.temporal_trading)
+
+    # Get count of running jobs
+    running_count = await db.client.temporal_trading.data_sync_jobs.count_documents({"status": "running"})
+
+    # Start pending jobs up to max concurrency
+    started = []
+    while running_count < sync_manager.max_concurrent:
+        # Find next pending job
+        pending_job = await db.client.temporal_trading.data_sync_jobs.find_one(
+            {"status": "pending"},
+            sort=[("created_at", 1)]
+        )
+
+        if not pending_job:
+            break
+
+        success = await sync_manager.start_sync_job(pending_job["job_id"])
+        if success:
+            started.append(pending_job["job_id"])
+            running_count += 1
+        else:
+            break
+
+    return {
+        "message": f"Started {len(started)} pending jobs",
+        "started_jobs": started,
+        "remaining_pending": await db.client.temporal_trading.data_sync_jobs.count_documents({"status": "pending"})
+    }
+
+
 # ==================== Watchlist Management Endpoints ====================
 
 @app.post("/api/v1/watchlist")
