@@ -190,8 +190,8 @@ def make_ensemble_predictions(ensemble_models, symbol, forecast_horizon=7):
     prediction_details = []
 
     for model_info in ensemble_models:
-        # Fetch latest data
-        df_latest = fetch_crypto_data(symbol, period='6mo')
+        # Fetch latest data - use 2 years to match training data and enable saving full history
+        df_latest = fetch_crypto_data(symbol, period='2y')
         df_latest, _ = add_technical_indicators(df_latest, focus=model_info['focus'])
 
         # Prepare features
