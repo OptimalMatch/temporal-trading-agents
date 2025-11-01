@@ -1062,6 +1062,24 @@ async def get_analysis_history(
         raise HTTPException(status_code=500, detail=f"Failed to retrieve history: {str(e)}")
 
 
+@app.get("/api/v1/history/consensus")
+async def get_all_consensus(
+    limit: int = 100,
+    skip: int = 0,
+    database: Database = Depends(get_database)
+):
+    """Get recent consensus results across all symbols"""
+    try:
+        results = await database.get_consensus_results(
+            symbol=None,  # No symbol filter = all symbols
+            limit=limit,
+            skip=skip
+        )
+        return {"count": len(results), "results": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve consensus history: {str(e)}")
+
+
 @app.get("/api/v1/history/consensus/{symbol}")
 async def get_consensus_history(
     symbol: str,
@@ -1788,6 +1806,107 @@ async def get_symbol_inventory(symbol: str):
         "symbol": symbol,
         "coverage": [item.dict() for item in inventory]
     }
+
+
+# Global cache for tickers (refresh every 24 hours)
+_tickers_cache = {"data": None, "timestamp": None, "ttl_hours": 24}
+
+
+@app.get("/api/v1/tickers")
+async def get_available_tickers(market: str = "all"):
+    """
+    Get available tickers from Massive.com API.
+
+    Args:
+        market: Filter by market type - 'crypto', 'stocks', or 'all' (default)
+
+    Returns:
+        List of available tickers with symbol and name, sorted alphabetically
+    """
+    import httpx
+    from datetime import datetime, timedelta
+
+    # Check cache
+    now = datetime.utcnow()
+    if _tickers_cache["data"] and _tickers_cache["timestamp"]:
+        age = now - _tickers_cache["timestamp"]
+        if age < timedelta(hours=_tickers_cache["ttl_hours"]):
+            cached_data = _tickers_cache["data"]
+            if market == "all":
+                return cached_data
+            else:
+                return {
+                    "tickers": [t for t in cached_data["tickers"] if t["market"] == market],
+                    "count": len([t for t in cached_data["tickers"] if t["market"] == market])
+                }
+
+    # Fetch from Massive.com API
+    api_key = os.getenv("MASSIVE_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="MASSIVE_API_KEY not configured")
+
+    tickers = []
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Fetch crypto tickers
+            crypto_url = f"https://api.massive.com/v3/reference/tickers?market=crypto&active=true&order=asc&limit=1000&sort=ticker&apiKey={api_key}"
+            crypto_response = await client.get(crypto_url)
+            if crypto_response.status_code == 200:
+                crypto_data = crypto_response.json()
+                for ticker in crypto_data.get("results", []):
+                    # Convert X:BTCUSD to BTC-USD format
+                    polygon_ticker = ticker["ticker"]
+                    if polygon_ticker.startswith("X:"):
+                        # Extract base and quote currencies
+                        # X:BTCUSD -> BTC-USD
+                        base_currency = ticker.get("base_currency_symbol", "")
+                        quote_currency = ticker.get("currency_symbol", "")
+                        if base_currency and quote_currency:
+                            symbol = f"{base_currency}-{quote_currency}"
+                        else:
+                            # Fallback: try to parse from ticker
+                            symbol = polygon_ticker[2:]  # Remove X: prefix
+
+                        tickers.append({
+                            "symbol": symbol,
+                            "name": ticker.get("name", symbol),
+                            "market": "crypto",
+                            "polygon_ticker": polygon_ticker
+                        })
+
+            # Fetch stock tickers (US stocks)
+            stocks_url = f"https://api.massive.com/v3/reference/tickers?market=stocks&active=true&order=asc&limit=1000&sort=ticker&apiKey={api_key}"
+            stocks_response = await client.get(stocks_url)
+            if stocks_response.status_code == 200:
+                stocks_data = stocks_response.json()
+                for ticker in stocks_data.get("results", []):
+                    symbol = ticker["ticker"]
+                    tickers.append({
+                        "symbol": symbol,
+                        "name": ticker.get("name", symbol),
+                        "market": "stocks",
+                        "polygon_ticker": symbol
+                    })
+
+        # Sort alphabetically by symbol
+        tickers.sort(key=lambda x: x["symbol"])
+
+        # Cache the result
+        _tickers_cache["data"] = {"tickers": tickers, "count": len(tickers)}
+        _tickers_cache["timestamp"] = now
+
+        # Filter by market if requested
+        if market != "all":
+            tickers = [t for t in tickers if t["market"] == market]
+
+        return {
+            "tickers": tickers,
+            "count": len(tickers)
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch tickers: {str(e)}")
 
 
 if __name__ == "__main__":

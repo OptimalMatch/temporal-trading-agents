@@ -69,6 +69,10 @@ class APIService {
     return this.request(`/history/analyses/${symbol}?${params}`);
   }
 
+  async getAllConsensus(limit = 100) {
+    return this.request(`/history/consensus?limit=${limit}`);
+  }
+
   async getConsensusHistory(symbol, limit = 100) {
     return this.request(`/history/consensus/${symbol}?limit=${limit}`);
   }
@@ -76,6 +80,11 @@ class APIService {
   // Analytics
   async getSymbolAnalytics(symbol) {
     return this.request(`/analytics/${symbol}`);
+  }
+
+  // Tickers
+  async getAvailableTickers(market = 'all') {
+    return this.request(`/tickers?market=${market}`);
   }
 
   // Scheduled Tasks
