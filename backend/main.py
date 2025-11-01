@@ -1021,6 +1021,26 @@ async def analyze_consensus(
 
 # ==================== History Endpoints ====================
 
+@app.get("/api/v1/history/analyses")
+async def get_all_analyses(
+    strategy_type: Optional[StrategyType] = None,
+    limit: int = 100,
+    skip: int = 0,
+    database: Database = Depends(get_database)
+):
+    """Get recent strategy analyses across all symbols"""
+    try:
+        analyses = await database.get_strategy_analyses(
+            symbol=None,  # No symbol filter = all symbols
+            strategy_type=strategy_type,
+            limit=limit,
+            skip=skip
+        )
+        return {"count": len(analyses), "analyses": analyses}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve history: {str(e)}")
+
+
 @app.get("/api/v1/history/analyses/{symbol}")
 async def get_analysis_history(
     symbol: str,

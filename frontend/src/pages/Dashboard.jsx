@@ -91,13 +91,13 @@ function Dashboard() {
     try {
       setLoading(true);
       // Load analytics for a default symbol (could be configurable)
-      const [btcAnalytics, recentBTC] = await Promise.all([
+      const [btcAnalytics, allRecentAnalyses] = await Promise.all([
         api.getSymbolAnalytics('BTC-USD'),
-        api.getAnalysisHistory('BTC-USD', null, 10),
+        api.getAllRecentAnalyses(null, 20),  // Get recent analyses from all symbols
       ]);
 
       setStats(btcAnalytics);
-      setRecentAnalyses(recentBTC.analyses || []);
+      setRecentAnalyses(allRecentAnalyses.analyses || []);
       setError(null);
     } catch (err) {
       setError(err.message);

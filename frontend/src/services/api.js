@@ -57,6 +57,12 @@ class APIService {
   }
 
   // History
+  async getAllRecentAnalyses(strategyType = null, limit = 100) {
+    const params = new URLSearchParams({ limit: limit.toString() });
+    if (strategyType) params.append('strategy_type', strategyType);
+    return this.request(`/history/analyses?${params}`);
+  }
+
   async getAnalysisHistory(symbol, strategyType = null, limit = 100) {
     const params = new URLSearchParams({ limit: limit.toString() });
     if (strategyType) params.append('strategy_type', strategyType);
