@@ -261,14 +261,15 @@ class MassiveS3DataSource:
 
         return all_data
 
-    def fetch_data(self, symbol: str, period: str = '2y', interval: str = '1d',
-                   progress_callback: Optional[Callable] = None) -> pd.DataFrame:
+    def fetch_data_range(self, symbol: str, start_date: datetime, end_date: datetime,
+                        interval: str = '1d', progress_callback: Optional[Callable] = None) -> pd.DataFrame:
         """
-        Fetch OHLCV data from Massive.com S3 flat files.
+        Fetch OHLCV data from Massive.com S3 flat files for explicit date range.
 
         Args:
             symbol: Trading symbol (e.g., 'BTC-USD' for crypto, 'AAPL' for stocks)
-            period: Time period (e.g., '1y', '2y', '5y', '6mo')
+            start_date: Start date for data fetch
+            end_date: End date for data fetch
             interval: Data interval ('1d' for day aggregates, '1h' for minute/hour aggregates)
             progress_callback: Optional callback function(completed, total, elapsed, skipped)
 
@@ -276,7 +277,6 @@ class MassiveS3DataSource:
             DataFrame with OHLCV data (Date, Open, High, Low, Close, Volume)
         """
         ticker = self._get_ticker_symbol(symbol)
-        start_date, end_date = self._convert_period_to_dates(period)
         is_crypto = self._is_crypto(symbol)
 
         # Determine S3 prefix based on asset type and interval
@@ -284,7 +284,7 @@ class MassiveS3DataSource:
             if interval == '1d':
                 prefix = 'global_crypto/day_aggs_v1'
             elif interval == '1h':
-                prefix = 'global_crypto/minute_aggs_v1'  # We'll filter to hourly later
+                prefix = 'global_crypto/minute_aggs_v1'
             elif interval == '1m':
                 prefix = 'global_crypto/minute_aggs_v1'
             else:
@@ -294,7 +294,7 @@ class MassiveS3DataSource:
             if interval == '1d':
                 prefix = 'us_stocks_sip/day_aggs_v1'
             elif interval == '1h':
-                prefix = 'us_stocks_sip/minute_aggs_v1'  # We'll filter to hourly later
+                prefix = 'us_stocks_sip/minute_aggs_v1'
             elif interval == '1m':
                 prefix = 'us_stocks_sip/minute_aggs_v1'
             else:
@@ -311,13 +311,7 @@ class MassiveS3DataSource:
 
         print(f"📁 Found {len(files)} files to process")
 
-        # Try to get progress marker for resume support
-        from strategies.data_cache import get_cache
-        cache = get_cache()
-        processed_cache = cache.get_progress(symbol, period, interval) or set()
-
         # Download and parse all files in parallel
-        # Use provided callback or fall back to console print callback
         if progress_callback is None:
             progress_callback = lambda completed, total, elapsed, skipped: \
                 print(f"\r⏳ Progress: {completed}/{total} files ({completed/total*100:.1f}%) | "
@@ -328,20 +322,16 @@ class MassiveS3DataSource:
 
         all_data = self._download_files_parallel(
             files, ticker,
-            max_workers=20,  # Parallel downloads
+            max_workers=20,
             progress_callback=progress_callback,
-            processed_cache=processed_cache,
+            processed_cache=None,  # No resume support for delta downloads
             symbol=symbol,
-            period=period,
+            period=None,
             interval=interval
         )
 
-        if progress_callback.__name__ == '<lambda>':  # Only print newline for console callback
+        if progress_callback.__name__ == '<lambda>':
             print()  # New line after progress
-
-        # Save final progress marker
-        if processed_cache:
-            cache.save_progress(processed_cache, symbol, period, interval)
 
         if not all_data:
             print(f"⚠️  No data found for ticker {ticker}")
@@ -351,7 +341,6 @@ class MassiveS3DataSource:
         combined_df = pd.concat(all_data, ignore_index=True)
 
         # Convert to yfinance-compatible format
-        # Expected columns from Massive: ticker, volume, open, close, high, low, window_start, transactions
         column_mapping = {
             'open': 'Open',
             'high': 'High',
@@ -379,6 +368,23 @@ class MassiveS3DataSource:
         print(f"✓ Fetched {len(combined_df)} rows for {symbol} from S3 flat files")
 
         return combined_df
+
+    def fetch_data(self, symbol: str, period: str = '2y', interval: str = '1d',
+                   progress_callback: Optional[Callable] = None) -> pd.DataFrame:
+        """
+        Fetch OHLCV data from Massive.com S3 flat files.
+
+        Args:
+            symbol: Trading symbol (e.g., 'BTC-USD' for crypto, 'AAPL' for stocks)
+            period: Time period (e.g., '1y', '2y', '5y', '6mo')
+            interval: Data interval ('1d' for day aggregates, '1h' for minute/hour aggregates)
+            progress_callback: Optional callback function(completed, total, elapsed, skipped)
+
+        Returns:
+            DataFrame with OHLCV data (Date, Open, High, Low, Close, Volume)
+        """
+        start_date, end_date = self._convert_period_to_dates(period)
+        return self.fetch_data_range(symbol, start_date, end_date, interval, progress_callback)
 
 
 # Global instance
