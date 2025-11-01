@@ -6,9 +6,11 @@ import sys
 from pathlib import Path
 import threading
 import time
+import os
 from typing import Optional, Dict, Callable
 from datetime import datetime, timedelta
 from motor.motor_asyncio import AsyncIOMotorDatabase
+import pymongo  # Synchronous MongoDB client for background threads
 
 # Add parent directory to path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -25,6 +27,10 @@ class DataSyncManager:
         self.cache = get_cache()
         self.running_jobs: Dict[str, threading.Thread] = {}  # job_id -> thread
         self.max_concurrent = 3  # Maximum concurrent downloads
+
+        # Store MongoDB URL for creating sync clients in background threads
+        self.mongodb_url = os.getenv("MONGODB_URL", "mongodb://mongodb:27017")
+        self.db_name = "temporal_trading"
 
     async def initialize(self):
         """Initialize collections and indexes"""
@@ -133,39 +139,51 @@ class DataSyncManager:
         """
         import asyncio
 
+        # Create synchronous MongoDB client for this background thread
+        # Motor (async) won't work in background threads, so we use pymongo (sync)
+        sync_client = pymongo.MongoClient(self.mongodb_url)
+        sync_db = sync_client[self.db_name]
+
         # Create event loop for this thread
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
         try:
-            loop.run_until_complete(self._run_sync_job_async(job_id, loop))
+            loop.run_until_complete(self._run_sync_job_async(job_id, loop, sync_db))
         finally:
             loop.close()
+            sync_client.close()
 
-    async def _run_sync_job_async(self, job_id: str, loop):
+    async def _run_sync_job_async(self, job_id: str, loop, sync_db):
         """
         Run the sync job asynchronously.
 
         Args:
             job_id: Job ID to run
             loop: Event loop for this thread
+            sync_db: Synchronous MongoDB database for progress updates
         """
         from strategies.massive_s3_data_source import get_massive_s3_source
 
-        # Get job from database
-        job_doc = await self.db.data_sync_jobs.find_one({"job_id": job_id})
+        # Get job from database using sync client (Motor won't work in background threads)
+        job_doc = sync_db.data_sync_jobs.find_one({"job_id": job_id})
         if not job_doc:
             return
 
         job = DataSyncJob(**job_doc)
 
         try:
-            # Create progress callback
-            async def progress_callback(completed: int, total: int, elapsed: float, skipped: int = 0):
+            # Get S3 data source
+            s3_source = get_massive_s3_source()
+
+            # Create synchronous progress callback that uses sync_db
+            # This works because sync_db is a synchronous pymongo client
+            def sync_progress_callback(completed: int, total: int, elapsed: float, skipped: int = 0):
+                """Synchronous progress callback using pymongo (not Motor)"""
                 progress_percent = (completed / total * 100) if total > 0 else 0
                 eta = (elapsed / completed * (total - completed)) if completed > 0 else 0
 
-                await self.db.data_sync_jobs.update_one(
+                sync_db.data_sync_jobs.update_one(
                     {"job_id": job_id},
                     {"$set": {
                         "progress_percent": progress_percent,
@@ -177,18 +195,6 @@ class DataSyncManager:
                     }}
                 )
 
-            # Get S3 data source
-            s3_source = get_massive_s3_source()
-
-            # Create synchronous wrapper for async progress callback
-            # This allows the sync S3 downloader to call our async MongoDB update
-            def sync_progress_callback(completed: int, total: int, elapsed: float, skipped: int = 0):
-                """Synchronous wrapper that schedules async callback in this thread's event loop"""
-                asyncio.run_coroutine_threadsafe(
-                    progress_callback(completed, total, elapsed, skipped),
-                    loop
-                )
-
             # Fetch data with progress callback
             # Note: This is synchronous, we need to run in executor
             from concurrent.futures import ThreadPoolExecutor
@@ -198,8 +204,8 @@ class DataSyncManager:
                     lambda: s3_source.fetch_data(job.symbol, job.period, job.interval, sync_progress_callback)
                 )
 
-            # Update job as completed
-            await self.db.data_sync_jobs.update_one(
+            # Update job as completed (using sync client)
+            sync_db.data_sync_jobs.update_one(
                 {"job_id": job_id},
                 {"$set": {
                     "status": SyncJobStatus.COMPLETED.value,
@@ -209,15 +215,15 @@ class DataSyncManager:
                 }}
             )
 
-            # Update inventory
-            await self._update_inventory(job.symbol, job.period, job.interval, data)
+            # Update inventory (using sync client)
+            self._update_inventory_sync(sync_db, job.symbol, job.period, job.interval, data)
 
             # Clear progress marker
             self.cache.clear_progress(job.symbol, job.period, job.interval)
 
         except Exception as e:
-            # Update job as failed
-            await self.db.data_sync_jobs.update_one(
+            # Update job as failed (using sync client)
+            sync_db.data_sync_jobs.update_one(
                 {"job_id": job_id},
                 {"$set": {
                     "status": SyncJobStatus.FAILED.value,
@@ -232,8 +238,8 @@ class DataSyncManager:
             if job_id in self.running_jobs:
                 del self.running_jobs[job_id]
 
-            # Start next pending job if any
-            await self._start_next_pending_job()
+            # Note: We don't start the next pending job here because we're in a background thread
+            # The main API will handle starting pending jobs when new jobs are created/queried
 
     async def _start_next_pending_job(self):
         """Start the next pending job if under concurrency limit"""
@@ -248,6 +254,36 @@ class DataSyncManager:
 
             if pending_job:
                 await self.start_sync_job(pending_job["job_id"])
+
+    def _update_inventory_sync(self, sync_db, symbol: str, period: str, interval: str, data):
+        """Update data inventory after successful download (synchronous version for background threads)"""
+        if data is None or data.empty:
+            return
+
+        inventory = DataInventory(
+            symbol=symbol,
+            period=period,
+            interval=interval,
+            total_days=len(data),
+            date_range_start=data.index.min().to_pydatetime() if len(data) > 0 else None,
+            date_range_end=data.index.max().to_pydatetime() if len(data) > 0 else None,
+            last_updated_at=datetime.utcnow(),
+            is_complete=True,  # Assume complete for now
+            missing_dates=[]
+        )
+
+        # Get file size from cache
+        cache_key = self.cache._get_cache_key(symbol, period, interval)
+        cache_path = self.cache._get_cache_path(cache_key)
+        if cache_path.exists():
+            inventory.file_size_bytes = cache_path.stat().st_size
+
+        # Upsert inventory (using sync client)
+        sync_db.data_inventory.update_one(
+            {"symbol": symbol, "period": period, "interval": interval},
+            {"$set": inventory.dict()},
+            upsert=True
+        )
 
     async def _update_inventory(self, symbol: str, period: str, interval: str, data):
         """Update data inventory after successful download"""
