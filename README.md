@@ -306,12 +306,36 @@ git clone https://github.com/yourusername/temporal-trading-agents.git
 cd temporal-trading-agents
 ```
 
-### 2. Build and start all services
+### 2. Configure environment variables
+Copy the example environment file and add your API credentials:
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env` and add your API keys:
+```bash
+# Required: Add your data provider credentials
+POLYGON_API_KEY=your_actual_polygon_api_key
+MASSIVE_ACCESS_KEY_ID=your_actual_massive_access_key
+MASSIVE_SECRET_ACCESS_KEY=your_actual_massive_secret_key
+MASSIVE_API_KEY=your_actual_massive_api_key
+
+# Other settings can remain at defaults
+```
+
+**Getting API Keys:**
+- **Polygon.io**: Sign up at [polygon.io](https://polygon.io) for market data access
+- **Massive.com**: Get credentials at [massive.com](https://massive.com) for S3 flat files
+
+> **Note**: Without valid API keys, you won't be able to download market data. The system will still run, but data sync operations will fail.
+
+### 3. Build and start all services
 ```bash
 docker-compose up --build
 ```
 
-### 3. Access the Dashboard
+### 4. Access the Dashboard
 Open your browser and navigate to:
 ```
 http://localhost:10752
@@ -327,7 +351,7 @@ The dashboard provides:
 - **Scheduler Page**: Create automated recurring analysis tasks
 - **Data Sync Page**: Manage market data downloads and updates
 
-### 4. Access the API (optional)
+### 5. Access the API (optional)
 ```bash
 # Health check
 curl http://localhost:10750/health
@@ -1050,6 +1074,8 @@ Show me the latest forecast gradient analysis for TSLA
 
 ## Environment Configuration
 
+> **Quick Start Users**: If you followed the [Quick Start](#quick-start) section, you've already configured your `.env` file. This section provides details on all available configuration options.
+
 Copy `.env.example` to `.env` and customize:
 
 ```bash
@@ -1074,10 +1100,16 @@ FRONTEND_HOST_PORT=10752
 DEFAULT_FORECAST_HORIZONS=3,7,14,21
 ENSEMBLE_SIZE=5
 
-# Data Provider Configuration (choose one)
-DATA_PROVIDER=polygon  # or 'massive'
-POLYGON_API_KEY=your_key_here
-MASSIVE_API_KEY=your_key_here
+# Data Provider Configuration
+# Polygon.io API (for real-time market data)
+POLYGON_API_KEY=your_polygon_api_key_here
+
+# Massive.com S3 Configuration (for bulk historical data)
+MASSIVE_ACCESS_KEY_ID=your_massive_access_key_id_here
+MASSIVE_SECRET_ACCESS_KEY=your_massive_secret_access_key_here
+MASSIVE_S3_ENDPOINT=https://files.massive.com
+MASSIVE_S3_BUCKET=flatfiles
+MASSIVE_API_KEY=your_massive_api_key_here
 
 # CORS Configuration
 CORS_ORIGINS=http://localhost:10752,http://localhost:3000
