@@ -544,7 +544,8 @@ class BacktestEngine:
                     current_price,
                     historical_df=historical_df,
                     multi_horizon_stats=self.multi_horizon_stats,
-                    params=self.config.optimizable
+                    params=self.config.optimizable,
+                    enabled_strategies=self.config.enabled_strategies
                 )
             else:
                 signal = self._get_dummy_signal(bar_counter, current_price)
@@ -1016,7 +1017,8 @@ class BacktestEngine:
         )
 
     def _get_consensus_signal(self, stats: Dict, current_price: float, historical_df: pd.DataFrame = None,
-                            multi_horizon_stats: Dict = None, params: 'OptimizableParams' = None) -> Dict[str, Any]:
+                            multi_horizon_stats: Dict = None, params: 'OptimizableParams' = None,
+                            enabled_strategies: List[str] = None) -> Dict[str, Any]:
         """
         Generate consensus trading signal by running all strategies and voting.
 
@@ -1026,6 +1028,7 @@ class BacktestEngine:
             historical_df: Historical price DataFrame for mean reversion (optional)
             multi_horizon_stats: Dictionary of stats for multiple horizons (optional)
             params: Optimizable parameters for configurable thresholds (optional)
+            enabled_strategies: List of strategy keys to include in consensus (defaults to all)
 
         Returns:
             Dictionary with action ('buy', 'sell', 'hold'), strategy name, and consensus info
@@ -1036,6 +1039,10 @@ class BacktestEngine:
         - Optional: Mean Reversion (if historical_df provided)
         - Optional: Multi-Timeframe (if multi_horizon_stats provided)
         """
+        # Default to all strategies if not specified
+        if enabled_strategies is None:
+            enabled_strategies = ['gradient', 'confidence', 'volatility', 'acceleration',
+                                 'swing', 'risk_adjusted', 'mean_reversion', 'multi_timeframe']
         # Use provided params or default values
         if params is None:
             from backend.models import OptimizableParams
@@ -1112,6 +1119,27 @@ class BacktestEngine:
                 strategies['Mean Reversion'] = results['mean_reversion']
             if 'multi_timeframe' in results:
                 strategies['Multi-Timeframe'] = results['multi_timeframe']
+
+            # Filter strategies based on enabled_strategies list
+            strategy_key_map = {
+                'gradient': 'Forecast Gradient',
+                'confidence': 'Confidence-Weighted',
+                'volatility': 'Volatility Sizing',
+                'acceleration': 'Acceleration',
+                'swing': 'Swing Trading',
+                'risk_adjusted': 'Risk-Adjusted',
+                'mean_reversion': 'Mean Reversion',
+                'multi_timeframe': 'Multi-Timeframe'
+            }
+
+            # Keep only enabled strategies
+            filtered_strategies = {}
+            for strategy_key in enabled_strategies:
+                strategy_name = strategy_key_map.get(strategy_key)
+                if strategy_name and strategy_name in strategies:
+                    filtered_strategies[strategy_name] = strategies[strategy_name]
+
+            strategies = filtered_strategies
 
             # Categorize signals
             bullish_keywords = ['BUY', 'BULLISH', 'MOMENTUM', 'REVERT', 'REVERSAL', 'EXCELLENT', 'GOOD']

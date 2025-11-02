@@ -209,8 +209,18 @@ class ParameterOptimizer:
         logger.info(f"Starting parameter optimization with {self.max_workers} workers")
 
         # Generate all parameter combinations
-        combinations = self.generate_parameter_combinations(parameter_grid)
-        total_combinations = len(combinations)
+        param_combinations = self.generate_parameter_combinations(parameter_grid)
+
+        # Generate strategy combinations (default to base config if not specified)
+        strategy_combinations = parameter_grid.enabled_strategies if parameter_grid.enabled_strategies else [base_config.enabled_strategies]
+
+        # Create full combinations (params × strategies)
+        all_combinations = []
+        for params in param_combinations:
+            for strategies in strategy_combinations:
+                all_combinations.append((params, strategies))
+
+        total_combinations = len(all_combinations)
 
         # Create optimization run record
         optimization_run = OptimizationRun(
@@ -227,17 +237,20 @@ class ParameterOptimizer:
         results = []
         completed = 0
 
-        logger.info(f"Running {total_combinations} backtest combinations...")
+        logger.info(f"Running {total_combinations} backtest combinations (params × strategies)...")
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             # Submit all jobs
-            future_to_params = {
-                executor.submit(self.run_single_backtest, base_config, params, price_data): params
-                for params in combinations
-            }
+            future_to_config = {}
+            for params, strategies in all_combinations:
+                # Create a config with these specific strategies
+                config = base_config.copy(deep=True)
+                config.enabled_strategies = strategies
+                future = executor.submit(self.run_single_backtest, config, params, price_data)
+                future_to_config[future] = (params, strategies)
 
             # Process results as they complete
-            for future in as_completed(future_to_params):
+            for future in as_completed(future_to_config):
                 try:
                     params, metrics, run_id = future.result()
                     metric_value = self.extract_metric_value(metrics, optimization_metric)
@@ -261,7 +274,7 @@ class ParameterOptimizer:
                         logger.info(f"Progress: {completed}/{total_combinations} combinations completed")
 
                 except Exception as e:
-                    params = future_to_params[future]
+                    params, strategies = future_to_config[future]
                     logger.error(f"Backtest failed for {params}: {e}")
                     print(f"❌ Backtest failed for params: {params}")
                     print(f"   Error: {e}")
