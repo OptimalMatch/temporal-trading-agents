@@ -263,7 +263,14 @@ class ParameterOptimizer:
                 except Exception as e:
                     params = future_to_params[future]
                     logger.error(f"Backtest failed for {params}: {e}")
+                    print(f"❌ Backtest failed for params: {params}")
+                    print(f"   Error: {e}")
+                    import traceback
+                    traceback.print_exc()
                     # Continue with other combinations even if one fails
+                    completed += 1  # Count failed attempts too
+                    if progress_callback:
+                        progress_callback(completed, total_combinations)
 
         # Rank results
         ranked_results = self.rank_results(results, optimization_metric)

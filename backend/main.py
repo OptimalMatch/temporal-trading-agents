@@ -2172,15 +2172,19 @@ def run_optimization_in_thread(optimization_id: str, request_dict: dict, databas
         def update_progress(completed: int, total: int):
             """Update optimization progress in database"""
             try:
-                sync_db.optimizations.update_one(
+                print(f"📊 Progress update: {completed}/{total} combinations completed")
+                result = sync_db.optimizations.update_one(
                     {"optimization_id": optimization_id},
                     {"$set": {
                         "completed_combinations": completed,
                         "total_combinations": total
                     }}
                 )
+                print(f"   Database updated: matched={result.matched_count}, modified={result.modified_count}")
             except Exception as e:
-                logger.error(f"Failed to update progress: {e}")
+                print(f"❌ Failed to update progress: {e}")
+                import traceback
+                traceback.print_exc()
 
         # Run optimization
         optimizer = ParameterOptimizer(max_workers=2)  # Limit workers to avoid overload
