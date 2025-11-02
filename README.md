@@ -38,6 +38,40 @@ Each ensemble combines **5-8 individual models** using weighted averaging based 
 - **Provides uncertainty estimates** - Disagreement between models signals lower confidence
 - **Adapts to regime changes** - Different models excel in different market environments
 
+### Ensemble Learning Process
+
+```mermaid
+flowchart LR
+    Data[(Historical<br/>Market Data)] --> Split[Train/Val Split]
+
+    Split --> M1[Model 1<br/>TFT<br/>lr=0.001<br/>hidden=128]
+    Split --> M2[Model 2<br/>TFT<br/>lr=0.003<br/>hidden=64]
+    Split --> M3[Model 3<br/>N-BEATS<br/>lr=0.002<br/>hidden=256]
+    Split --> M4[Model 4<br/>TFT<br/>lr=0.001<br/>hidden=256]
+    Split --> M5[Model 5<br/>DeepAR<br/>lr=0.002<br/>hidden=128]
+
+    M1 --> P1[Prediction 1<br/>Q10, Q50, Q90]
+    M2 --> P2[Prediction 2<br/>Q10, Q50, Q90]
+    M3 --> P3[Prediction 3<br/>Q10, Q50, Q90]
+    M4 --> P4[Prediction 4<br/>Q10, Q50, Q90]
+    M5 --> P5[Prediction 5<br/>Q10, Q50, Q90]
+
+    P1 --> Ensemble{Weighted<br/>Averaging}
+    P2 --> Ensemble
+    P3 --> Ensemble
+    P4 --> Ensemble
+    P5 --> Ensemble
+
+    Ensemble --> Final[Final Forecast<br/>+ Confidence Bands<br/>+ Model Agreement]
+
+    Final --> Strategies[Feed to<br/>8 Strategies]
+
+    style Data fill:#3b82f6,stroke:#333,stroke-width:2px,color:#fff
+    style Ensemble fill:#f59e0b,stroke:#333,stroke-width:2px,color:#fff
+    style Final fill:#10b981,stroke:#333,stroke-width:2px,color:#fff
+    style Strategies fill:#8b5cf6,stroke:#333,stroke-width:2px,color:#fff
+```
+
 ---
 
 ## How It Works: From Forecasts to Trading Signals
@@ -114,6 +148,64 @@ Each strategy votes on every trading opportunity. A trade is only executed when 
 - 🔴 **SELL/AVOID**: 4+ strategies bearish
 - ⚪ **MIXED SIGNALS**: No clear consensus, avoid trading
 
+### Analysis Flow
+
+```mermaid
+flowchart TD
+    Start([User Requests Analysis]) --> Download[Download Market Data]
+    Download --> Prepare[Prepare Time Series]
+
+    Prepare --> Train1[Train Ensemble 1<br/>3-day horizon]
+    Prepare --> Train2[Train Ensemble 2<br/>7-day horizon]
+    Prepare --> Train3[Train Ensemble 3<br/>14-day horizon]
+    Prepare --> Train4[Train Ensemble 4<br/>21-day horizon]
+
+    Train1 --> Forecast[Generate Forecasts<br/>with Confidence Bands]
+    Train2 --> Forecast
+    Train3 --> Forecast
+    Train4 --> Forecast
+
+    Forecast --> S1[Strategy 1:<br/>Gradient Analysis]
+    Forecast --> S2[Strategy 2:<br/>Confidence Weighted]
+    Forecast --> S3[Strategy 3:<br/>Volatility Sizing]
+    Forecast --> S4[Strategy 4:<br/>Multi-Timeframe]
+    Forecast --> S5[Strategy 5:<br/>Mean Reversion]
+    Forecast --> S6[Strategy 6:<br/>Acceleration]
+    Forecast --> S7[Strategy 7:<br/>Swing Trading]
+    Forecast --> S8[Strategy 8:<br/>Risk-Adjusted]
+
+    S1 --> Vote{Consensus<br/>Voting}
+    S2 --> Vote
+    S3 --> Vote
+    S4 --> Vote
+    S5 --> Vote
+    S6 --> Vote
+    S7 --> Vote
+    S8 --> Vote
+
+    Vote -->|6-8 Agree| Strong[STRONG Signal]
+    Vote -->|5 Agree| Good[GOOD Signal]
+    Vote -->|4 Agree| Moderate[MODERATE Signal]
+    Vote -->|3 or less| Mixed[MIXED - No Action]
+
+    Strong --> Store[(Store Results<br/>in MongoDB)]
+    Good --> Store
+    Moderate --> Store
+    Mixed --> Store
+
+    Store --> Notify[Notify Dashboard<br/>via WebSocket]
+    Notify --> End([Analysis Complete])
+
+    style Start fill:#4f46e5,stroke:#333,stroke-width:2px,color:#fff
+    style Forecast fill:#8b5cf6,stroke:#333,stroke-width:2px,color:#fff
+    style Vote fill:#f59e0b,stroke:#333,stroke-width:2px,color:#fff
+    style Strong fill:#10b981,stroke:#333,stroke-width:2px,color:#fff
+    style Good fill:#10b981,stroke:#333,stroke-width:2px,color:#fff
+    style Moderate fill:#fbbf24,stroke:#333,stroke-width:2px,color:#fff
+    style Mixed fill:#6b7280,stroke:#333,stroke-width:2px,color:#fff
+    style End fill:#4f46e5,stroke:#333,stroke-width:2px,color:#fff
+```
+
 ---
 
 ## Why Consensus Voting Works
@@ -170,28 +262,32 @@ The project includes a complete Docker setup with React dashboard, REST API back
 
 ### Architecture
 
-```
-┌─────────────────────┐
-│  React Dashboard    │ (Port: 10752)
-│  Real-time UI       │
-└──────────┬──────────┘
-           │ HTTP/WebSocket
-           ▼
-┌──────────────────────┐     ┌─────────────────────┐
-│   Backend API        │────▶│   MongoDB           │
-│   (Port: 10750)      │     │   (Port: 10751)     │
-│   - REST Endpoints   │     │   - Analyses        │
-│   - WebSockets       │     │   - Consensus       │
-│   - Scheduler        │     │   - Forecasts       │
-│   - Paper Trading    │     │   - Paper Trades    │
-└──────────┬───────────┘     └─────────────────────┘
-           │
-           ▼
-┌──────────────────────┐
-│   MCP Server         │
-│   (Port: stdio)      │
-│   AI Agent Access    │
-└──────────────────────┘
+```mermaid
+graph TB
+    subgraph Frontend["Frontend Layer"]
+        Dashboard["React Dashboard<br/>Port: 10752<br/>Real-time UI"]
+    end
+
+    subgraph Backend["Backend Layer"]
+        API["Backend API<br/>Port: 10750<br/>- REST Endpoints<br/>- WebSockets<br/>- Scheduler<br/>- Paper Trading"]
+    end
+
+    subgraph Data["Data Layer"]
+        MongoDB["MongoDB<br/>Port: 10751<br/>- Analyses<br/>- Consensus<br/>- Forecasts<br/>- Paper Trades"]
+    end
+
+    subgraph Integration["AI Integration"]
+        MCP["MCP Server<br/>stdio<br/>AI Agent Access"]
+    end
+
+    Dashboard -->|HTTP/WebSocket| API
+    API -->|Store/Query| MongoDB
+    MCP -->|API Calls| API
+
+    style Dashboard fill:#4f46e5,stroke:#333,stroke-width:2px,color:#fff
+    style API fill:#059669,stroke:#333,stroke-width:2px,color:#fff
+    style MongoDB fill:#10b981,stroke:#333,stroke-width:2px,color:#fff
+    style MCP fill:#8b5cf6,stroke:#333,stroke-width:2px,color:#fff
 ```
 
 **Services:**
@@ -282,6 +378,52 @@ curl -X POST http://localhost:10750/api/v1/paper-trading/start \
 - Track portfolio value, P&L, win rate, and Sharpe ratio
 - Real-time signal monitoring with trade execution logs
 - Pause/resume trading sessions with full state preservation
+
+#### Paper Trading Workflow
+
+```mermaid
+flowchart TD
+    Start([Start Paper Trading]) --> Config[Configure Session<br/>- Symbols<br/>- Capital<br/>- Check Interval<br/>- Strategies]
+    Config --> Init[Initialize Portfolio<br/>Cash = Initial Capital]
+
+    Init --> Schedule[Schedule Periodic Checks]
+    Schedule --> Wait[Wait for Next Check<br/>Default: 60 minutes]
+
+    Wait --> Fetch[Fetch Latest Market Data]
+    Fetch --> Analyze[Run Consensus Analysis<br/>All 8 Strategies]
+
+    Analyze --> Signal{New Trading<br/>Signal?}
+
+    Signal -->|No Signal| Wait
+    Signal -->|BUY Signal| CheckCash{Sufficient<br/>Cash?}
+    Signal -->|SELL Signal| CheckPosition{Have<br/>Position?}
+
+    CheckCash -->|Yes| ExecuteBuy[Place Buy Order<br/>- Calculate Position Size<br/>- Deduct Cash<br/>- Add to Portfolio]
+    CheckCash -->|No| LogSkip1[Log: Insufficient Cash]
+
+    CheckPosition -->|Yes| ExecuteSell[Place Sell Order<br/>- Calculate P&L<br/>- Add Cash<br/>- Remove from Portfolio]
+    CheckPosition -->|No| LogSkip2[Log: No Position to Sell]
+
+    ExecuteBuy --> Record1[(Record Trade<br/>in Database)]
+    ExecuteSell --> Record2[(Record Trade<br/>in Database)]
+    LogSkip1 --> Wait
+    LogSkip2 --> Wait
+
+    Record1 --> UpdateMetrics[Update Performance Metrics<br/>- Win Rate<br/>- Sharpe Ratio<br/>- Total P&L]
+    Record2 --> UpdateMetrics
+
+    UpdateMetrics --> Notify[Notify Dashboard<br/>via WebSocket]
+    Notify --> CheckStatus{Session<br/>Active?}
+
+    CheckStatus -->|Active| Wait
+    CheckStatus -->|Stopped| End([Session Ended])
+
+    style Start fill:#4f46e5,stroke:#333,stroke-width:2px,color:#fff
+    style Signal fill:#f59e0b,stroke:#333,stroke-width:2px,color:#fff
+    style ExecuteBuy fill:#10b981,stroke:#333,stroke-width:2px,color:#fff
+    style ExecuteSell fill:#ef4444,stroke:#333,stroke-width:2px,color:#fff
+    style End fill:#6b7280,stroke:#333,stroke-width:2px,color:#fff
+```
 
 ### Backtesting & Optimization
 - Test different strategy combinations and parameters
@@ -528,6 +670,52 @@ Tracks performance across 9 distinct market conditions:
 9. **Consolidation** - Range contraction
 
 Identifies which strategies and parameters perform best in each regime, enabling adaptive strategy selection.
+
+### Backtesting Workflow
+
+```mermaid
+flowchart TD
+    Start([Start Backtest]) --> Config[Configure Backtest<br/>- Symbol<br/>- Date Range<br/>- Strategies<br/>- Initial Capital]
+
+    Config --> Split[Split Data into<br/>Training Windows]
+
+    Split --> Window1[Window 1<br/>Train: Month 1-6<br/>Test: Month 7]
+    Split --> Window2[Window 2<br/>Train: Month 2-7<br/>Test: Month 8]
+    Split --> Window3[Window 3<br/>Train: Month 3-8<br/>Test: Month 9]
+
+    Window1 --> Train1[Train Ensemble Models<br/>on Training Period]
+    Window2 --> Train2[Train Ensemble Models<br/>on Training Period]
+    Window3 --> Train3[Train Ensemble Models<br/>on Training Period]
+
+    Train1 --> Test1[Generate Signals<br/>on Test Period]
+    Train2 --> Test2[Generate Signals<br/>on Test Period]
+    Train3 --> Test3[Generate Signals<br/>on Test Period]
+
+    Test1 --> Sim1[Simulate Trading<br/>- Apply Fees<br/>- Apply Slippage<br/>- Track P&L]
+    Test2 --> Sim2[Simulate Trading<br/>- Apply Fees<br/>- Apply Slippage<br/>- Track P&L]
+    Test3 --> Sim3[Simulate Trading<br/>- Apply Fees<br/>- Apply Slippage<br/>- Track P&L]
+
+    Sim1 --> Combine[Combine Results<br/>Across All Windows]
+    Sim2 --> Combine
+    Sim3 --> Combine
+
+    Combine --> Metrics[Calculate Metrics<br/>- Total Return<br/>- Sharpe Ratio<br/>- Max Drawdown<br/>- Win Rate<br/>- Profit Factor]
+
+    Metrics --> Regime[Analyze by<br/>Market Regime<br/>9 Conditions]
+
+    Regime --> Report[Generate Report<br/>- Performance Charts<br/>- Trade Log<br/>- Strategy Attribution<br/>- Regime Breakdown]
+
+    Report --> Store[(Store Results<br/>in Database)]
+    Store --> End([Backtest Complete])
+
+    style Start fill:#4f46e5,stroke:#333,stroke-width:2px,color:#fff
+    style Train1 fill:#8b5cf6,stroke:#333,stroke-width:2px,color:#fff
+    style Train2 fill:#8b5cf6,stroke:#333,stroke-width:2px,color:#fff
+    style Train3 fill:#8b5cf6,stroke:#333,stroke-width:2px,color:#fff
+    style Metrics fill:#10b981,stroke:#333,stroke-width:2px,color:#fff
+    style Regime fill:#f59e0b,stroke:#333,stroke-width:2px,color:#fff
+    style End fill:#4f46e5,stroke:#333,stroke-width:2px,color:#fff
+```
 
 ---
 
@@ -1009,25 +1197,66 @@ See LICENSE file for details.
 
 Ready to start using Temporal Trading Agents? Follow this recommended workflow:
 
-### 1. **Dashboard** - Get Familiar
+```mermaid
+flowchart TD
+    Start([New User]) --> Step1[1. Dashboard<br/>Get Familiar<br/>View latest signals<br/>Understand consensus voting]
+
+    Step1 --> Step2[2. Data Sync<br/>Load Historical Data<br/>Download BTC-USD, ETH-USD<br/>Ensure sufficient history]
+
+    Step2 --> Step3[3. Analyze<br/>Run First Analysis<br/>Trigger 8-strategy consensus<br/>Watch real-time progress]
+
+    Step3 --> Step4[4. Backtest<br/>Validate on History<br/>Test strategies on past data<br/>See realistic performance]
+
+    Step4 --> Decision{Results<br/>Promising?}
+
+    Decision -->|No| Step5A[5. Optimize<br/>Find Best Parameters<br/>Discover optimal combinations<br/>Refine approach]
+    Decision -->|Yes| Step6
+
+    Step5A --> Step6[6. Paper Trade<br/>Simulate Live Trading<br/>Run for days/weeks<br/>Assess consistency]
+
+    Step6 --> Monitor[Monitor Performance<br/>- Track P&L<br/>- Win Rate<br/>- Sharpe Ratio]
+
+    Monitor --> Decision2{Paper Trading<br/>Successful?}
+
+    Decision2 -->|No - Adjust| Step5A
+    Decision2 -->|Yes| Step7[7. Go Live<br/>Real Trading<br/>Start small<br/>Scale gradually]
+
+    Step7 --> Future[Future Feature<br/>Connect to exchanges<br/>Alpaca, Binance, etc.]
+
+    style Start fill:#4f46e5,stroke:#333,stroke-width:2px,color:#fff
+    style Step1 fill:#3b82f6,stroke:#333,stroke-width:2px,color:#fff
+    style Step2 fill:#3b82f6,stroke:#333,stroke-width:2px,color:#fff
+    style Step3 fill:#8b5cf6,stroke:#333,stroke-width:2px,color:#fff
+    style Step4 fill:#10b981,stroke:#333,stroke-width:2px,color:#fff
+    style Step5A fill:#f59e0b,stroke:#333,stroke-width:2px,color:#fff
+    style Step6 fill:#10b981,stroke:#333,stroke-width:2px,color:#fff
+    style Step7 fill:#059669,stroke:#333,stroke-width:2px,color:#fff
+    style Decision fill:#f59e0b,stroke:#333,stroke-width:2px,color:#fff
+    style Decision2 fill:#f59e0b,stroke:#333,stroke-width:2px,color:#fff
+    style Future fill:#6b7280,stroke:#333,stroke-width:2px,color:#fff
+```
+
+### Workflow Steps Explained
+
+**1. Dashboard - Get Familiar**
 Start at the Dashboard page to see the latest consensus signals and overall system status. This gives you a feel for how strategies vote and what signals look like.
 
-### 2. **Data Sync** - Load Historical Data
+**2. Data Sync - Load Historical Data**
 Go to the Data Sync page and download historical data for your target symbols (e.g., BTC-USD, ETH-USD, AAPL). The system needs sufficient history to train accurate models.
 
-### 3. **Analyze** - Run Your First Analysis
+**3. Analyze - Run Your First Analysis**
 Navigate to the Analyze page and trigger an 8-strategy consensus analysis. Watch the real-time progress as models train and strategies vote. Examine the results to understand each strategy's perspective.
 
-### 4. **Backtest** - Validate on History
+**4. Backtest - Validate on History**
 Use the Backtest page to test your chosen strategies on historical data. See how they would have performed with realistic costs. This builds intuition for which strategies work for which assets.
 
-### 5. **Optimize** - Find Best Parameters
+**5. Optimize - Find Best Parameters**
 Run the Optimization engine to discover which parameter combinations and strategy subsets perform best for your symbols. Use the results to refine your trading approach.
 
-### 6. **Paper Trade** - Simulate Live Trading
+**6. Paper Trade - Simulate Live Trading**
 Start a Paper Trading session to validate your strategies in simulated real-time. This tests the full trading loop without risking capital. Monitor for several days or weeks to assess consistency.
 
-### 7. **Go Live** (Future)
+**7. Go Live (Future)**
 Once you're confident from paper trading results, you'll be able to connect to real exchanges (planned feature). Start with small position sizes and scale up gradually.
 
 ---
