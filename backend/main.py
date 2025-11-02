@@ -29,7 +29,9 @@ from backend.models import (
     WatchlistAddRequest, DataSyncJob, TickerWatchlist, DataInventory,
     BacktestConfig, BacktestRun, BacktestCreateRequest, BacktestSummary,
     BacktestStatus, PaperTradingConfig, PaperTradingSession, PaperTradingCreateRequest,
-    PaperTradingSummary, PaperTradingStatus
+    PaperTradingSummary, PaperTradingStatus,
+    OptimizableParams, ParameterGrid, OptimizationRequest, OptimizationResult,
+    OptimizationRun, OptimizationStatus, OptimizationMetric
 )
 from backend.database import Database
 from backend.websocket_manager import manager as ws_manager
@@ -2074,6 +2076,120 @@ def run_backtest_in_thread(run_id: str, config_dict: dict):
         sync_client.close()
 
 
+def run_optimization_in_thread(optimization_id: str, request_dict: dict, database):
+    """
+    Run parameter optimization in a separate thread to avoid blocking the event loop.
+    Uses synchronous MongoDB operations (pymongo) instead of Motor.
+    """
+    import pymongo
+    import os
+    import traceback
+
+    from backend.parameter_optimizer import ParameterOptimizer
+
+    # Create synchronous MongoDB client for this thread
+    mongodb_url = os.getenv("MONGODB_URL", "mongodb://mongodb:27017")
+    sync_client = pymongo.MongoClient(mongodb_url)
+    sync_db = sync_client["temporal_trading"]
+
+    try:
+        # Reconstruct request from dict
+        request = OptimizationRequest(**request_dict)
+
+        # Update status to running (synchronous)
+        sync_db.optimizations.update_one(
+            {"optimization_id": optimization_id},
+            {"$set": {
+                "status": OptimizationStatus.RUNNING.value,
+                "started_at": datetime.utcnow()
+            }}
+        )
+
+        # Load historical price data from cache
+        config = request.base_config
+        is_crypto = '-' in config.symbol
+        period = '2y' if is_crypto else '5y'
+
+        # Check inventory for 5y data availability
+        inventory = sync_db.data_inventory.find_one({
+            "symbol": config.symbol,
+            "is_complete": True
+        })
+        if inventory and inventory.get('period') == '5y':
+            period = '5y'
+
+        from strategies.data_cache import get_cache
+        cache = get_cache()
+        price_data = cache.get(config.symbol, period, interval='1d')
+
+        if price_data is None or len(price_data) == 0:
+            raise ValueError(f"No price data found for {config.symbol} in cache. Please sync data first.")
+
+        # Filter by date range
+        if config.start_date or config.end_date:
+            if config.start_date:
+                price_data = price_data[price_data.index >= config.start_date]
+            if config.end_date:
+                price_data = price_data[price_data.index <= config.end_date]
+
+        # Reset index and normalize column names
+        price_data = price_data.reset_index()
+        price_data = price_data.rename(columns={
+            'Date': 'date', 'Close': 'close', 'Open': 'open',
+            'High': 'high', 'Low': 'low', 'Volume': 'volume'
+        })
+        price_data.columns = [c.lower() for c in price_data.columns]
+
+        if len(price_data) == 0:
+            raise ValueError(f"No price data in date range {config.start_date} to {config.end_date}")
+
+        print(f"🔧 Starting parameter optimization {optimization_id}")
+        print(f"   Symbol: {config.symbol}")
+        print(f"   Date range: {config.start_date} to {config.end_date}")
+        print(f"   Optimization metric: {request.optimization_metric.value}")
+
+        # Run optimization
+        optimizer = ParameterOptimizer(max_workers=2)  # Limit workers to avoid overload
+        optimization_run = optimizer.optimize(
+            base_config=request.base_config,
+            parameter_grid=request.parameter_grid,
+            price_data=price_data,
+            optimization_metric=request.optimization_metric,
+            top_n=request.top_n_results
+        )
+
+        # Update with optimization_id
+        optimization_run.optimization_id = optimization_id
+
+        # Store results (synchronous)
+        sync_db.optimizations.update_one(
+            {"optimization_id": optimization_id},
+            {"$set": optimization_run.dict()},
+            upsert=True
+        )
+
+        print(f"✅ Optimization {optimization_id} completed successfully")
+        print(f"   Best {request.optimization_metric.value}: {optimization_run.top_results[0].metric_value:.4f}")
+        print(f"   Best parameters: {optimization_run.best_parameters.dict()}")
+
+    except Exception as e:
+        print(f"❌ Optimization {optimization_id} failed: {str(e)}")
+        traceback.print_exc()
+
+        # Update status to failed (synchronous)
+        sync_db.optimizations.update_one(
+            {"optimization_id": optimization_id},
+            {"$set": {
+                "status": OptimizationStatus.FAILED.value,
+                "error_message": str(e),
+                "completed_at": datetime.utcnow()
+            }}
+        )
+
+    finally:
+        sync_client.close()
+
+
 async def run_backtest_background(run_id: str, config: BacktestConfig):
     """Run backtest in background (DEPRECATED - use run_backtest_in_thread instead)"""
     try:
@@ -2206,6 +2322,92 @@ async def delete_backtest(run_id: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete backtest: {str(e)}")
+
+
+# ==================== Parameter Optimization Endpoints ====================
+
+@app.post("/api/v1/optimize/parameters")
+async def optimize_parameters(
+    request: OptimizationRequest,
+    database: Database = Depends(get_database)
+):
+    """
+    Run parameter optimization using grid search.
+    Tests all combinations of parameters and returns top results.
+    """
+    try:
+        optimization_id = str(uuid.uuid4())
+
+        # Create optimization run record
+        optimization_run = OptimizationRun(
+            optimization_id=optimization_id,
+            name=request.name,
+            base_config=request.base_config,
+            parameter_grid=request.parameter_grid,
+            optimization_metric=request.optimization_metric,
+            status=OptimizationStatus.PENDING
+        )
+
+        # Store initial record
+        await database.store_optimization_run(optimization_run)
+
+        # Run optimization in background (thread pool to avoid blocking)
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(
+            backtest_executor,  # Use same executor as backtests
+            run_optimization_in_thread,
+            optimization_id,
+            request.dict(),
+            database
+        )
+
+        return {
+            "optimization_id": optimization_id,
+            "status": "pending",
+            "message": "Optimization started"
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to start optimization: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to start optimization: {str(e)}")
+
+
+@app.get("/api/v1/optimize/{optimization_id}")
+async def get_optimization(
+    optimization_id: str,
+    database: Database = Depends(get_database)
+):
+    """
+    Get optimization run results.
+    """
+    try:
+        optimization = await database.get_optimization_run(optimization_id)
+
+        if not optimization:
+            raise HTTPException(status_code=404, detail=f"Optimization {optimization_id} not found")
+
+        return optimization
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get optimization: {str(e)}")
+
+
+@app.get("/api/v1/optimize")
+async def list_optimizations(
+    limit: int = 50,
+    database: Database = Depends(get_database)
+):
+    """
+    List recent optimization runs.
+    """
+    try:
+        optimizations = await database.get_optimization_runs(limit=limit)
+        return {"count": len(optimizations), "optimizations": optimizations}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list optimizations: {str(e)}")
 
 
 # ==================== Paper Trading Endpoints ====================

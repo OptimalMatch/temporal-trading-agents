@@ -642,6 +642,75 @@ class Database:
             print(f"Error deleting backtest: {e}")
             return False
 
+    # ==================== Parameter Optimization Methods ====================
+
+    async def store_optimization_run(self, optimization: 'OptimizationRun') -> bool:
+        """Store an optimization run"""
+        try:
+            from backend.models import OptimizationRun
+            opt_dict = optimization.dict()
+            await self.db.optimizations.insert_one(opt_dict)
+            return True
+        except Exception as e:
+            print(f"Error storing optimization run: {e}")
+            return False
+
+    async def get_optimization_run(self, optimization_id: str) -> Optional['OptimizationRun']:
+        """Get optimization run by optimization_id"""
+        try:
+            from backend.models import OptimizationRun
+            opt = await self.db.optimizations.find_one({"optimization_id": optimization_id}, {"_id": 0})
+            if opt:
+                return OptimizationRun(**opt)
+            return None
+        except Exception as e:
+            print(f"Error getting optimization run: {e}")
+            return None
+
+    async def get_optimization_runs(self, limit: int = 50) -> List['OptimizationRun']:
+        """Get recent optimization runs"""
+        try:
+            from backend.models import OptimizationRun
+            cursor = self.db.optimizations.find(
+                {},
+                {"_id": 0}
+            ).sort("created_at", -1).limit(limit)
+
+            optimizations = []
+            async for opt in cursor:
+                optimizations.append(OptimizationRun(**opt))
+            return optimizations
+        except Exception as e:
+            print(f"Error getting optimization runs: {e}")
+            return []
+
+    async def update_optimization_status(
+        self,
+        optimization_id: str,
+        status: 'OptimizationStatus',
+        error_message: Optional[str] = None
+    ) -> bool:
+        """Update optimization run status"""
+        try:
+            from backend.models import OptimizationStatus
+            update_dict = {
+                "status": status.value,
+                "updated_at": datetime.utcnow()
+            }
+            if error_message:
+                update_dict["error_message"] = error_message
+            if status == OptimizationStatus.COMPLETED or status == OptimizationStatus.FAILED:
+                update_dict["completed_at"] = datetime.utcnow()
+
+            await self.db.optimizations.update_one(
+                {"optimization_id": optimization_id},
+                {"$set": update_dict}
+            )
+            return True
+        except Exception as e:
+            print(f"Error updating optimization status: {e}")
+            return False
+
     # ==================== Paper Trading Methods ====================
 
     async def store_paper_trading_session(self, session: PaperTradingSession) -> bool:
