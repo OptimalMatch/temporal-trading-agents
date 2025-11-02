@@ -1,4 +1,4 @@
-import { X, TrendingUp, TrendingDown, DollarSign, Activity, BarChart3, ArrowLeft } from 'lucide-react';
+import { X, TrendingUp, TrendingDown, DollarSign, Activity, BarChart3, ArrowLeft, Cloud, CloudRain, CloudSnow, Sun, Wind, Zap } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area } from 'recharts';
 
 export default function BacktestResults({ backtest, onClose }) {
@@ -376,6 +376,142 @@ export default function BacktestResults({ backtest, onClose }) {
                 <p className="text-lg font-semibold text-gray-100">
                   {backtest.period_metrics.length}
                 </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Regime Analysis */}
+      {backtest.regime_analysis && backtest.regime_analysis.regime_statistics && Object.keys(backtest.regime_analysis.regime_statistics).length > 0 && (
+        <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center space-x-3">
+              <Cloud className="w-6 h-6 text-brand-500" />
+              <h3 className="text-lg font-semibold text-gray-100">Market Regime Analysis</h3>
+            </div>
+            <div className="text-sm text-gray-400">
+              {backtest.regime_analysis.total_regime_changes} regime changes
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="text-left border-b border-gray-700">
+                  <th className="py-2 px-4 text-sm font-medium text-gray-400">Regime</th>
+                  <th className="py-2 px-4 text-sm font-medium text-gray-400 text-right">Time %</th>
+                  <th className="py-2 px-4 text-sm font-medium text-gray-400 text-right">Trades</th>
+                  <th className="py-2 px-4 text-sm font-medium text-gray-400 text-right">Win Rate</th>
+                  <th className="py-2 px-4 text-sm font-medium text-gray-400 text-right">Avg Return</th>
+                  <th className="py-2 px-4 text-sm font-medium text-gray-400 text-right">Total P&L</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(backtest.regime_analysis.regime_statistics)
+                  .sort((a, b) => b[1].regime_pct - a[1].regime_pct)
+                  .map(([regimeName, stats]) => {
+                    // Determine icon and color based on regime
+                    let Icon = Cloud;
+                    let volColor = 'text-gray-400';
+                    let trendColor = 'text-gray-400';
+
+                    if (regimeName.includes('high_vol')) {
+                      Icon = Zap;
+                      volColor = 'text-orange-400';
+                    } else if (regimeName.includes('low_vol')) {
+                      Icon = Sun;
+                      volColor = 'text-yellow-400';
+                    } else if (regimeName.includes('med_vol')) {
+                      Icon = Wind;
+                      volColor = 'text-blue-400';
+                    }
+
+                    if (regimeName.includes('uptrend')) {
+                      trendColor = 'text-green-400';
+                    } else if (regimeName.includes('downtrend')) {
+                      trendColor = 'text-red-400';
+                    }
+
+                    return (
+                      <tr key={regimeName} className="border-b border-gray-700/50 hover:bg-gray-700/30">
+                        <td className="py-3 px-4">
+                          <div className="flex items-center space-x-2">
+                            <Icon className={`w-4 h-4 ${volColor}`} />
+                            <div>
+                              <div className={`text-sm font-medium ${trendColor}`}>
+                                {stats.description.split(' - ')[0]}
+                              </div>
+                              <div className="text-xs text-gray-500">
+                                {stats.description.split(' - ')[1]}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 text-sm text-right text-gray-300">
+                          {stats.regime_pct.toFixed(1)}%
+                        </td>
+                        <td className="py-3 px-4 text-sm text-right text-gray-300">
+                          {stats.total_trades}
+                          {stats.total_trades > 0 && (
+                            <span className="text-xs text-gray-500 ml-1">
+                              ({stats.winning_trades}W/{stats.losing_trades}L)
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-sm text-right">
+                          {stats.total_trades > 0 ? (
+                            <span className={stats.win_rate >= 50 ? 'text-green-400' : 'text-red-400'}>
+                              {stats.win_rate.toFixed(1)}%
+                            </span>
+                          ) : (
+                            <span className="text-gray-500">-</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-sm text-right">
+                          {stats.avg_return !== 0 ? (
+                            <span className={stats.avg_return > 0 ? 'text-green-400' : 'text-red-400'}>
+                              {(stats.avg_return * 100).toFixed(3)}%
+                            </span>
+                          ) : (
+                            <span className="text-gray-500">-</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-sm text-right font-medium">
+                          {stats.total_pnl !== 0 ? (
+                            <span className={stats.total_pnl > 0 ? 'text-green-400' : 'text-red-400'}>
+                              {stats.total_pnl > 0 ? '+' : ''}{stats.total_pnl.toFixed(0)}
+                            </span>
+                          ) : (
+                            <span className="text-gray-500">-</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="mt-4 p-3 bg-gray-700/30 rounded-lg">
+            <div className="flex items-center space-x-4 text-xs text-gray-400">
+              <div className="flex items-center space-x-1">
+                <Zap className="w-3 h-3 text-orange-400" />
+                <span>High Vol</span>
+              </div>
+              <div className="flex items-center space-x-1">
+                <Wind className="w-3 h-3 text-blue-400" />
+                <span>Med Vol</span>
+              </div>
+              <div className="flex items-center space-x-1">
+                <Sun className="w-3 h-3 text-yellow-400" />
+                <span>Low Vol</span>
+              </div>
+              <div className="border-l border-gray-600 pl-4 flex items-center space-x-2">
+                <TrendingUp className="w-3 h-3 text-green-400" />
+                <span className="text-green-400">Uptrend</span>
+                <TrendingDown className="w-3 h-3 text-red-400 ml-2" />
+                <span className="text-red-400">Downtrend</span>
               </div>
             </div>
           </div>
