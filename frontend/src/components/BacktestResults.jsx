@@ -478,13 +478,20 @@ export default function BacktestResults({ backtest, onClose }) {
                           )}
                         </td>
                         <td className="py-3 px-4 text-sm text-right font-medium">
-                          {stats.total_pnl !== 0 ? (
-                            <span className={stats.total_pnl > 0 ? 'text-green-400' : 'text-red-400'}>
-                              {stats.total_pnl > 0 ? '+' : ''}{stats.total_pnl.toFixed(0)}
-                            </span>
-                          ) : (
-                            <span className="text-gray-500">-</span>
-                          )}
+                          {(() => {
+                            const pnlPct = (stats.total_pnl * 100);
+                            const rounded = parseFloat(pnlPct.toFixed(2));
+
+                            if (rounded === 0) {
+                              return <span className="text-gray-500">0.00%</span>;
+                            }
+
+                            return (
+                              <span className={rounded > 0 ? 'text-green-400' : 'text-red-400'}>
+                                {rounded > 0 ? '+' : ''}{rounded.toFixed(2)}%
+                              </span>
+                            );
+                          })()}
                         </td>
                       </tr>
                     );
