@@ -1074,34 +1074,22 @@ Show me the latest forecast gradient analysis for TSLA
 
 ## Environment Configuration
 
-> **Quick Start Users**: If you followed the [Quick Start](#quick-start) section, you've already configured your `.env` file. This section provides details on all available configuration options.
+> **Quick Start Users**: If you followed the [Quick Start](#quick-start) section, you've already configured your `.env` file. This section provides additional details.
 
-Copy `.env.example` to `.env` and customize:
+Copy `.env.example` to `.env` and add your API credentials:
 
 ```bash
 cp .env.example .env
 ```
 
-### Key Environment Variables
+### Required Environment Variables
+
+The `.env` file only requires **data provider credentials**. All other configuration (MongoDB, ports, services) is handled by `docker-compose.yml`.
 
 ```bash
-# MongoDB Configuration
-MONGODB_URL=mongodb://mongodb:27017
-MONGODB_HOST_PORT=10751
-
-# Backend API Configuration
-BACKEND_URL=http://backend:8000
-BACKEND_HOST_PORT=10750
-
-# Frontend Configuration
-FRONTEND_HOST_PORT=10752
-
-# Forecasting Configuration
-DEFAULT_FORECAST_HORIZONS=3,7,14,21
-ENSEMBLE_SIZE=5
-
 # Data Provider Configuration
-# Polygon.io API (for real-time market data)
+
+# Polygon.io API Key (for real-time market data)
 POLYGON_API_KEY=your_polygon_api_key_here
 
 # Massive.com S3 Configuration (for bulk historical data)
@@ -1110,21 +1098,28 @@ MASSIVE_SECRET_ACCESS_KEY=your_massive_secret_access_key_here
 MASSIVE_S3_ENDPOINT=https://files.massive.com
 MASSIVE_S3_BUCKET=flatfiles
 MASSIVE_API_KEY=your_massive_api_key_here
-
-# CORS Configuration
-CORS_ORIGINS=http://localhost:10752,http://localhost:3000
-
-# Paper Trading Configuration
-PAPER_TRADING_CHECK_INTERVAL=60  # minutes
-PAPER_TRADING_MAX_POSITION_SIZE=0.1  # 10% of capital per position
 ```
 
-### Port Configuration
+**Getting API Keys:**
+- **Polygon.io**: Sign up at [polygon.io](https://polygon.io) - Free tier available for basic market data
+- **Massive.com**: Get credentials at [massive.com](https://massive.com) - Provides bulk historical data via S3
 
-All services use the 10750-10780 range to avoid conflicts:
-- **Frontend Dashboard**: Host port `10752` → Container port `80`
-- **Backend API**: Host port `10750` → Container port `8000`
-- **MongoDB**: Host port `10751` → Container port `27017`
+### Service Configuration (docker-compose.yml)
+
+All service configuration is managed in `docker-compose.yml`. No environment variables needed for:
+
+**Ports** (automatically configured):
+- Frontend Dashboard: `10752` → React UI
+- Backend API: `10750` → FastAPI server
+- MongoDB: `10751` → Database
+
+**MongoDB**: Connection string and database name are hardcoded in docker-compose.yml
+
+**Forecasting**: Default horizons (3, 7, 14, 21 days) and ensemble size (5 models) are set in the code
+
+**CORS**: Configured in backend to allow dashboard access
+
+> **Advanced Users**: To customize service configuration (ports, MongoDB settings, etc.), edit `docker-compose.yml` directly. The `.env` file is intentionally minimal to reduce configuration complexity.
 
 ---
 
