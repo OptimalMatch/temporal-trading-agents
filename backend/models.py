@@ -429,14 +429,31 @@ class WalkForwardConfig(BaseModel):
     retrain_frequency_days: int = 21  # Monthly retraining
 
 
+class OptimizableParams(BaseModel):
+    """Parameters that can be optimized"""
+    position_size_pct: float = 10.0  # % of portfolio per position
+    min_edge_bps: float = 55.0  # Minimum edge to trade
+    strong_buy_threshold: float = 0.80  # >= 80% bullish → strong buy
+    buy_threshold: float = 0.60  # >= 60% bullish → buy
+    moderate_buy_threshold: float = 0.50  # >= 50% bullish → moderate buy
+    sell_threshold: float = 0.60  # >= 60% bearish → sell
+    moderate_sell_threshold: float = 0.50  # >= 50% bearish → moderate sell
+
+
 class BacktestConfig(BaseModel):
     """Complete backtest configuration"""
     symbol: str
     start_date: str  # ISO format YYYY-MM-DD
     end_date: str  # ISO format YYYY-MM-DD
     initial_capital: float = 100000.0
-    position_size_pct: float = 10.0  # % of portfolio per position
-    min_edge_bps: float = 55.0  # Minimum edge to trade (3x costs)
+
+    # Optimizable parameters
+    optimizable: OptimizableParams = Field(default_factory=OptimizableParams)
+
+    # Legacy fields (kept for backwards compatibility)
+    position_size_pct: float = 10.0  # Deprecated - use optimizable.position_size_pct
+    min_edge_bps: float = 55.0  # Deprecated - use optimizable.min_edge_bps
+
     transaction_costs: TransactionCostConfig = Field(default_factory=TransactionCostConfig)
     walk_forward: WalkForwardConfig = Field(default_factory=WalkForwardConfig)
     use_consensus: bool = True  # Use consensus strategies
@@ -540,6 +557,79 @@ class BacktestSummary(BaseModel):
     total_trades: Optional[int] = None
     created_at: datetime
     completed_at: Optional[datetime] = None
+
+
+# ==================== Parameter Optimization Models ====================
+
+class ParameterGrid(BaseModel):
+    """Grid of parameters to test during optimization"""
+    position_size_pct: List[float] = [5.0, 10.0, 15.0, 20.0]
+    min_edge_bps: List[float] = [30.0, 50.0, 70.0]
+    strong_buy_threshold: List[float] = [0.75, 0.80, 0.85]
+    buy_threshold: List[float] = [0.55, 0.60, 0.65]
+    moderate_buy_threshold: List[float] = [0.45, 0.50, 0.55]
+    sell_threshold: List[float] = [0.55, 0.60, 0.65]
+    moderate_sell_threshold: List[float] = [0.45, 0.50, 0.55]
+
+
+class OptimizationMetric(str, Enum):
+    """Metric to optimize"""
+    SHARPE_RATIO = "sharpe_ratio"
+    TOTAL_RETURN = "total_return"
+    PROFIT_FACTOR = "profit_factor"
+    WIN_RATE = "win_rate"
+    MAX_DRAWDOWN = "max_drawdown"  # Minimize
+
+
+class OptimizationRequest(BaseModel):
+    """Request to run parameter optimization"""
+    name: str  # User-friendly name for this optimization run
+    base_config: BacktestConfig  # Base configuration (symbol, dates, etc.)
+    parameter_grid: ParameterGrid  # Parameters to optimize
+    optimization_metric: OptimizationMetric = OptimizationMetric.SHARPE_RATIO
+    top_n_results: int = 10  # Number of top results to return
+
+
+class OptimizationResult(BaseModel):
+    """Result for a single parameter combination"""
+    parameters: OptimizableParams
+    metrics: BacktestMetrics
+    backtest_run_id: str
+    rank: Optional[int] = None  # Ranking by optimization metric
+    metric_value: float  # Value of the optimization metric
+
+
+class OptimizationStatus(str, Enum):
+    """Status of optimization run"""
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class OptimizationRun(BaseModel):
+    """Complete optimization run record"""
+    optimization_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    base_config: BacktestConfig
+    parameter_grid: ParameterGrid
+    optimization_metric: OptimizationMetric
+    status: OptimizationStatus = OptimizationStatus.PENDING
+
+    # Results
+    total_combinations: int = 0  # Total parameter combinations to test
+    completed_combinations: int = 0  # Completed so far
+    results: List[OptimizationResult] = []  # All results
+    top_results: List[OptimizationResult] = []  # Top N results
+    best_parameters: Optional[OptimizableParams] = None  # Best found parameters
+
+    # Timing
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    execution_time_ms: Optional[int] = None
+    error_message: Optional[str] = None
 
 
 # ==================== Paper Trading Models ====================

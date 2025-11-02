@@ -525,7 +525,8 @@ class BacktestEngine:
                     self.consensus_stats,
                     current_price,
                     historical_df=historical_df,
-                    multi_horizon_stats=self.multi_horizon_stats
+                    multi_horizon_stats=self.multi_horizon_stats,
+                    params=self.config.optimizable
                 )
             else:
                 signal = self._get_dummy_signal(bar_counter, current_price)
@@ -556,7 +557,7 @@ class BacktestEngine:
                         )
 
                 # Open long position
-                position_size = portfolio_value * (self.config.position_size_pct / 100)
+                position_size = portfolio_value * (self.config.optimizable.position_size_pct / 100)
                 trade = self.execute_trade(
                     timestamp=current_date,
                     symbol=self.config.symbol,
@@ -937,7 +938,7 @@ class BacktestEngine:
         )
 
     def _get_consensus_signal(self, stats: Dict, current_price: float, historical_df: pd.DataFrame = None,
-                            multi_horizon_stats: Dict = None) -> Dict[str, Any]:
+                            multi_horizon_stats: Dict = None, params: 'OptimizableParams' = None) -> Dict[str, Any]:
         """
         Generate consensus trading signal by running all strategies and voting.
 
@@ -946,6 +947,7 @@ class BacktestEngine:
             current_price: Current asset price
             historical_df: Historical price DataFrame for mean reversion (optional)
             multi_horizon_stats: Dictionary of stats for multiple horizons (optional)
+            params: Optimizable parameters for configurable thresholds (optional)
 
         Returns:
             Dictionary with action ('buy', 'sell', 'hold'), strategy name, and consensus info
@@ -956,6 +958,10 @@ class BacktestEngine:
         - Optional: Mean Reversion (if historical_df provided)
         - Optional: Multi-Timeframe (if multi_horizon_stats provided)
         """
+        # Use provided params or default values
+        if params is None:
+            from backend.models import OptimizableParams
+            params = OptimizableParams()
         try:
             # Run core 6 strategies that work with single-horizon stats
             results = {}
@@ -1058,27 +1064,25 @@ class BacktestEngine:
             bullish_count = len(bullish_strategies)
             bearish_count = len(bearish_strategies)
 
-            # Determine consensus action using percentage-based thresholds
-            # Works for 6, 7, or 8 strategies
-            # Strong majority: >= 80% (5/6, 6/7, 7/8)
-            # Clear majority: >= 60% (4/6, 5/7, 5/8)
-            # Simple majority: >= 50% (3/6, 4/7, 4/8)
+            # Determine consensus action using configurable thresholds
+            # Thresholds are percentage-based and work for any number of strategies (6-8)
             bullish_pct = bullish_count / total if total > 0 else 0
             bearish_pct = bearish_count / total if total > 0 else 0
 
-            if bullish_pct >= 0.80:
+            # Use configurable thresholds from params
+            if bullish_pct >= params.strong_buy_threshold:
                 action = 'buy'
                 consensus = 'STRONG_BUY'
-            elif bullish_pct >= 0.60:
+            elif bullish_pct >= params.buy_threshold:
                 action = 'buy'
                 consensus = 'BUY'
-            elif bullish_pct >= 0.50:
+            elif bullish_pct >= params.moderate_buy_threshold:
                 action = 'buy'
                 consensus = 'MODERATE_BUY'
-            elif bearish_pct >= 0.60:
+            elif bearish_pct >= params.sell_threshold:
                 action = 'sell'
                 consensus = 'SELL_AVOID'
-            elif bearish_pct >= 0.50:
+            elif bearish_pct >= params.moderate_sell_threshold:
                 action = 'sell'
                 consensus = 'MODERATE_SELL'
             else:
