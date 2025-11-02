@@ -617,7 +617,7 @@ class BacktestEngine:
             # Record equity
             self.record_equity(current_date, {self.config.symbol: current_price})
 
-            # Update regime tracking
+            # Update regime tracking (once per bar)
             if self.regime_tracker:
                 # Calculate bar return if we have equity curve
                 bar_return = None
@@ -635,25 +635,14 @@ class BacktestEngine:
                     # Use standard historical data for simple backtests
                     regime_price_data = historical_df
 
-                # Track regime for this bar - pass trades only if they were executed on this bar
+                # Track regime for this bar (called once per bar)
                 if regime_price_data is not None and len(regime_price_data) >= 20:
-                    # Pass each trade executed on this bar to regime tracker
-                    for trade in trades_this_bar:
-                        self.regime_tracker.update(
-                            timestamp=current_date,
-                            price_data=regime_price_data,
-                            trade=trade.dict(),
-                            bar_return=bar_return
-                        )
-
-                    # If no trades this bar, still update for regime detection and bar returns
-                    if not trades_this_bar:
-                        self.regime_tracker.update(
-                            timestamp=current_date,
-                            price_data=regime_price_data,
-                            trade=None,
-                            bar_return=bar_return
-                        )
+                    self.regime_tracker.update(
+                        timestamp=current_date,
+                        price_data=regime_price_data,
+                        trades=trades_this_bar,  # Pass list of all trades executed on this bar
+                        bar_return=bar_return
+                    )
 
         # Force-liquidate any open positions at the end of the period
         # This ensures each period ends flat (100% cash, no positions)

@@ -161,7 +161,7 @@ class RegimeTracker:
         self,
         timestamp: datetime,
         price_data: pd.DataFrame,
-        trade: Optional[Dict] = None,
+        trades: Optional[List] = None,
         bar_return: Optional[float] = None
     ) -> MarketRegime:
         """
@@ -170,7 +170,7 @@ class RegimeTracker:
         Args:
             timestamp: Current timestamp
             price_data: Historical price data up to current point
-            trade: Optional trade that was executed at this timestamp
+            trades: Optional list of trades executed at this timestamp
             bar_return: Optional return for this bar
 
         Returns:
@@ -193,9 +193,12 @@ class RegimeTracker:
 
         self.regime_bars[new_regime] += 1
 
-        # Track trade if provided
-        if trade is not None:
-            self.regime_trades[new_regime].append(trade)
+        # Track trades if provided
+        if trades:
+            for trade in trades:
+                # Convert BacktestTrade object to dict if needed
+                trade_dict = trade.dict() if hasattr(trade, 'dict') else trade
+                self.regime_trades[new_regime].append(trade_dict)
 
         # Track return if provided
         if bar_return is not None:
@@ -218,12 +221,14 @@ class RegimeTracker:
             trades = self.regime_trades.get(regime, [])
             returns = self.regime_returns.get(regime, [])
 
-            # Calculate metrics
-            winning_trades = [t for t in trades if t.get('pnl', 0) > 0]
-            losing_trades = [t for t in trades if t.get('pnl', 0) <= 0]
-
-            total_pnl = sum(t.get('pnl', 0) for t in trades)
+            # Calculate return-based metrics (more accurate than per-trade PNL)
             avg_return = np.mean(returns) if returns else 0
+            total_return = sum(returns) if returns else 0
+
+            # Count winning vs losing bars (not trades, since trades don't have individual PNL)
+            winning_bars = len([r for r in returns if r > 0])
+            losing_bars = len([r for r in returns if r < 0])
+            bar_win_rate = (winning_bars / len(returns) * 100) if returns else 0
 
             regime_stats[regime.value] = {
                 'regime': regime.value,
@@ -231,12 +236,12 @@ class RegimeTracker:
                 'bars_in_regime': bars,
                 'regime_pct': (bars / total_bars * 100) if total_bars > 0 else 0,
                 'total_trades': len(trades),
-                'winning_trades': len(winning_trades),
-                'losing_trades': len(losing_trades),
-                'win_rate': (len(winning_trades) / len(trades) * 100) if trades else 0,
-                'total_pnl': total_pnl,
+                'winning_trades': winning_bars,  # Actually winning bars
+                'losing_trades': losing_bars,     # Actually losing bars
+                'win_rate': bar_win_rate,         # Percentage of bars with positive returns
+                'total_pnl': total_return,        # Total return as proxy for P&L
                 'avg_return': avg_return,
-                'avg_trade_pnl': (total_pnl / len(trades)) if trades else 0,
+                'avg_trade_pnl': avg_return,      # Average bar return
             }
 
         return {
