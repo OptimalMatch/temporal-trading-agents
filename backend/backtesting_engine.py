@@ -795,7 +795,10 @@ class BacktestEngine:
             logger.info(f"  Test: {test_df['date'].iloc[0]} to {test_df['date'].iloc[-1]}")
 
             # Run backtest on test period using trained model
+            # Save regime_tracker before reset to preserve accumulated data across periods
+            saved_regime_tracker = self.regime_tracker
             self.reset()
+            self.regime_tracker = saved_regime_tracker  # Restore to continue accumulating
             period_result = self.run_simple_backtest(test_df, run_id)
 
             # Calculate capital deployment metrics from equity curve
@@ -962,9 +965,14 @@ class BacktestEngine:
         cache_stats = get_strategy_cache().stats()
         logger.info(f"  Strategy cache stats: {cache_stats['hits']} hits, {cache_stats['misses']} misses ({cache_stats['hit_rate_pct']}% hit rate)")
 
-        # TODO: Aggregate regime analysis across walk-forward periods
-        # For now, regime analysis is only available in simple backtests
+        # Get aggregated regime analysis across all walk-forward periods
         regime_analysis = None
+        if self.regime_tracker:
+            regime_analysis = self.regime_tracker.get_regime_statistics()
+            logger.info(f"  Regime changes: {regime_analysis.get('total_regime_changes', 0)}")
+            regime_stats = regime_analysis.get('regime_statistics', {})
+            if regime_stats:
+                logger.info(f"  Detected {len(regime_stats)} different market regimes")
 
         return BacktestRun(
             run_id=run_id,
