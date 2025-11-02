@@ -430,7 +430,8 @@ class BacktestEngine:
     def run_simple_backtest(
         self,
         price_data: pd.DataFrame,
-        run_id: str
+        run_id: str,
+        full_price_history: pd.DataFrame = None
     ) -> BacktestRun:
         """
         Run a simple backtest without walk-forward validation.
@@ -438,6 +439,7 @@ class BacktestEngine:
         Args:
             price_data: DataFrame with columns [date, open, high, low, close, volume]
             run_id: Unique ID for this backtest run
+            full_price_history: Optional full historical data for regime detection (includes data before price_data)
 
         Returns:
             BacktestRun with results
@@ -609,7 +611,7 @@ class BacktestEngine:
             self.record_equity(current_date, {self.config.symbol: current_price})
 
             # Update regime tracking
-            if self.regime_tracker and historical_df is not None:
+            if self.regime_tracker:
                 # Calculate bar return if we have equity curve
                 bar_return = None
                 if len(self.equity_curve) >= 2:
@@ -617,14 +619,24 @@ class BacktestEngine:
                     curr_equity = self.equity_curve[-1]['equity']
                     bar_return = (curr_equity - prev_equity) / prev_equity if prev_equity > 0 else 0
 
+                # Use full price history if provided (for walk-forward), otherwise use current historical data
+                regime_price_data = None
+                if full_price_history is not None:
+                    # Include full history up to current bar for walk-forward periods
+                    regime_price_data = full_price_history[full_price_history['date'] <= row['date']].copy()
+                elif historical_df is not None:
+                    # Use standard historical data for simple backtests
+                    regime_price_data = historical_df
+
                 # Track regime for this bar
-                last_trade = self.trades[-1].dict() if self.trades else None
-                self.regime_tracker.update(
-                    timestamp=current_date,
-                    price_data=historical_df,
-                    trade=last_trade,
-                    bar_return=bar_return
-                )
+                if regime_price_data is not None and len(regime_price_data) >= 20:
+                    last_trade = self.trades[-1].dict() if self.trades else None
+                    self.regime_tracker.update(
+                        timestamp=current_date,
+                        price_data=regime_price_data,
+                        trade=last_trade,
+                        bar_return=bar_return
+                    )
 
         # Force-liquidate any open positions at the end of the period
         # This ensures each period ends flat (100% cash, no positions)
@@ -799,7 +811,12 @@ class BacktestEngine:
             saved_regime_tracker = self.regime_tracker
             self.reset()
             self.regime_tracker = saved_regime_tracker  # Restore to continue accumulating
-            period_result = self.run_simple_backtest(test_df, run_id)
+
+            # Create full historical data for regime detection (from start of all data to end of test period)
+            test_end_date = test_df['date'].iloc[-1]
+            full_history_for_regime = price_data[price_data['date'] <= test_end_date].copy()
+
+            period_result = self.run_simple_backtest(test_df, run_id, full_price_history=full_history_for_regime)
 
             # Calculate capital deployment metrics from equity curve
             position_values = [point.get('position_value', 0) for point in period_result.equity_curve]
