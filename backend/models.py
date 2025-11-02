@@ -1,9 +1,9 @@
 """
 Pydantic models for temporal trading agents backend.
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict, field_serializer
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 import uuid
 
@@ -82,8 +82,8 @@ class HistoricalPriceData(BaseModel):
     first_date: str  # First date in dataset
     last_date: str  # Last date in dataset (most recent)
     total_days: int  # Total number of data points
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     metadata: Dict[str, Any] = {}
 
 
@@ -136,7 +136,7 @@ class StrategyResult(BaseModel):
     current_price: float
     signal: StrategySignal
     forecast_stats: Optional[ForecastStats] = None
-    executed_at: datetime = Field(default_factory=datetime.utcnow)
+    executed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     execution_time_ms: Optional[int] = None
 
 
@@ -155,7 +155,7 @@ class ConsensusAnalysis(BaseModel):
     neutral_strategies: List[str]
     avg_position: float
     strategies: Dict[str, StrategySignal]
-    analyzed_at: datetime = Field(default_factory=datetime.utcnow)
+    analyzed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # ==================== Database Models ====================
@@ -171,7 +171,7 @@ class StrategyAnalysis(BaseModel):
     forecast_data: Optional[ForecastData] = None  # Visualization data
     status: AnalysisStatus = AnalysisStatus.COMPLETED
     error: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     execution_time_ms: Optional[int] = None
     logs: Optional[List[str]] = []  # Captured console logs during execution
     metadata: Dict[str, Any] = {}
@@ -196,7 +196,7 @@ class ConsensusResult(BaseModel):
     forecast_data: Optional[ForecastData] = None  # Visualization data
     status: AnalysisStatus = AnalysisStatus.COMPLETED
     error: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     execution_time_ms: Optional[int] = None
     logs: Optional[List[str]] = []  # Captured console logs during execution
     metadata: Dict[str, Any] = {}
@@ -211,7 +211,7 @@ class ModelTraining(BaseModel):
     validation_loss: float
     training_loss: float
     epochs: int
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     training_time_ms: int
     metadata: Dict[str, Any] = {}
 
@@ -224,7 +224,7 @@ class PriceForecast(BaseModel):
     horizon_days: int
     forecast_stats: ForecastStats
     model_training_id: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     metadata: Dict[str, Any] = {}
 
 
@@ -233,7 +233,7 @@ class PriceForecast(BaseModel):
 class HealthCheck(BaseModel):
     """API health check response"""
     status: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     version: str = "1.0.0"
     database_connected: bool
     strategies_available: List[str]
@@ -248,7 +248,7 @@ class User(BaseModel):
     email: str
     hashed_password: str
     is_active: bool = True
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     last_login: Optional[datetime] = None
 
 
@@ -259,7 +259,7 @@ class ApiKey(BaseModel):
     key: str
     name: str
     is_active: bool = True
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     last_used: Optional[datetime] = None
     usage_count: int = 0
 
@@ -284,8 +284,8 @@ class ScheduledTask(BaseModel):
     cron_expression: Optional[str] = None  # For CUSTOM frequency
     horizons: List[int] = [3, 7, 14, 21]
     is_active: bool = True
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     last_run: Optional[datetime] = None
     next_run: Optional[datetime] = None
     run_count: int = 0
@@ -322,7 +322,7 @@ class ProgressUpdate(BaseModel):
     progress: float  # 0-100
     message: str
     details: Optional[Dict[str, Any]] = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # ==================== Data Synchronization Models ====================
@@ -353,8 +353,8 @@ class DataSyncJob(BaseModel):
     error_message: Optional[str] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Control flags
     pause_requested: bool = False
@@ -370,7 +370,7 @@ class TickerWatchlist(BaseModel):
     auto_sync: bool = True  # Automatically sync daily deltas
     priority: int = 0  # Higher priority tickers sync first
     tags: List[str] = []  # e.g., ['crypto', 'high-volume', 'watchlist']
-    added_at: datetime = Field(default_factory=datetime.utcnow)
+    added_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     last_synced_at: Optional[datetime] = None
     next_sync_at: Optional[datetime] = None
 
@@ -385,7 +385,7 @@ class DataInventory(BaseModel):
     date_range_end: Optional[datetime] = None
     file_size_bytes: int = 0
     file_count: int = 0  # Number of S3 files processed
-    last_updated_at: datetime = Field(default_factory=datetime.utcnow)
+    last_updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     is_complete: bool = False  # Whether we have all available data
     missing_dates: List[str] = []  # List of missing date ranges
 
@@ -541,7 +541,7 @@ class BacktestRun(BaseModel):
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     execution_time_ms: Optional[int] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class BacktestCreateRequest(BaseModel):
@@ -637,7 +637,7 @@ class OptimizationRun(BaseModel):
     best_parameters: Optional[OptimizableParams] = None  # Best found parameters
 
     # Timing
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     execution_time_ms: Optional[int] = None
@@ -682,15 +682,46 @@ class PaperTrade(BaseModel):
     rejection_reason: Optional[str] = None
     metadata: Dict[str, Any] = {}
 
+    @field_serializer('timestamp')
+    def serialize_datetime(self, dt: datetime, _info):
+        """Serialize datetime with timezone"""
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat().replace('+00:00', 'Z')
+
 
 class PaperPosition(BaseModel):
     """Current paper trading position"""
     symbol: str
     shares: float  # Support fractional shares for crypto
-    avg_cost_basis: float
+    entry_price: float
+    entry_timestamp: datetime
     current_price: float
     unrealized_pnl: float
     unrealized_pnl_pct: float
+
+
+class SignalLog(BaseModel):
+    """Log entry for signal checks"""
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    current_price: Optional[float] = None
+    signal: Optional[str] = None  # 'BUY', 'SELL', 'HOLD', or None
+    consensus_score: Optional[float] = None
+    expected_return_bps: Optional[float] = None
+    action_taken: str  # 'executed', 'rejected', 'no_signal', 'error'
+    reason: str
+    details: Dict[str, Any] = {}
+
+    @field_serializer('timestamp')
+    def serialize_datetime(self, dt: datetime, _info):
+        """Serialize datetime with timezone"""
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat().replace('+00:00', 'Z')
 
 
 class PaperTradingSession(BaseModel):
@@ -706,14 +737,24 @@ class PaperTradingSession(BaseModel):
     total_pnl_pct: float
     positions: List[PaperPosition] = []
     trades: List[PaperTrade] = []
+    signal_logs: List[SignalLog] = []
     total_trades: int = 0
     winning_trades: int = 0
     losing_trades: int = 0
     last_signal_check: Optional[datetime] = None
     next_signal_check: Optional[datetime] = None
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     stopped_at: Optional[datetime] = None
     error_message: Optional[str] = None
+
+    @field_serializer('last_signal_check', 'next_signal_check', 'started_at', 'stopped_at')
+    def serialize_datetime(self, dt: Optional[datetime], _info):
+        """Serialize datetime with timezone"""
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat().replace('+00:00', 'Z')
 
 
 class PaperTradingCreateRequest(BaseModel):
@@ -733,3 +774,12 @@ class PaperTradingSummary(BaseModel):
     total_pnl_pct: float
     total_trades: int
     started_at: datetime
+
+    @field_serializer('started_at')
+    def serialize_datetime(self, dt: datetime, _info):
+        """Serialize datetime with timezone"""
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat().replace('+00:00', 'Z')

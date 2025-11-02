@@ -8,7 +8,7 @@ import threading
 import time
 import os
 from typing import Optional, Dict, Callable
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from motor.motor_asyncio import AsyncIOMotorDatabase
 import pymongo  # Synchronous MongoDB client for background threads
 
@@ -116,8 +116,8 @@ class DataSyncManager:
             {"job_id": job_id},
             {"$set": {
                 "status": SyncJobStatus.RUNNING.value,
-                "started_at": datetime.utcnow(),
-                "updated_at": datetime.utcnow()
+                "started_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc)
             }}
         )
 
@@ -191,25 +191,101 @@ class DataSyncManager:
                         "completed_files": completed,
                         "elapsed_seconds": elapsed,
                         "eta_seconds": eta,
-                        "updated_at": datetime.utcnow()
+                        "updated_at": datetime.now(timezone.utc)
                     }}
                 )
 
             # Fetch data with progress callback
             # Note: This is synchronous, we need to run in executor
             from concurrent.futures import ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                data = await loop.run_in_executor(
-                    executor,
-                    lambda: s3_source.fetch_data(job.symbol, job.period, job.interval, sync_progress_callback)
-                )
+            from datetime import datetime as dt
+
+            # Check if this is a delta job to fetch only missing data
+            is_delta = job_doc.get('is_delta_job', False)
+            delta_ranges = job_doc.get('delta_ranges', [])
+
+            if is_delta and delta_ranges:
+                # Fetch only the delta ranges (missing data)
+                print(f"🎯 Delta job: fetching only missing data for {job.symbol}")
+                import pandas as pd
+                delta_dataframes = []
+
+                # Aggregate progress across all delta ranges
+                cumulative_files_completed = 0
+                cumulative_files_total = 0
+                current_range_files_total = 0
+                start_time = time.time()
+
+                # Create aggregated progress callback
+                def aggregated_progress_callback(completed: int, total: int, elapsed: float, skipped: int = 0):
+                    """Aggregate progress across all delta ranges"""
+                    nonlocal cumulative_files_completed, cumulative_files_total, current_range_files_total
+
+                    # Track the total for current range (gets updated as S3 lists files)
+                    current_range_files_total = total
+
+                    # Calculate overall progress
+                    overall_completed = cumulative_files_completed + completed
+                    overall_total = cumulative_files_total + current_range_files_total
+                    overall_elapsed = time.time() - start_time
+                    progress_percent = (overall_completed / overall_total * 100) if overall_total > 0 else 0
+                    eta = (overall_elapsed / overall_completed * (overall_total - overall_completed)) if overall_completed > 0 else 0
+
+                    sync_db.data_sync_jobs.update_one(
+                        {"job_id": job_id},
+                        {"$set": {
+                            "progress_percent": progress_percent,
+                            "total_files": overall_total,
+                            "completed_files": overall_completed,
+                            "elapsed_seconds": overall_elapsed,
+                            "eta_seconds": eta,
+                            "updated_at": datetime.now(timezone.utc)
+                        }}
+                    )
+
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    for idx, delta_range in enumerate(delta_ranges):
+                        range_type = delta_range['type']
+                        start_date = dt.fromisoformat(delta_range['start'])
+                        end_date = dt.fromisoformat(delta_range['end'])
+
+                        print(f"  📥 Fetching {range_type} range {idx+1}/{len(delta_ranges)}: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+
+                        # Reset current range tracking
+                        current_range_files_total = 0
+
+                        delta_data = await loop.run_in_executor(
+                            executor,
+                            lambda s=start_date, e=end_date: s3_source.fetch_data_range(
+                                job.symbol, s, e, job.interval, aggregated_progress_callback
+                            )
+                        )
+
+                        if delta_data is not None and not delta_data.empty:
+                            delta_dataframes.append(delta_data)
+
+                        # After range completes, add its total to cumulative
+                        cumulative_files_completed += current_range_files_total
+                        cumulative_files_total += current_range_files_total
+
+                # Combine all delta dataframes
+                if delta_dataframes:
+                    data = pd.concat(delta_dataframes).sort_index()
+                    print(f"✅ Fetched {len(data)} delta data points from {cumulative_files_total} files (saved ~{job_doc.get('old_period', 'unknown')} of redundant downloads)")
+                else:
+                    data = None
+            else:
+                # Normal job: fetch entire period
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    data = await loop.run_in_executor(
+                        executor,
+                        lambda: s3_source.fetch_data(job.symbol, job.period, job.interval, sync_progress_callback)
+                    )
 
             # Save to cache (merge if delta job, replace if normal job)
             if data is not None and not data.empty:
-                # Check if this is a delta/merge job
-                is_delta = job_doc.get('is_delta_job', False)
                 if is_delta:
-                    print(f"🔀 Delta job detected, merging data for {job.symbol}")
+                    print(f"🔀 Merging delta data with existing cache for {job.symbol}")
                     self.cache.merge_and_set(data, job.symbol, job.period, job.interval)
                 else:
                     self.cache.set(data, job.symbol, job.period, job.interval)
@@ -220,8 +296,8 @@ class DataSyncManager:
                 {"$set": {
                     "status": SyncJobStatus.COMPLETED.value,
                     "progress_percent": 100.0,
-                    "completed_at": datetime.utcnow(),
-                    "updated_at": datetime.utcnow()
+                    "completed_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc)
                 }}
             )
 
@@ -240,8 +316,8 @@ class DataSyncManager:
                 {"$set": {
                     "status": SyncJobStatus.FAILED.value,
                     "error_message": str(e),
-                    "completed_at": datetime.utcnow(),
-                    "updated_at": datetime.utcnow()
+                    "completed_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc)
                 }}
             )
 
@@ -279,7 +355,7 @@ class DataSyncManager:
             total_days=len(data),
             date_range_start=data.index.min().to_pydatetime() if len(data) > 0 else None,
             date_range_end=data.index.max().to_pydatetime() if len(data) > 0 else None,
-            last_updated_at=datetime.utcnow(),
+            last_updated_at=datetime.now(timezone.utc),
             is_complete=True,  # Assume complete for now
             missing_dates=[]
         )
@@ -318,7 +394,7 @@ class DataSyncManager:
             total_days=len(data),
             date_range_start=data.index.min().to_pydatetime() if len(data) > 0 else None,
             date_range_end=data.index.max().to_pydatetime() if len(data) > 0 else None,
-            last_updated_at=datetime.utcnow(),
+            last_updated_at=datetime.now(timezone.utc),
             is_complete=True,  # Assume complete for now
             missing_dates=[]
         )
@@ -344,7 +420,7 @@ class DataSyncManager:
             {"job_id": job_id, "status": SyncJobStatus.RUNNING.value},
             {"$set": {
                 "pause_requested": True,
-                "updated_at": datetime.utcnow()
+                "updated_at": datetime.now(timezone.utc)
             }}
         )
         return result.modified_count > 0
@@ -361,7 +437,7 @@ class DataSyncManager:
             {"$set": {
                 "status": SyncJobStatus.PENDING.value,
                 "pause_requested": False,
-                "updated_at": datetime.utcnow()
+                "updated_at": datetime.now(timezone.utc)
             }}
         )
 
@@ -375,8 +451,8 @@ class DataSyncManager:
             {"$set": {
                 "cancel_requested": True,
                 "status": SyncJobStatus.CANCELLED.value,
-                "completed_at": datetime.utcnow(),
-                "updated_at": datetime.utcnow()
+                "completed_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc)
             }}
         )
 

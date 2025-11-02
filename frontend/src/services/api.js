@@ -170,6 +170,10 @@ class APIService {
     return this.request(`/paper-trading/${sessionId}/stop`, { method: 'POST' });
   }
 
+  async deletePaperTradingSession(sessionId) {
+    return this.request(`/paper-trading/${sessionId}`, { method: 'DELETE' });
+  }
+
   // Parameter Optimization
   async createOptimization(request) {
     return this.request('/optimize/parameters', {

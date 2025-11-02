@@ -1,5 +1,6 @@
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { Activity, Calendar, History, Play, TrendingUp, Database, BarChart3, Settings, Info } from 'lucide-react';
+import { Activity, Calendar, History, Play, TrendingUp, Database, BarChart3, Settings, Info, Zap, Clock } from 'lucide-react';
+import { useState, useEffect } from 'react';
 import Dashboard from './pages/Dashboard';
 import HistoryPage from './pages/HistoryPage';
 import SchedulerPage from './pages/SchedulerPage';
@@ -7,24 +8,53 @@ import AnalyzePage from './pages/AnalyzePage';
 import DataSyncPage from './pages/DataSyncPage';
 import BacktestPage from './pages/BacktestPage';
 import OptimizationPage from './pages/OptimizationPage';
+import PaperTradingPage from './pages/PaperTradingPage';
 import AboutPage from './pages/AboutPage';
 
 function Navigation() {
   const location = useLocation();
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, []);
 
   const navItems = [
     { path: '/', label: 'Dashboard', icon: TrendingUp },
     { path: '/analyze', label: 'Analyze', icon: Play },
     { path: '/backtest', label: 'Backtest', icon: BarChart3 },
     { path: '/optimize', label: 'Optimize', icon: Settings },
+    { path: '/paper', label: 'Paper', icon: Zap },
     { path: '/history', label: 'History', icon: History },
     { path: '/scheduler', label: 'Scheduler', icon: Calendar },
     { path: '/data-sync', label: 'Data', icon: Database },
     { path: '/about', label: 'About', icon: Info },
   ];
 
+  const formatTime = (date) => {
+    return date.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    });
+  };
+
+  const getTimezone = () => {
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const offset = -currentTime.getTimezoneOffset() / 60;
+    const offsetStr = offset >= 0 ? `+${offset}` : offset;
+    return `${timezone} (UTC${offsetStr})`;
+  };
+
   return (
-    <nav className="bg-gray-800 border-b border-gray-700">
+    <nav className="bg-gray-800 border-b border-gray-700 relative">
       <div className="max-w-7xl mx-auto px-4">
         <div className="flex justify-between items-center h-16">
           <div className="flex items-center space-x-2">
@@ -51,6 +81,18 @@ function Navigation() {
             ))}
           </div>
         </div>
+
+        {/* Clock positioned below nav bar on the right */}
+        <div className="absolute right-4 top-16 flex items-center space-x-1.5 px-2 py-1 bg-gray-700/50 rounded border border-gray-600 text-xs">
+          <Clock className="w-3 h-3 text-brand-400" />
+          <span className="font-mono text-gray-200">
+            {formatTime(currentTime)}
+          </span>
+          <span className="text-gray-500">•</span>
+          <span className="text-gray-500">
+            {getTimezone()}
+          </span>
+        </div>
       </div>
     </nav>
   );
@@ -68,6 +110,7 @@ function App() {
             <Route path="/analyze" element={<AnalyzePage />} />
             <Route path="/backtest" element={<BacktestPage />} />
             <Route path="/optimize" element={<OptimizationPage />} />
+            <Route path="/paper" element={<PaperTradingPage />} />
             <Route path="/history" element={<HistoryPage />} />
             <Route path="/scheduler" element={<SchedulerPage />} />
             <Route path="/data-sync" element={<DataSyncPage />} />

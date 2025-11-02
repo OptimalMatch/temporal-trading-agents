@@ -7,18 +7,26 @@ import os
 from pathlib import Path
 import pandas as pd
 import traceback
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Add parent directory to path for strategy imports
 sys.path.append(str(Path(__file__).parent.parent))
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from typing import List, Optional, Dict, Any
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import uuid
 import asyncio
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+import json
 
 from backend.models import (
     StrategyAnalysisRequest, ConsensusRequest, StrategyResult,
@@ -50,11 +58,34 @@ from strategies.acceleration_strategy import analyze_acceleration_strategy
 from strategies.swing_trading_strategy import analyze_swing_trading_strategy
 from strategies.risk_adjusted_strategy import analyze_risk_adjusted_strategy
 
+# Custom JSON encoder for datetime serialization with timezone
+class CustomJSONResponse(JSONResponse):
+    def render(self, content: Any) -> bytes:
+        def datetime_serializer(obj):
+            if isinstance(obj, datetime):
+                # Ensure datetime is timezone-aware (default to UTC if naive)
+                if obj.tzinfo is None:
+                    obj = obj.replace(tzinfo=timezone.utc)
+                # Serialize with timezone info (ISO 8601 with Z)
+                return obj.isoformat().replace('+00:00', 'Z')
+            raise TypeError(f"Type {type(obj)} not serializable")
+
+        return json.dumps(
+            content,
+            ensure_ascii=False,
+            allow_nan=False,
+            indent=None,
+            separators=(",", ":"),
+            default=datetime_serializer,
+        ).encode("utf-8")
+
+
 # Initialize FastAPI app
 app = FastAPI(
     title="Temporal Trading Agents API",
     description="REST API for running forecast-based trading strategies",
-    version="1.0.0"
+    version="1.0.0",
+    default_response_class=CustomJSONResponse
 )
 
 # CORS middleware
@@ -104,6 +135,16 @@ async def startup_event():
     scheduler.start()
     await scheduler.load_scheduled_tasks()
     print("📅 API: Scheduler initialized")
+
+    # Resume monitoring for all active paper trading sessions
+    active_sessions = await db.get_paper_trading_sessions(status=PaperTradingStatus.ACTIVE)
+    if active_sessions:
+        print(f"📊 PAPER TRADING: Resuming monitoring for {len(active_sessions)} active sessions")
+        for session in active_sessions:
+            asyncio.create_task(monitor_paper_trading_session(session.session_id))
+            print(f"  ▶ Resumed monitoring for session {session.session_id} ({session.name})")
+    else:
+        print("📊 PAPER TRADING: No active sessions to resume")
 
 
 @app.on_event("shutdown")
@@ -267,8 +308,8 @@ async def save_historical_prices(symbol: str, df, db: Database, source: str = "p
             "first_date": first_date,
             "last_date": last_date,
             "total_days": len(prices),
-            "created_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow(),
+            "created_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(timezone.utc),
             "metadata": {}
         }
 
@@ -389,7 +430,7 @@ async def run_gradient_analysis_background(analysis_id: str, symbol: str, databa
 
     try:
         # Log: Starting
-        logs.append(f"[{datetime.utcnow().isoformat()}] Starting gradient analysis for {symbol}")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Starting gradient analysis for {symbol}")
 
         # Send WebSocket update: Starting
         await ws_manager.send_progress(
@@ -410,18 +451,18 @@ async def run_gradient_analysis_background(analysis_id: str, symbol: str, databa
         start_time = time.time()
 
         # Ensure dataset is available before analysis
-        logs.append(f"[{datetime.utcnow().isoformat()}] Checking dataset availability for {symbol}")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Checking dataset availability for {symbol}")
         dataset_ready = await ensure_dataset_available(symbol, database)
 
         if not dataset_ready:
             error_msg = f"Failed to ensure dataset availability for {symbol}"
-            logs.append(f"[{datetime.utcnow().isoformat()}] ERROR: {error_msg}")
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] ERROR: {error_msg}")
             raise Exception(error_msg)
 
-        logs.append(f"[{datetime.utcnow().isoformat()}] Dataset confirmed available")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Dataset confirmed available")
 
         # Log and send progress: Loading data
-        logs.append(f"[{datetime.utcnow().isoformat()}] Loading market data for {symbol}")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Loading market data for {symbol}")
         await ws_manager.send_progress(
             task_id=analysis_id,
             symbol=symbol,
@@ -432,7 +473,7 @@ async def run_gradient_analysis_background(analysis_id: str, symbol: str, databa
         )
 
         # Log and send progress: Training models
-        logs.append(f"[{datetime.utcnow().isoformat()}] Training ensemble models (14-day forecast)")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Training ensemble models (14-day forecast)")
         await ws_manager.send_progress(
             task_id=analysis_id,
             symbol=symbol,
@@ -450,10 +491,10 @@ async def run_gradient_analysis_background(analysis_id: str, symbol: str, databa
             symbol, 14, "14-DAY"
         )
         current_price = df['Close'].iloc[-1]
-        logs.append(f"[{datetime.utcnow().isoformat()}] Model training completed. Current price: ${current_price:.2f}")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Model training completed. Current price: ${current_price:.2f}")
 
         # Log and send progress: Running strategy
-        logs.append(f"[{datetime.utcnow().isoformat()}] Analyzing forecast gradient patterns")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Analyzing forecast gradient patterns")
         await ws_manager.send_progress(
             task_id=analysis_id,
             symbol=symbol,
@@ -466,7 +507,7 @@ async def run_gradient_analysis_background(analysis_id: str, symbol: str, databa
         # Run gradient strategy
         result = analyze_gradient_strategy(stats, current_price)
         result['forecast_median'] = stats['median'].tolist() if hasattr(stats['median'], 'tolist') else list(stats['median'])
-        logs.append(f"[{datetime.utcnow().isoformat()}] Strategy analysis completed. Signal: {result.get('signal')}")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Strategy analysis completed. Signal: {result.get('signal')}")
 
         execution_time_ms = int((time.time() - start_time) * 1000)
 
@@ -477,8 +518,8 @@ async def run_gradient_analysis_background(analysis_id: str, symbol: str, databa
         analysis.logs = logs  # Attach logs to analysis
 
         # Update database with completed analysis
-        logs.append(f"[{datetime.utcnow().isoformat()}] Saving analysis results to database")
-        logs.append(f"[{datetime.utcnow().isoformat()}] SUCCESS: Analysis completed in {execution_time_ms}ms")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Saving analysis results to database")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] SUCCESS: Analysis completed in {execution_time_ms}ms")
         await database.db.strategy_analyses.update_one(
             {"id": analysis_id},
             {"$set": analysis.dict()}
@@ -500,7 +541,7 @@ async def run_gradient_analysis_background(analysis_id: str, symbol: str, databa
 
     except Exception as e:
         # Log error
-        logs.append(f"[{datetime.utcnow().isoformat()}] ERROR: Analysis failed - {str(e)}")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] ERROR: Analysis failed - {str(e)}")
 
         # Update status to FAILED with logs
         await database.db.strategy_analyses.update_one(
@@ -531,7 +572,7 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
 
     try:
         # Log: Starting
-        logs.append(f"[{datetime.utcnow().isoformat()}] Starting consensus analysis for {request.symbol}")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Starting consensus analysis for {request.symbol}")
 
         # Send WebSocket update: Starting
         await ws_manager.send_progress(
@@ -552,18 +593,18 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
         start_time = time.time()
 
         # Ensure dataset is available before analysis
-        logs.append(f"[{datetime.utcnow().isoformat()}] Checking dataset availability for {request.symbol}")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Checking dataset availability for {request.symbol}")
         dataset_ready = await ensure_dataset_available(request.symbol, database)
 
         if not dataset_ready:
             error_msg = f"Failed to ensure dataset availability for {request.symbol}"
-            logs.append(f"[{datetime.utcnow().isoformat()}] ERROR: {error_msg}")
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] ERROR: {error_msg}")
             raise Exception(error_msg)
 
-        logs.append(f"[{datetime.utcnow().isoformat()}] Dataset confirmed available")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Dataset confirmed available")
 
         # Log: Training models
-        logs.append(f"[{datetime.utcnow().isoformat()}] Training ensemble models for consensus analysis")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Training ensemble models for consensus analysis")
 
         # Train 14-day ensemble - run in process pool to avoid blocking event loop
         loop = asyncio.get_event_loop()
@@ -573,14 +614,14 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
             request.symbol, 14, "14-DAY"
         )
         current_price = df['Close'].iloc[-1]
-        logs.append(f"[{datetime.utcnow().isoformat()}] Model training completed. Current price: ${current_price:.2f}")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Model training completed. Current price: ${current_price:.2f}")
 
         results = {}
         strategy_ids = []
 
         # Run all 8 strategies with progress updates
         # Strategy 1: Gradient (0% -> 12%)
-        logs.append(f"[{datetime.utcnow().isoformat()}] Running Forecast Gradient strategy (1/8)")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Running Forecast Gradient strategy (1/8)")
         await ws_manager.send_progress(
             task_id=consensus_id,
             symbol=request.symbol,
@@ -595,14 +636,14 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
             analysis_id = await database.create_strategy_analysis(analysis)
             strategy_ids.append(analysis_id)
             results['Forecast Gradient'] = result
-            logs.append(f"[{datetime.utcnow().isoformat()}] Forecast Gradient completed: {result.get('signal')}")
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Forecast Gradient completed: {result.get('signal')}")
         except Exception as e:
             print(f"Gradient strategy failed: {e}")
             results['Forecast Gradient'] = {'signal': 'ERROR', 'position_size_pct': 0}
-            logs.append(f"[{datetime.utcnow().isoformat()}] WARNING: Forecast Gradient failed - {str(e)}")
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] WARNING: Forecast Gradient failed - {str(e)}")
 
         # Strategy 2: Confidence-Weighted (12% -> 25%)
-        logs.append(f"[{datetime.utcnow().isoformat()}] Running Confidence-Weighted strategy (2/8)")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Running Confidence-Weighted strategy (2/8)")
         await ws_manager.send_progress(
             task_id=consensus_id,
             symbol=request.symbol,
@@ -617,14 +658,14 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
             analysis_id = await database.create_strategy_analysis(analysis)
             strategy_ids.append(analysis_id)
             results['Confidence-Weighted'] = result
-            logs.append(f"[{datetime.utcnow().isoformat()}] Confidence-Weighted completed: {result.get('signal')}")
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Confidence-Weighted completed: {result.get('signal')}")
         except Exception as e:
             print(f"Confidence strategy failed: {e}")
             results['Confidence-Weighted'] = {'signal': 'ERROR', 'position_size_pct': 0}
-            logs.append(f"[{datetime.utcnow().isoformat()}] WARNING: Confidence-Weighted failed - {str(e)}")
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] WARNING: Confidence-Weighted failed - {str(e)}")
 
         # Strategy 3: Multi-Timeframe (25% -> 37%)
-        logs.append(f"[{datetime.utcnow().isoformat()}] Running Multi-Timeframe strategy (3/8)")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Running Multi-Timeframe strategy (3/8)")
         await ws_manager.send_progress(
             task_id=consensus_id,
             symbol=request.symbol,
@@ -645,14 +686,14 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
             analysis_id = await database.create_strategy_analysis(analysis)
             strategy_ids.append(analysis_id)
             results['Multi-Timeframe'] = result
-            logs.append(f"[{datetime.utcnow().isoformat()}] Multi-Timeframe completed: {result.get('signal')}")
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Multi-Timeframe completed: {result.get('signal')}")
         except Exception as e:
             print(f"Timeframe strategy failed: {e}")
             results['Multi-Timeframe'] = {'signal': 'ERROR', 'position_size_pct': 0}
-            logs.append(f"[{datetime.utcnow().isoformat()}] WARNING: Multi-Timeframe failed - {str(e)}")
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] WARNING: Multi-Timeframe failed - {str(e)}")
 
         # Strategy 4: Volatility Sizing (37% -> 50%)
-        logs.append(f"[{datetime.utcnow().isoformat()}] Running Volatility Sizing strategy (4/8)")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Running Volatility Sizing strategy (4/8)")
         await ws_manager.send_progress(
             task_id=consensus_id,
             symbol=request.symbol,
@@ -667,14 +708,14 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
             analysis_id = await database.create_strategy_analysis(analysis)
             strategy_ids.append(analysis_id)
             results['Volatility Sizing'] = result
-            logs.append(f"[{datetime.utcnow().isoformat()}] Volatility Sizing completed: {result.get('signal')}")
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Volatility Sizing completed: {result.get('signal')}")
         except Exception as e:
             print(f"Volatility strategy failed: {e}")
             results['Volatility Sizing'] = {'signal': 'ERROR', 'position_size_pct': 0}
-            logs.append(f"[{datetime.utcnow().isoformat()}] WARNING: Volatility Sizing failed - {str(e)}")
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] WARNING: Volatility Sizing failed - {str(e)}")
 
         # Strategy 5: Mean Reversion (50% -> 62%)
-        logs.append(f"[{datetime.utcnow().isoformat()}] Running Mean Reversion strategy (5/8)")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Running Mean Reversion strategy (5/8)")
         await ws_manager.send_progress(
             task_id=consensus_id,
             symbol=request.symbol,
@@ -689,14 +730,14 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
             analysis_id = await database.create_strategy_analysis(analysis)
             strategy_ids.append(analysis_id)
             results['Mean Reversion'] = result
-            logs.append(f"[{datetime.utcnow().isoformat()}] Mean Reversion completed: {result.get('signal')}")
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Mean Reversion completed: {result.get('signal')}")
         except Exception as e:
             print(f"Mean reversion strategy failed: {e}")
             results['Mean Reversion'] = {'signal': 'ERROR', 'position_size_pct': 0}
-            logs.append(f"[{datetime.utcnow().isoformat()}] WARNING: Mean Reversion failed - {str(e)}")
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] WARNING: Mean Reversion failed - {str(e)}")
 
         # Strategy 6: Acceleration (62% -> 75%)
-        logs.append(f"[{datetime.utcnow().isoformat()}] Running Acceleration strategy (6/8)")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Running Acceleration strategy (6/8)")
         await ws_manager.send_progress(
             task_id=consensus_id,
             symbol=request.symbol,
@@ -711,14 +752,14 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
             analysis_id = await database.create_strategy_analysis(analysis)
             strategy_ids.append(analysis_id)
             results['Acceleration'] = result
-            logs.append(f"[{datetime.utcnow().isoformat()}] Acceleration completed: {result.get('signal')}")
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Acceleration completed: {result.get('signal')}")
         except Exception as e:
             print(f"Acceleration strategy failed: {e}")
             results['Acceleration'] = {'signal': 'ERROR', 'position_size_pct': 0}
-            logs.append(f"[{datetime.utcnow().isoformat()}] WARNING: Acceleration failed - {str(e)}")
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] WARNING: Acceleration failed - {str(e)}")
 
         # Strategy 7: Swing Trading (75% -> 87%)
-        logs.append(f"[{datetime.utcnow().isoformat()}] Running Swing Trading strategy (7/8)")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Running Swing Trading strategy (7/8)")
         await ws_manager.send_progress(
             task_id=consensus_id,
             symbol=request.symbol,
@@ -733,14 +774,14 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
             analysis_id = await database.create_strategy_analysis(analysis)
             strategy_ids.append(analysis_id)
             results['Swing Trading'] = result
-            logs.append(f"[{datetime.utcnow().isoformat()}] Swing Trading completed: {result.get('signal')}")
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Swing Trading completed: {result.get('signal')}")
         except Exception as e:
             print(f"Swing strategy failed: {e}")
             results['Swing Trading'] = {'signal': 'ERROR', 'position_size_pct': 0}
-            logs.append(f"[{datetime.utcnow().isoformat()}] WARNING: Swing Trading failed - {str(e)}")
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] WARNING: Swing Trading failed - {str(e)}")
 
         # Strategy 8: Risk-Adjusted (87% -> 100%)
-        logs.append(f"[{datetime.utcnow().isoformat()}] Running Risk-Adjusted strategy (8/8)")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Running Risk-Adjusted strategy (8/8)")
         await ws_manager.send_progress(
             task_id=consensus_id,
             symbol=request.symbol,
@@ -755,14 +796,14 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
             analysis_id = await database.create_strategy_analysis(analysis)
             strategy_ids.append(analysis_id)
             results['Risk-Adjusted'] = result
-            logs.append(f"[{datetime.utcnow().isoformat()}] Risk-Adjusted completed: {result.get('signal')}")
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Risk-Adjusted completed: {result.get('signal')}")
         except Exception as e:
             print(f"Risk-adjusted strategy failed: {e}")
             results['Risk-Adjusted'] = {'signal': 'ERROR', 'position_size_pct': 0}
-            logs.append(f"[{datetime.utcnow().isoformat()}] WARNING: Risk-Adjusted failed - {str(e)}")
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] WARNING: Risk-Adjusted failed - {str(e)}")
 
         # Analyze consensus
-        logs.append(f"[{datetime.utcnow().isoformat()}] Calculating consensus from strategy results")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Calculating consensus from strategy results")
         bullish_keywords = ['BUY', 'BULLISH', 'MOMENTUM', 'REVERT', 'REVERSAL', 'EXCELLENT', 'GOOD']
         bearish_keywords = ['SELL', 'BEARISH', 'OUT', 'STAY', 'EXIT', 'POOR', 'FALSE']
 
@@ -805,7 +846,7 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
             consensus = "MIXED SIGNALS"
             strength = "LOW"
 
-        logs.append(f"[{datetime.utcnow().isoformat()}] Consensus: {consensus} ({strength}) - Bullish: {bullish_count}, Bearish: {bearish_count}")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Consensus: {consensus} ({strength}) - Bullish: {bullish_count}, Bearish: {bearish_count}")
 
         # Calculate average position
         bullish_positions = [results[name].get('position_size_pct', 0) for name in bullish_strategies
@@ -818,12 +859,12 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
         forecast_data = build_forecast_data(stats, df, 14, current_price)
 
         # Save historical prices to separate collection
-        logs.append(f"[{datetime.utcnow().isoformat()}] Saving historical price data to database")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Saving historical price data to database")
         await save_historical_prices(request.symbol, df, database, source="polygon")
 
         # Update consensus result in database
-        logs.append(f"[{datetime.utcnow().isoformat()}] Saving consensus results to database")
-        logs.append(f"[{datetime.utcnow().isoformat()}] SUCCESS: Consensus analysis completed in {execution_time_ms}ms")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Saving consensus results to database")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] SUCCESS: Consensus analysis completed in {execution_time_ms}ms")
         await database.db.consensus_results.update_one(
             {"id": consensus_id},
             {"$set": {
@@ -865,7 +906,7 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
 
     except Exception as e:
         # Log error
-        logs.append(f"[{datetime.utcnow().isoformat()}] ERROR: Consensus analysis failed - {str(e)}")
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] ERROR: Consensus analysis failed - {str(e)}")
 
         # Update status to FAILED with logs
         await database.db.consensus_results.update_one(
@@ -1174,7 +1215,7 @@ async def websocket_progress_global(websocket: WebSocket):
             # Keep connection alive and handle incoming messages if needed
             data = await websocket.receive_text()
             # Echo back for ping/pong
-            await websocket.send_json({"type": "pong", "timestamp": datetime.utcnow().isoformat()})
+            await websocket.send_json({"type": "pong", "timestamp": datetime.now(timezone.utc).isoformat()})
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket)
 
@@ -1186,7 +1227,7 @@ async def websocket_progress_task(websocket: WebSocket, task_id: str):
     try:
         while True:
             data = await websocket.receive_text()
-            await websocket.send_json({"type": "pong", "timestamp": datetime.utcnow().isoformat()})
+            await websocket.send_json({"type": "pong", "timestamp": datetime.now(timezone.utc).isoformat()})
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket, task_id)
 
@@ -1203,7 +1244,7 @@ async def create_scheduled_task(
         global scheduler
 
         # Calculate next run time based on frequency
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         if task_request.frequency == ScheduleFrequency.HOURLY:
             next_run = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
         elif task_request.frequency == ScheduleFrequency.DAILY:
@@ -1842,10 +1883,10 @@ async def get_available_tickers(market: str = "all"):
         List of available tickers with symbol and name, sorted alphabetically
     """
     import httpx
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
     # Check cache
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     if _tickers_cache["data"] and _tickers_cache["timestamp"]:
         age = now - _tickers_cache["timestamp"]
         if age < timedelta(hours=_tickers_cache["ttl_hours"]):
@@ -1968,7 +2009,7 @@ async def create_backtest(
             start_date=request.config.start_date,
             end_date=request.config.end_date,
             status=BacktestStatus.PENDING,
-            created_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc)
         )
 
     except Exception as e:
@@ -1998,8 +2039,8 @@ def run_backtest_in_thread(run_id: str, config_dict: dict):
             {"run_id": run_id},
             {"$set": {
                 "status": BacktestStatus.RUNNING.value,
-                "started_at": datetime.utcnow(),
-                "updated_at": datetime.utcnow()
+                "started_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc)
             }}
         )
 
@@ -2067,8 +2108,8 @@ def run_backtest_in_thread(run_id: str, config_dict: dict):
             {"$set": {
                 "status": BacktestStatus.FAILED.value,
                 "error_message": str(e),
-                "completed_at": datetime.utcnow(),
-                "updated_at": datetime.utcnow()
+                "completed_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc)
             }}
         )
 
@@ -2119,7 +2160,7 @@ def run_optimization_in_thread(optimization_id: str, request_dict: dict, databas
             {"optimization_id": optimization_id},
             {"$set": {
                 "status": OptimizationStatus.RUNNING.value,
-                "started_at": datetime.utcnow(),
+                "started_at": datetime.now(timezone.utc),
                 "total_combinations": total_combinations,
                 "completed_combinations": 0
             }}
@@ -2221,7 +2262,7 @@ def run_optimization_in_thread(optimization_id: str, request_dict: dict, databas
             {"$set": {
                 "status": OptimizationStatus.FAILED.value,
                 "error_message": str(e),
-                "completed_at": datetime.utcnow()
+                "completed_at": datetime.now(timezone.utc)
             }}
         )
 
@@ -2490,7 +2531,7 @@ async def cancel_optimization(
             {"optimization_id": optimization_id},
             {"$set": {
                 "status": OptimizationStatus.FAILED.value,
-                "completed_at": datetime.utcnow(),
+                "completed_at": datetime.now(timezone.utc),
                 "error_message": "Cancelled by user"
             }}
         )
@@ -2556,35 +2597,125 @@ async def monitor_paper_trading_session(session_id: str):
     Monitor a paper trading session and execute signals.
     Runs continuously in background.
     """
+    print(f"📊 PAPER TRADING: Starting monitoring for session {session_id}")
     while True:
         try:
             # Get session
             session = await db.get_paper_trading_session(session_id)
 
             if not session or session.status != PaperTradingStatus.ACTIVE:
-                print(f"Paper trading session {session_id} stopped or not found")
+                print(f"📊 PAPER TRADING: Session {session_id} stopped or not found")
                 break
 
             # Check if it's time to check for signals
-            now = datetime.utcnow()
-            if session.next_signal_check and now < session.next_signal_check:
-                # Wait until next check time
-                sleep_seconds = (session.next_signal_check - now).total_seconds()
-                await asyncio.sleep(min(sleep_seconds, 60))  # Check at least every minute
-                continue
+            now = datetime.now(timezone.utc)
+            if session.next_signal_check:
+                # Ensure next_signal_check is timezone-aware (for backwards compatibility with old sessions)
+                next_check = session.next_signal_check
+                if next_check.tzinfo is None:
+                    next_check = next_check.replace(tzinfo=timezone.utc)
 
-            # Get consensus signal
-            # TODO: Integrate with actual consensus analysis
-            signal = await get_paper_trading_signal(session.config.symbol)
+                if now < next_check:
+                    # Wait until next check time
+                    sleep_seconds = (next_check - now).total_seconds()
+                    print(f"📊 PAPER TRADING: Session {session_id} waiting {sleep_seconds:.0f}s until next check")
+                    await asyncio.sleep(min(sleep_seconds, 60))  # Check at least every minute
+                    continue
 
-            if signal and session.config.auto_execute:
-                # Execute trade based on signal
-                await execute_paper_trade(session, signal)
+            print(f"📊 PAPER TRADING: Session {session_id} checking for signals...")
+            # Get consensus signal with diagnostic info
+            signal_result = await get_paper_trading_signal(session.config.symbol, session.config)
+
+            # Log the signal check
+            from backend.models import SignalLog
+
+            if not signal_result:
+                # Critical error - no result at all
+                log_entry = SignalLog(
+                    action_taken='error',
+                    reason="Critical error: signal check returned no result"
+                )
+                session.signal_logs.append(log_entry)
+            else:
+                diagnostic = signal_result.get('diagnostic', {})
+
+                # Build detailed reason with diagnostic info
+                reason_parts = []
+
+                # Data freshness status
+                if diagnostic.get('price_fetch_success'):
+                    price = signal_result.get('current_price') or diagnostic.get('current_price', 0)
+                    reason_parts.append(f"✓ Price: ${price:.2f}")
+                else:
+                    reason_parts.append("✗ Failed to fetch price")
+
+                if diagnostic.get('forecast_found'):
+                    age_hours = diagnostic.get('forecast_age_hours')
+                    if age_hours is not None:
+                        fresh_indicator = "✓" if diagnostic.get('data_fresh') else "⚠"
+                        reason_parts.append(f"{fresh_indicator} Forecast: {age_hours:.1f}h old")
+                    else:
+                        reason_parts.append("⚠ Forecast: age unknown")
+                else:
+                    reason_parts.append("✗ No forecast found")
+
+                # Signal generation status
+                if diagnostic.get('signal_generated'):
+                    action = signal_result.get('action')
+                    score = signal_result.get('consensus_score', 0)
+                    return_bps = signal_result.get('expected_return_bps', 0)
+                    reason_parts.append(f"✓ Signal: {action} (score: {score:.2f}, {return_bps:.1f} bps)")
+                elif diagnostic.get('rejection_reason'):
+                    reason_parts.append(f"✗ {diagnostic['rejection_reason']}")
+
+                reason = " | ".join(reason_parts)
+
+                # Check if we have a valid trading signal
+                if signal_result.get('action') in ['BUY', 'SELL'] and diagnostic.get('signal_generated'):
+                    # Valid signal - attempt to execute
+                    log_entry = SignalLog(
+                        current_price=signal_result.get('current_price'),
+                        signal=signal_result.get('action'),
+                        consensus_score=signal_result.get('consensus_score'),
+                        expected_return_bps=signal_result.get('expected_return_bps'),
+                        action_taken='pending',
+                        reason=reason,
+                        details=signal_result.get('strategies', {})
+                    )
+
+                    if session.config.auto_execute:
+                        # Execute trade based on signal
+                        executed, trade_reason = await execute_paper_trade(session, signal_result)
+                        log_entry.action_taken = 'executed' if executed else 'rejected'
+                        if not executed:
+                            log_entry.reason += f" | Trade rejected: {trade_reason}"
+                        else:
+                            log_entry.reason += f" | {trade_reason}"
+                    else:
+                        log_entry.action_taken = 'manual_review'
+                        log_entry.reason += " | Auto-execute disabled"
+
+                    session.signal_logs.append(log_entry)
+                else:
+                    # No valid signal (could be data issue, HOLD, or below threshold)
+                    log_entry = SignalLog(
+                        current_price=signal_result.get('current_price') or diagnostic.get('current_price'),
+                        action_taken='no_signal',
+                        reason=reason,
+                        details=diagnostic
+                    )
+                    session.signal_logs.append(log_entry)
+
+            # Keep only last 50 signal logs to avoid bloat
+            if len(session.signal_logs) > 50:
+                session.signal_logs = session.signal_logs[-50:]
 
             # Update next check time
             session.last_signal_check = now
             session.next_signal_check = now + timedelta(minutes=session.config.check_interval_minutes)
             await db.update_paper_trading_session(session)
+
+            print(f"📊 PAPER TRADING: Session {session_id} next check at {session.next_signal_check.isoformat()}")
 
             # Wait for next interval
             await asyncio.sleep(session.config.check_interval_minutes * 60)
@@ -2595,17 +2726,407 @@ async def monitor_paper_trading_session(session_id: str):
             await asyncio.sleep(60)  # Wait a minute before retrying
 
 
-async def get_paper_trading_signal(symbol: str) -> Optional[Dict]:
-    """Get current consensus signal for symbol"""
-    # TODO: Implement actual consensus signal retrieval
-    # For now, return None (no signal)
-    return None
+async def get_current_price(symbol: str) -> Optional[float]:
+    """
+    Fetch current/latest price from Massive.com API.
+
+    Args:
+        symbol: Trading symbol (e.g., 'BTC-USD' for crypto, 'AAPL' for stocks)
+
+    Returns:
+        Current price or None if not available
+    """
+    import httpx
+
+    api_key = os.getenv("MASSIVE_API_KEY")
+    if not api_key:
+        logger.error("MASSIVE_API_KEY not configured")
+        return None
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Determine if crypto or stock based on symbol format
+            is_crypto = '-' in symbol
+
+            if is_crypto:
+                # Convert BTC-USD to X:BTCUSD for Polygon API
+                base, quote = symbol.split('-')
+                polygon_ticker = f"X:{base}{quote}"
+            else:
+                polygon_ticker = symbol
+
+            # Use snapshot API to get latest price
+            # https://polygon.io/docs/crypto/get_v2_snapshot_locale_global_markets_crypto_tickers__ticker
+            if is_crypto:
+                url = f"https://api.massive.com/v2/snapshot/locale/global/markets/crypto/tickers/{polygon_ticker}?apiKey={api_key}"
+            else:
+                url = f"https://api.massive.com/v2/snapshot/locale/us/markets/stocks/tickers/{polygon_ticker}?apiKey={api_key}"
+
+            response = await client.get(url)
+
+            if response.status_code == 200:
+                data = response.json()
+                ticker_data = data.get("ticker", {})
+
+                # Try to get price from various fields in order of preference
+                price = None
+                if "lastTrade" in ticker_data:
+                    price = ticker_data["lastTrade"].get("p")  # Last trade price
+                elif "day" in ticker_data:
+                    price = ticker_data["day"].get("c")  # Day close price
+                elif "prevDay" in ticker_data:
+                    price = ticker_data["prevDay"].get("c")  # Previous day close
+
+                if price:
+                    logger.info(f"Fetched current price for {symbol}: ${price}")
+                    return float(price)
+                else:
+                    logger.warning(f"No price data found for {symbol} in API response")
+                    return None
+            else:
+                logger.error(f"Failed to fetch price for {symbol}: HTTP {response.status_code}")
+                return None
+
+    except Exception as e:
+        logger.error(f"Error fetching current price for {symbol}: {str(e)}")
+        traceback.print_exc()
+        return None
 
 
-async def execute_paper_trade(session: PaperTradingSession, signal: Dict):
-    """Execute a paper trade based on signal"""
-    # TODO: Implement paper trade execution logic
-    pass
+async def get_paper_trading_signal(symbol: str, config: PaperTradingConfig) -> Optional[Dict]:
+    """
+    Get current consensus signal for symbol using hybrid approach:
+    1. Use cached/latest forecast from database (trained on historical CSV data)
+    2. Fetch current price from Massive.com API (real-time)
+    3. Run consensus strategies to generate signal
+
+    Args:
+        symbol: Trading symbol
+        config: Paper trading configuration
+
+    Returns:
+        Dict with signal info, diagnostic data, or None if critical error
+    """
+    diagnostic_info = {
+        'price_fetch_success': False,
+        'forecast_found': False,
+        'forecast_age_hours': None,
+        'data_fresh': False,
+        'signal_generated': False,
+        'rejection_reason': None
+    }
+
+    try:
+        # 1. Get current price from API (real-time)
+        print(f"📊 SIGNAL CHECK: Fetching current price for {symbol}...")
+        current_price = await get_current_price(symbol)
+
+        if not current_price:
+            diagnostic_info['rejection_reason'] = "Failed to fetch current price from API"
+            print(f"❌ SIGNAL CHECK: Could not fetch current price for {symbol}")
+            return {'diagnostic': diagnostic_info}
+
+        diagnostic_info['price_fetch_success'] = True
+        diagnostic_info['current_price'] = current_price
+        print(f"✅ SIGNAL CHECK: Current price for {symbol}: ${current_price:.2f}")
+
+        # 2. Get latest forecast from database (generated from historical data)
+        # Look for recent consensus analysis or forecast
+        print(f"📊 SIGNAL CHECK: Looking for recent forecast for {symbol}...")
+        latest_analysis = await db.get_latest_consensus(symbol=symbol)
+
+        if not latest_analysis:
+            diagnostic_info['rejection_reason'] = "No forecast found in database (need to run consensus analysis)"
+            print(f"❌ SIGNAL CHECK: No forecast found for {symbol}")
+            return {'diagnostic': diagnostic_info}
+
+        diagnostic_info['forecast_found'] = True
+
+        # Calculate forecast age (use created_at or analyzed_at)
+        analyzed_at = latest_analysis.get('analyzed_at') or latest_analysis.get('created_at')
+        if analyzed_at:
+            if isinstance(analyzed_at, str):
+                analyzed_at = datetime.fromisoformat(analyzed_at.replace('Z', '+00:00'))
+            elif hasattr(analyzed_at, 'replace') and not analyzed_at.tzinfo:
+                analyzed_at = analyzed_at.replace(tzinfo=timezone.utc)
+            forecast_age = datetime.now(timezone.utc) - analyzed_at
+            diagnostic_info['forecast_age_hours'] = forecast_age.total_seconds() / 3600
+            diagnostic_info['data_fresh'] = diagnostic_info['forecast_age_hours'] < 24
+            print(f"✅ SIGNAL CHECK: Found forecast for {symbol}, age: {diagnostic_info['forecast_age_hours']:.1f} hours")
+        else:
+            print(f"⚠️ SIGNAL CHECK: Forecast found but no timestamp")
+
+        # 4. Parse consensus data
+        # Check if data is in nested 'result' format or direct format
+        if latest_analysis.get('result'):
+            # Nested format
+            result = latest_analysis['result']
+            action = result.get('action', 'HOLD')
+            consensus_score = result.get('consensus_score', 0)
+            expected_return_bps = result.get('expected_return_bps', 0)
+        else:
+            # Direct format - convert consensus string to action
+            consensus_str = latest_analysis.get('consensus', '')
+            if 'BUY' in consensus_str:
+                action = 'BUY'
+            elif 'SELL' in consensus_str or 'AVOID' in consensus_str:
+                action = 'SELL'
+            else:
+                action = 'HOLD'
+
+            # Calculate consensus score from bearish/bullish counts
+            bullish_count = latest_analysis.get('bullish_count', 0)
+            bearish_count = latest_analysis.get('bearish_count', 0)
+            total_count = latest_analysis.get('total_count', 8)
+
+            if action == 'BUY':
+                consensus_score = bullish_count / total_count if total_count > 0 else 0
+            elif action == 'SELL':
+                consensus_score = bearish_count / total_count if total_count > 0 else 0
+            else:
+                consensus_score = 0
+
+            # Estimate expected return from forecast data
+            forecast_data = latest_analysis.get('forecast_data', {})
+            ensemble_median = forecast_data.get('ensemble_median', [])
+            current_price_db = latest_analysis.get('current_price', current_price)
+
+            if ensemble_median and len(ensemble_median) > 0:
+                # Use 14-day forecast endpoint
+                final_forecast = ensemble_median[-1]
+                expected_return_pct = ((final_forecast - current_price_db) / current_price_db) * 100
+                expected_return_bps = expected_return_pct * 100
+            else:
+                expected_return_bps = 0
+
+        print(f"📊 SIGNAL CHECK: Parsed consensus - Action: {action}, Score: {consensus_score:.2f}, Return: {expected_return_bps:.1f} bps")
+
+        # Check if signal meets minimum edge threshold
+        if action in ['BUY', 'SELL']:
+            # Apply minimum edge filter from config
+            if abs(expected_return_bps) < config.min_edge_bps:
+                diagnostic_info['rejection_reason'] = f"Signal below minimum edge threshold ({abs(expected_return_bps):.1f} < {config.min_edge_bps} bps)"
+                print(f"❌ SIGNAL CHECK: Signal for {symbol} below minimum edge threshold: {expected_return_bps:.1f} < {config.min_edge_bps} bps")
+                return {'diagnostic': diagnostic_info}
+
+            diagnostic_info['signal_generated'] = True
+            print(f"✅ SIGNAL CHECK: Valid {action} signal generated for {symbol}")
+
+            # Get strategies - either from result.strategy_votes or build from database structure
+            if latest_analysis.get('result'):
+                strategies = latest_analysis['result'].get('strategy_votes', {})
+            else:
+                # Build strategies dict from direct format
+                strategies = {
+                    'bullish': latest_analysis.get('bullish_strategies', []),
+                    'bearish': latest_analysis.get('bearish_strategies', []),
+                    'neutral': latest_analysis.get('neutral_strategies', [])
+                }
+
+            return {
+                'symbol': symbol,
+                'action': action,
+                'current_price': current_price,
+                'consensus_score': consensus_score,
+                'expected_return_bps': expected_return_bps,
+                'strategies': strategies,
+                'timestamp': datetime.now(timezone.utc),
+                'diagnostic': diagnostic_info
+            }
+        else:
+            # HOLD signal
+            diagnostic_info['rejection_reason'] = f"Consensus action is {action} (not BUY/SELL)"
+            print(f"📊 SIGNAL CHECK: Consensus action is {action} for {symbol}")
+            return {'diagnostic': diagnostic_info, 'current_price': current_price}
+
+    except Exception as e:
+        diagnostic_info['rejection_reason'] = f"Error: {str(e)}"
+        print(f"❌ SIGNAL CHECK ERROR for {symbol}: {str(e)}")
+        logger.error(f"Error generating paper trading signal for {symbol}: {str(e)}")
+        traceback.print_exc()
+        return {'diagnostic': diagnostic_info}
+
+
+async def execute_paper_trade(session: PaperTradingSession, signal: Dict) -> tuple[bool, str]:
+    """
+    Execute a paper trade based on signal.
+    Handles position entry, exit, and P&L tracking with realistic transaction costs.
+
+    Args:
+        session: Paper trading session
+        signal: Trading signal dict with action, price, etc.
+
+    Returns:
+        Tuple of (success: bool, reason: str)
+    """
+    from backend.backtesting_engine import TransactionCostModel
+    from backend.models import PaperTrade, PaperPosition
+
+    try:
+        symbol = signal['symbol']
+        action = signal['action']
+        current_price = signal['current_price']
+        timestamp = signal['timestamp']
+
+        # Initialize transaction cost model
+        cost_model = TransactionCostModel(session.config.transaction_costs)
+
+        # Check if we have an existing position
+        existing_position = None
+        for pos in session.positions:
+            if pos.symbol == symbol:
+                existing_position = pos
+                break
+
+        # BUY signal
+        if action == 'BUY' and not existing_position:
+            # Calculate position size
+            position_value = session.cash * (session.config.position_size_pct / 100.0)
+
+            # Calculate shares (support fractional for crypto)
+            shares = position_value / current_price
+
+            # Calculate transaction costs
+            # Assume average daily volume of 1M for now (could fetch from API)
+            adv = 1_000_000
+            transaction_cost = cost_model.calculate_cost(current_price, shares, "market", adv)
+
+            # Check if we have enough cash
+            total_cost = (shares * current_price) + transaction_cost
+            if total_cost > session.cash:
+                logger.warning(f"Insufficient cash for trade: need ${total_cost:.2f}, have ${session.cash:.2f}")
+                # Record rejected trade
+                trade = PaperTrade(
+                    session_id=session.session_id,
+                    timestamp=timestamp,
+                    symbol=symbol,
+                    side='buy',
+                    shares=shares,
+                    price=current_price,
+                    notional=shares * current_price,
+                    transaction_cost=transaction_cost,
+                    strategy_signal=signal.get('strategies', {}),
+                    was_executed=False,
+                    rejection_reason="Insufficient cash"
+                )
+                session.trades.append(trade)
+                await db.update_paper_trading_session(session)
+                return False, f"Insufficient cash (need ${total_cost:.2f}, have ${session.cash:.2f})"
+
+            # Execute buy
+            session.cash -= total_cost
+
+            # Create position
+            new_position = PaperPosition(
+                symbol=symbol,
+                shares=shares,
+                entry_price=current_price,
+                entry_timestamp=timestamp,
+                current_price=current_price,
+                unrealized_pnl=0.0,
+                unrealized_pnl_pct=0.0
+            )
+            session.positions.append(new_position)
+
+            # Record trade
+            trade = PaperTrade(
+                session_id=session.session_id,
+                timestamp=timestamp,
+                symbol=symbol,
+                side='buy',
+                shares=shares,
+                price=current_price,
+                notional=shares * current_price,
+                transaction_cost=transaction_cost,
+                strategy_signal=signal.get('strategies', {}),
+                was_executed=True,
+                metadata={'consensus_score': signal.get('consensus_score', 0)}
+            )
+            session.trades.append(trade)
+            session.total_trades += 1
+
+            logger.info(f"Paper trade executed: BUY {shares:.4f} {symbol} @ ${current_price:.2f}")
+
+        # SELL signal (close existing position)
+        elif action == 'SELL' and existing_position:
+            shares = existing_position.shares
+
+            # Calculate transaction costs
+            adv = 1_000_000
+            transaction_cost = cost_model.calculate_cost(current_price, shares, "market", adv)
+
+            # Execute sell
+            proceeds = (shares * current_price) - transaction_cost
+            session.cash += proceeds
+
+            # Calculate realized P&L
+            cost_basis = shares * existing_position.entry_price
+            realized_pnl = proceeds - cost_basis
+            realized_pnl_pct = (realized_pnl / cost_basis) * 100
+
+            # Update session P&L
+            session.total_pnl += realized_pnl
+            session.total_pnl_pct = ((session.cash + sum(p.shares * p.current_price for p in session.positions if p != existing_position)) - session.starting_capital) / session.starting_capital * 100
+
+            # Update win/loss counters
+            if realized_pnl > 0:
+                session.winning_trades += 1
+            else:
+                session.losing_trades += 1
+
+            # Remove position
+            session.positions = [p for p in session.positions if p != existing_position]
+
+            # Record trade
+            trade = PaperTrade(
+                session_id=session.session_id,
+                timestamp=timestamp,
+                symbol=symbol,
+                side='sell',
+                shares=shares,
+                price=current_price,
+                notional=shares * current_price,
+                transaction_cost=transaction_cost,
+                strategy_signal=signal.get('strategies', {}),
+                was_executed=True,
+                metadata={
+                    'realized_pnl': realized_pnl,
+                    'realized_pnl_pct': realized_pnl_pct,
+                    'entry_price': existing_position.entry_price,
+                    'consensus_score': signal.get('consensus_score', 0)
+                }
+            )
+            session.trades.append(trade)
+            session.total_trades += 1
+
+            logger.info(f"Paper trade executed: SELL {shares:.4f} {symbol} @ ${current_price:.2f}, P&L: ${realized_pnl:.2f} ({realized_pnl_pct:.2f}%)")
+        else:
+            # Signal didn't match conditions (e.g., BUY but already have position, or SELL but no position)
+            if action == 'BUY' and existing_position:
+                reason = f"Already have position in {symbol}"
+            elif action == 'SELL' and not existing_position:
+                reason = f"No position to sell in {symbol}"
+            else:
+                reason = f"Conditions not met for {action} signal"
+
+            logger.info(f"Paper trade signal {action} for {symbol} ignored - {reason}")
+            return False, reason
+
+        # Update current equity
+        position_value = sum(p.shares * current_price for p in session.positions if p.symbol == symbol)
+        session.current_equity = session.cash + position_value + sum(p.shares * p.current_price for p in session.positions if p.symbol != symbol)
+
+        # Save updated session
+        await db.update_paper_trading_session(session)
+
+        return True, f"{action} executed successfully"
+
+    except Exception as e:
+        logger.error(f"Error executing paper trade: {str(e)}")
+        traceback.print_exc()
+        session.error_message = str(e)
+        await db.update_paper_trading_session(session)
+        return False, f"Error: {str(e)}"
 
 
 @app.get("/api/v1/paper-trading", response_model=List[PaperTradingSummary])
@@ -2716,7 +3237,7 @@ async def stop_paper_trading_session(session_id: str):
             raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
 
         session.status = PaperTradingStatus.STOPPED
-        session.stopped_at = datetime.utcnow()
+        session.stopped_at = datetime.now(timezone.utc)
         await db.update_paper_trading_session(session)
 
         return {"message": f"Paper trading session {session_id} stopped"}
@@ -2725,6 +3246,28 @@ async def stop_paper_trading_session(session_id: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to stop session: {str(e)}")
+
+
+@app.delete("/api/v1/paper-trading/{session_id}")
+async def delete_paper_trading_session(session_id: str):
+    """
+    Delete a paper trading session from the database.
+    """
+    try:
+        session = await db.get_paper_trading_session(session_id)
+
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+        # Delete from database
+        await db.db.paper_trading_sessions.delete_one({"session_id": session_id})
+
+        return {"message": f"Paper trading session {session_id} deleted"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete session: {str(e)}")
 
 
 if __name__ == "__main__":
