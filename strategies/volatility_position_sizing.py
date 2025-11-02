@@ -34,6 +34,7 @@ from strategies.strategy_utils import (
     format_strategy_output,
     get_default_ensemble_configs,
 )
+from strategies.strategy_cache import cached_strategy
 
 
 def calculate_kelly_criterion(win_prob: float, avg_win: float, avg_loss: float) -> float:
@@ -64,6 +65,7 @@ def calculate_kelly_criterion(win_prob: float, avg_win: float, avg_loss: float) 
     return max(0, min(1, kelly * kelly_fraction))
 
 
+@cached_strategy
 def analyze_volatility_position_sizing(stats_14day: Dict, current_price: float) -> Dict:
     """
     Analyze optimal position sizing based on forecast volatility.

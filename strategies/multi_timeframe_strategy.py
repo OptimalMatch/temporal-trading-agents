@@ -32,6 +32,7 @@ from strategies.strategy_utils import (
     format_strategy_output,
     get_default_ensemble_configs,
 )
+from strategies.strategy_cache import cached_strategy
 
 
 def train_multiple_timeframes(symbol: str, ensemble_module,
@@ -77,6 +78,7 @@ def train_multiple_timeframes(symbol: str, ensemble_module,
     return results
 
 
+@cached_strategy
 def analyze_multi_timeframe_strategy(timeframe_data: Dict, current_price: float) -> Dict:
     """
     Analyze trading opportunity based on multi-timeframe alignment.

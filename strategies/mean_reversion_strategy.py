@@ -36,6 +36,7 @@ from strategies.strategy_utils import (
     calculate_risk_reward_ratio,
     get_default_ensemble_configs,
 )
+from strategies.strategy_cache import cached_strategy
 
 
 def calculate_mean_reversion_metrics(df: pd.DataFrame, current_price: float) -> Dict:
