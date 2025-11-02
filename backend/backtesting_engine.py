@@ -189,11 +189,13 @@ class BacktestEngine:
     def __init__(
         self,
         config: BacktestConfig,
-        consensus_analyzer=None  # Function to get consensus signal
+        consensus_analyzer=None,  # Function to get consensus signal
+        enable_regime_analysis: bool = True
     ):
         self.config = config
         self.consensus_analyzer = consensus_analyzer
         self.cost_model = TransactionCostModel(config.transaction_costs)
+        self.enable_regime_analysis = enable_regime_analysis
 
         # State
         self.cash = config.initial_capital
@@ -204,6 +206,12 @@ class BacktestEngine:
         self.consensus_stats: Optional[Dict] = None  # Trained model stats for consensus (14-day)
         self.multi_horizon_stats: Optional[Dict] = None  # Multi-horizon stats for multi-timeframe strategy
 
+        # Regime tracking
+        self.regime_tracker: Optional['RegimeTracker'] = None
+        if self.enable_regime_analysis:
+            from backend.regime_analysis import RegimeDetector, RegimeTracker
+            self.regime_tracker = RegimeTracker(RegimeDetector())
+
     def reset(self):
         """Reset backtest state (but preserve trained model stats)"""
         self.cash = self.initial_capital
@@ -211,6 +219,11 @@ class BacktestEngine:
         self.trades = []
         self.equity_curve = []
         # Note: consensus_stats is NOT reset - it should persist across periods
+
+        # Reset regime tracker
+        if self.enable_regime_analysis:
+            from backend.regime_analysis import RegimeDetector, RegimeTracker
+            self.regime_tracker = RegimeTracker(RegimeDetector())
 
     def execute_trade(
         self,
@@ -595,6 +608,24 @@ class BacktestEngine:
             # Record equity
             self.record_equity(current_date, {self.config.symbol: current_price})
 
+            # Update regime tracking
+            if self.regime_tracker and historical_df is not None:
+                # Calculate bar return if we have equity curve
+                bar_return = None
+                if len(self.equity_curve) >= 2:
+                    prev_equity = self.equity_curve[-2]['equity']
+                    curr_equity = self.equity_curve[-1]['equity']
+                    bar_return = (curr_equity - prev_equity) / prev_equity if prev_equity > 0 else 0
+
+                # Track regime for this bar
+                last_trade = self.trades[-1].dict() if self.trades else None
+                self.regime_tracker.update(
+                    timestamp=current_date,
+                    price_data=historical_df,
+                    trade=last_trade,
+                    bar_return=bar_return
+                )
+
         # Force-liquidate any open positions at the end of the period
         # This ensures each period ends flat (100% cash, no positions)
         final_price = price_data.iloc[-1]['close']
@@ -645,12 +676,19 @@ class BacktestEngine:
         cache_stats = get_strategy_cache().stats()
         logger.info(f"Strategy cache stats: {cache_stats['hits']} hits, {cache_stats['misses']} misses ({cache_stats['hit_rate_pct']}% hit rate)")
 
+        # Get regime analysis if enabled
+        regime_analysis = None
+        if self.regime_tracker:
+            regime_analysis = self.regime_tracker.get_regime_statistics()
+            logger.info(f"Regime analysis: {len(regime_analysis.get('regime_statistics', {}))} regimes detected")
+
         return BacktestRun(
             run_id=run_id,
             name=f"Backtest {self.config.symbol}",
             config=self.config,
             status=BacktestStatus.COMPLETED,
             metrics=metrics,
+            regime_analysis=regime_analysis,
             trades=self.trades,
             equity_curve=self.equity_curve,
             started_at=datetime.utcnow(),
@@ -924,6 +962,10 @@ class BacktestEngine:
         cache_stats = get_strategy_cache().stats()
         logger.info(f"  Strategy cache stats: {cache_stats['hits']} hits, {cache_stats['misses']} misses ({cache_stats['hit_rate_pct']}% hit rate)")
 
+        # TODO: Aggregate regime analysis across walk-forward periods
+        # For now, regime analysis is only available in simple backtests
+        regime_analysis = None
+
         return BacktestRun(
             run_id=run_id,
             name=f"Walk-Forward Backtest {self.config.symbol}",
@@ -931,6 +973,7 @@ class BacktestEngine:
             status=BacktestStatus.COMPLETED,
             metrics=aggregate_metrics,
             period_metrics=all_period_metrics,
+            regime_analysis=regime_analysis,
             trades=all_trades,
             equity_curve=all_equity_points,
             started_at=datetime.utcnow(),

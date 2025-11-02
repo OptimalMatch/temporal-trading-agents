@@ -528,6 +528,7 @@ class BacktestRun(BaseModel):
     status: BacktestStatus = BacktestStatus.PENDING
     metrics: Optional[BacktestMetrics] = None
     period_metrics: List[BacktestPeriodMetrics] = []  # Walk-forward periods
+    regime_analysis: Optional[Dict[str, Any]] = None  # Market regime breakdown
     trades: List[BacktestTrade] = []
     equity_curve: List[Dict[str, Any]] = []  # [{timestamp, equity, drawdown}, ...]
     error_message: Optional[str] = None
