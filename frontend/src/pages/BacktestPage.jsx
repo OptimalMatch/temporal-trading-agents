@@ -26,6 +26,7 @@ export default function BacktestPage() {
     train_window_days: 252,
     test_window_days: 63,
     retrain_frequency_days: 21,
+    enabled_strategies: ['gradient', 'confidence', 'volatility', 'acceleration', 'swing', 'risk_adjusted', 'mean_reversion', 'multi_timeframe'],
   });
 
   useEffect(() => {
@@ -75,6 +76,7 @@ export default function BacktestPage() {
       },
       use_consensus: true,
       individual_strategies: [],
+      enabled_strategies: formData.enabled_strategies,
     };
 
     // Close form immediately and fire off API call in background
@@ -408,6 +410,88 @@ export default function BacktestPage() {
                 </div>
               </div>
 
+              {/* Strategy Selection */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold text-gray-200">Consensus Strategies</h3>
+                  <div className="flex items-center space-x-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const allStrategies = ['gradient', 'confidence', 'volatility', 'acceleration', 'swing', 'risk_adjusted', 'mean_reversion', 'multi_timeframe'];
+                        setFormData({ ...formData, enabled_strategies: allStrategies });
+                      }}
+                      className="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded border border-gray-600"
+                    >
+                      Select All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, enabled_strategies: [] })}
+                      className="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded border border-gray-600"
+                    >
+                      Clear All
+                    </button>
+                  </div>
+                </div>
+
+                <p className="text-sm text-gray-400">
+                  Select which strategies to include in the consensus voting system ({formData.enabled_strategies.length} selected)
+                </p>
+
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    { key: 'gradient', label: 'Forecast Gradient', description: 'Directional forecast changes' },
+                    { key: 'confidence', label: 'Confidence-Weighted', description: 'High-confidence predictions' },
+                    { key: 'volatility', label: 'Volatility Sizing', description: 'Volatility-adjusted positions' },
+                    { key: 'acceleration', label: 'Acceleration', description: 'Forecast momentum' },
+                    { key: 'swing', label: 'Swing Trading', description: 'Multi-day position holds' },
+                    { key: 'risk_adjusted', label: 'Risk-Adjusted', description: 'Risk-normalized signals' },
+                    { key: 'mean_reversion', label: 'Mean Reversion', description: 'Counter-trend opportunities' },
+                    { key: 'multi_timeframe', label: 'Multi-Timeframe', description: 'Cross-timeframe alignment' },
+                  ].map((strategy) => (
+                    <label
+                      key={strategy.key}
+                      className={`flex items-start space-x-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                        formData.enabled_strategies.includes(strategy.key)
+                          ? 'bg-brand-900/20 border-brand-700'
+                          : 'bg-gray-700/30 border-gray-600 hover:border-gray-500'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={formData.enabled_strategies.includes(strategy.key)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setFormData({
+                              ...formData,
+                              enabled_strategies: [...formData.enabled_strategies, strategy.key],
+                            });
+                          } else {
+                            setFormData({
+                              ...formData,
+                              enabled_strategies: formData.enabled_strategies.filter((s) => s !== strategy.key),
+                            });
+                          }
+                        }}
+                        className="mt-0.5 w-4 h-4 rounded border-gray-600 bg-gray-700"
+                      />
+                      <div className="flex-1">
+                        <div className="text-sm font-medium text-gray-200">{strategy.label}</div>
+                        <div className="text-xs text-gray-400">{strategy.description}</div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+
+                {formData.enabled_strategies.length === 0 && (
+                  <div className="p-2 bg-yellow-900/30 border border-yellow-700 rounded text-xs text-yellow-300">
+                    <AlertCircle className="w-3 h-3 inline mr-1" />
+                    Please select at least one strategy for the consensus system
+                  </div>
+                )}
+              </div>
+
               {/* Walk-Forward Validation */}
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
@@ -473,7 +557,7 @@ export default function BacktestPage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={loading}
+                  disabled={loading || formData.enabled_strategies.length === 0}
                   className="flex items-center space-x-2 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg transition-colors disabled:opacity-50"
                 >
                   {loading ? (

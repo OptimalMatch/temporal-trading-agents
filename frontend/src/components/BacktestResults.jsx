@@ -1,4 +1,4 @@
-import { X, TrendingUp, TrendingDown, DollarSign, Activity, BarChart3, ArrowLeft, Cloud, CloudRain, CloudSnow, Sun, Wind, Zap } from 'lucide-react';
+import { X, TrendingUp, TrendingDown, DollarSign, Activity, BarChart3, ArrowLeft, Cloud, CloudRain, CloudSnow, Sun, Wind, Zap, Clock } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area } from 'recharts';
 
 export default function BacktestResults({ backtest, onClose }) {
@@ -44,6 +44,21 @@ export default function BacktestResults({ backtest, onClose }) {
     }).format(value);
   };
 
+  const formatDuration = (ms) => {
+    if (!ms) return 'N/A';
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+
+    if (hours > 0) {
+      return `${hours}h ${minutes % 60}m`;
+    } else if (minutes > 0) {
+      return `${minutes}m ${seconds % 60}s`;
+    } else {
+      return `${seconds}s`;
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -63,8 +78,48 @@ export default function BacktestResults({ backtest, onClose }) {
         </div>
       </div>
 
+      {/* Enabled Strategies */}
+      <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+        <h3 className="text-sm font-semibold text-gray-400 mb-3">
+          Consensus Strategies ({backtest.config.enabled_strategies?.length || 8} of 8 enabled)
+        </h3>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+          {(() => {
+            const allStrategies = [
+              { key: 'gradient', label: 'Forecast Gradient' },
+              { key: 'confidence', label: 'Confidence-Weighted' },
+              { key: 'volatility', label: 'Volatility Sizing' },
+              { key: 'acceleration', label: 'Acceleration' },
+              { key: 'swing', label: 'Swing Trading' },
+              { key: 'risk_adjusted', label: 'Risk-Adjusted' },
+              { key: 'mean_reversion', label: 'Mean Reversion' },
+              { key: 'multi_timeframe', label: 'Multi-Timeframe' },
+            ];
+
+            const enabledStrategies = backtest.config.enabled_strategies || allStrategies.map(s => s.key);
+
+            return allStrategies.map((strategy) => {
+              const isEnabled = enabledStrategies.includes(strategy.key);
+              return (
+                <div
+                  key={strategy.key}
+                  className={`flex items-center space-x-2 text-xs rounded px-2 py-1 ${
+                    isEnabled
+                      ? 'bg-brand-900/20 border border-brand-700'
+                      : 'bg-gray-700/30 border border-gray-600 opacity-50'
+                  }`}
+                >
+                  <div className={`w-1.5 h-1.5 rounded-full ${isEnabled ? 'bg-brand-500' : 'bg-gray-500'}`}></div>
+                  <span className={isEnabled ? 'text-gray-200' : 'text-gray-500'}>{strategy.label}</span>
+                </div>
+              );
+            });
+          })()}
+        </div>
+      </div>
+
       {/* Key Metrics */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
         <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
           <div className="flex items-center space-x-2 mb-2">
             <TrendingUp className="w-5 h-5 text-brand-500" />
@@ -114,6 +169,17 @@ export default function BacktestResults({ backtest, onClose }) {
           <p className="text-2xl font-bold text-gray-100">{metrics.total_trades}</p>
           <p className="text-xs text-gray-400 mt-1">
             Win Rate: {(metrics.win_rate * 100).toFixed(1)}%
+          </p>
+        </div>
+
+        <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+          <div className="flex items-center space-x-2 mb-2">
+            <Clock className="w-5 h-5 text-amber-500" />
+            <p className="text-sm text-gray-400">Execution Time</p>
+          </div>
+          <p className="text-2xl font-bold text-gray-100">{formatDuration(backtest.execution_time_ms)}</p>
+          <p className="text-xs text-gray-400 mt-1">
+            {backtest.config.enabled_strategies?.length || 8} strategies
           </p>
         </div>
       </div>

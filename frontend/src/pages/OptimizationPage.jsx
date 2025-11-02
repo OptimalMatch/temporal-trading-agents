@@ -26,6 +26,7 @@ export default function OptimizationPage() {
     strongBuyThresholds: '0.75, 0.80, 0.85',
     buyThresholds: '0.55, 0.60, 0.65',
     moderateBuyThresholds: '0.45, 0.50, 0.55',
+    enabled_strategies: ['gradient', 'confidence', 'volatility', 'acceleration', 'swing', 'risk_adjusted', 'mean_reversion', 'multi_timeframe'],
   });
 
   useEffect(() => {
@@ -112,6 +113,7 @@ export default function OptimizationPage() {
           start_date: formData.startDate,
           end_date: formData.endDate,
           initial_capital: formData.initialCapital,
+          enabled_strategies: formData.enabled_strategies,
           walk_forward: {
             enabled: true,
             train_window_days: 252,
@@ -557,6 +559,88 @@ export default function OptimizationPage() {
               </div>
             </div>
 
+            {/* Strategy Selection */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between border-b border-gray-700 pb-2">
+                <h3 className="text-lg font-semibold text-gray-100">Consensus Strategies</h3>
+                <div className="flex items-center space-x-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const allStrategies = ['gradient', 'confidence', 'volatility', 'acceleration', 'swing', 'risk_adjusted', 'mean_reversion', 'multi_timeframe'];
+                      setFormData({ ...formData, enabled_strategies: allStrategies });
+                    }}
+                    className="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded border border-gray-600"
+                  >
+                    Select All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, enabled_strategies: [] })}
+                    className="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded border border-gray-600"
+                  >
+                    Clear All
+                  </button>
+                </div>
+              </div>
+
+              <p className="text-sm text-gray-400">
+                Select which strategies to include in the consensus voting system ({formData.enabled_strategies.length} selected)
+              </p>
+
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { key: 'gradient', label: 'Forecast Gradient', description: 'Directional forecast changes' },
+                  { key: 'confidence', label: 'Confidence-Weighted', description: 'High-confidence predictions' },
+                  { key: 'volatility', label: 'Volatility Sizing', description: 'Volatility-adjusted positions' },
+                  { key: 'acceleration', label: 'Acceleration', description: 'Forecast momentum' },
+                  { key: 'swing', label: 'Swing Trading', description: 'Multi-day position holds' },
+                  { key: 'risk_adjusted', label: 'Risk-Adjusted', description: 'Risk-normalized signals' },
+                  { key: 'mean_reversion', label: 'Mean Reversion', description: 'Counter-trend opportunities' },
+                  { key: 'multi_timeframe', label: 'Multi-Timeframe', description: 'Cross-timeframe alignment' },
+                ].map((strategy) => (
+                  <label
+                    key={strategy.key}
+                    className={`flex items-start space-x-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                      formData.enabled_strategies.includes(strategy.key)
+                        ? 'bg-brand-900/20 border-brand-700'
+                        : 'bg-gray-700/30 border-gray-600 hover:border-gray-500'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={formData.enabled_strategies.includes(strategy.key)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setFormData({
+                            ...formData,
+                            enabled_strategies: [...formData.enabled_strategies, strategy.key],
+                          });
+                        } else {
+                          setFormData({
+                            ...formData,
+                            enabled_strategies: formData.enabled_strategies.filter((s) => s !== strategy.key),
+                          });
+                        }
+                      }}
+                      className="mt-0.5 w-4 h-4 rounded border-gray-600 bg-gray-700"
+                    />
+                    <div className="flex-1">
+                      <div className="text-sm font-medium text-gray-200">{strategy.label}</div>
+                      <div className="text-xs text-gray-400">{strategy.description}</div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+
+              {formData.enabled_strategies.length === 0 && (
+                <div className="p-2 bg-yellow-900/30 border border-yellow-700 rounded text-xs text-yellow-300 flex items-center space-x-2">
+                  <AlertCircle className="w-3 h-3" />
+                  <span>Please select at least one strategy for the consensus system</span>
+                </div>
+              )}
+            </div>
+
             {/* Summary */}
             <div className="bg-brand-900/20 border border-brand-700 rounded-lg p-4">
               <div className="flex items-center justify-between">
@@ -580,7 +664,7 @@ export default function OptimizationPage() {
             <div className="flex space-x-4">
               <button
                 type="submit"
-                disabled={loading}
+                disabled={loading || formData.enabled_strategies.length === 0}
                 className="flex-1 bg-brand-600 hover:bg-brand-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white px-6 py-3 rounded-lg font-medium transition-colors flex items-center justify-center space-x-2"
               >
                 {loading ? (
@@ -752,6 +836,48 @@ export default function OptimizationPage() {
                   <div className="text-2xl font-bold text-gray-100">{selectedOptimization.completed_combinations || 0}</div>
                 </div>
               </div>
+
+              {/* Enabled Strategies */}
+              {selectedOptimization.base_config.enabled_strategies && selectedOptimization.base_config.enabled_strategies.length > 0 && (
+                <div className="bg-gray-700/50 rounded-lg p-4">
+                  <h3 className="text-sm font-semibold text-gray-400 mb-3">
+                    Consensus Strategies ({selectedOptimization.base_config.enabled_strategies.length} of 8 enabled)
+                  </h3>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    {(() => {
+                      const allStrategies = [
+                        { key: 'gradient', label: 'Forecast Gradient' },
+                        { key: 'confidence', label: 'Confidence-Weighted' },
+                        { key: 'volatility', label: 'Volatility Sizing' },
+                        { key: 'acceleration', label: 'Acceleration' },
+                        { key: 'swing', label: 'Swing Trading' },
+                        { key: 'risk_adjusted', label: 'Risk-Adjusted' },
+                        { key: 'mean_reversion', label: 'Mean Reversion' },
+                        { key: 'multi_timeframe', label: 'Multi-Timeframe' },
+                      ];
+
+                      const enabledStrategies = selectedOptimization.base_config.enabled_strategies || allStrategies.map(s => s.key);
+
+                      return allStrategies.map((strategy) => {
+                        const isEnabled = enabledStrategies.includes(strategy.key);
+                        return (
+                          <div
+                            key={strategy.key}
+                            className={`flex items-center space-x-2 text-xs rounded px-2 py-1 ${
+                              isEnabled
+                                ? 'bg-brand-900/20 border border-brand-700'
+                                : 'bg-gray-700/30 border border-gray-600 opacity-50'
+                            }`}
+                          >
+                            <div className={`w-1.5 h-1.5 rounded-full ${isEnabled ? 'bg-brand-500' : 'bg-gray-500'}`}></div>
+                            <span className={isEnabled ? 'text-gray-200' : 'text-gray-500'}>{strategy.label}</span>
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                </div>
+              )}
 
               {/* How to Use Results */}
               {selectedOptimization.status === 'completed' && (

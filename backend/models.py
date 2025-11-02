@@ -459,6 +459,12 @@ class BacktestConfig(BaseModel):
     use_consensus: bool = True  # Use consensus strategies
     individual_strategies: List[StrategyType] = []  # Or test individual strategies
 
+    # Strategy selection for consensus (all enabled by default)
+    enabled_strategies: List[str] = [
+        'gradient', 'confidence', 'volatility', 'acceleration',
+        'swing', 'risk_adjusted', 'mean_reversion', 'multi_timeframe'
+    ]
+
 
 class BacktestTrade(BaseModel):
     """Individual trade in backtest"""
@@ -571,6 +577,11 @@ class ParameterGrid(BaseModel):
     moderate_buy_threshold: List[float] = [0.45, 0.50, 0.55]
     sell_threshold: List[float] = [0.55, 0.60, 0.65]
     moderate_sell_threshold: List[float] = [0.45, 0.50, 0.55]
+
+    # Strategy combinations to test (optional, defaults to all strategies enabled)
+    # Each element is a list of strategy names to enable for that test
+    # Example: [['gradient', 'confidence'], ['all'], ['gradient', 'volatility', 'swing']]
+    enabled_strategies: Optional[List[List[str]]] = None
 
 
 class OptimizationMetric(str, Enum):
