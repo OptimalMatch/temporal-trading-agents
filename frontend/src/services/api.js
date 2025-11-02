@@ -185,6 +185,14 @@ class APIService {
   async getOptimization(optimizationId) {
     return this.request(`/optimize/${optimizationId}`);
   }
+
+  async deleteOptimization(optimizationId) {
+    return this.request(`/optimize/${optimizationId}`, { method: 'DELETE' });
+  }
+
+  async cancelOptimization(optimizationId) {
+    return this.request(`/optimize/${optimizationId}/cancel`, { method: 'POST' });
+  }
 }
 
 export const api = new APIService();

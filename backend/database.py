@@ -711,6 +711,17 @@ class Database:
             print(f"Error updating optimization status: {e}")
             return False
 
+    async def delete_optimization_run(self, optimization_id: str) -> bool:
+        """Delete an optimization run"""
+        try:
+            result = await self.db.optimizations.delete_one(
+                {"optimization_id": optimization_id}
+            )
+            return result.deleted_count > 0
+        except Exception as e:
+            print(f"Error deleting optimization run: {e}")
+            return False
+
     # ==================== Paper Trading Methods ====================
 
     async def store_paper_trading_session(self, session: PaperTradingSession) -> bool:

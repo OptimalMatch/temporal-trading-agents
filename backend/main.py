@@ -2445,6 +2445,60 @@ async def list_optimizations(
         raise HTTPException(status_code=500, detail=f"Failed to list optimizations: {str(e)}")
 
 
+@app.delete("/api/v1/optimize/{optimization_id}")
+async def delete_optimization(
+    optimization_id: str,
+    database: Database = Depends(get_database)
+):
+    """
+    Delete an optimization run.
+    """
+    try:
+        success = await database.delete_optimization_run(optimization_id)
+
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Optimization {optimization_id} not found")
+
+        return {"success": True, "message": "Optimization deleted"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete optimization: {str(e)}")
+
+
+@app.post("/api/v1/optimize/{optimization_id}/cancel")
+async def cancel_optimization(
+    optimization_id: str,
+    database: Database = Depends(get_database)
+):
+    """
+    Cancel a running optimization or mark stuck optimization as failed.
+    """
+    try:
+        optimization = await database.get_optimization_run(optimization_id)
+
+        if not optimization:
+            raise HTTPException(status_code=404, detail=f"Optimization {optimization_id} not found")
+
+        # Update status to failed
+        await database.db.optimizations.update_one(
+            {"optimization_id": optimization_id},
+            {"$set": {
+                "status": OptimizationStatus.FAILED.value,
+                "completed_at": datetime.utcnow(),
+                "error_message": "Cancelled by user"
+            }}
+        )
+
+        return {"success": True, "message": "Optimization cancelled"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to cancel optimization: {str(e)}")
+
+
 # ==================== Paper Trading Endpoints ====================
 
 @app.post("/api/v1/paper-trading", response_model=PaperTradingSummary)

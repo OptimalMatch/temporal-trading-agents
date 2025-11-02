@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings, Play, TrendingUp, Target, Award, AlertCircle, BarChart2, CheckCircle2, Clock, Loader2, HelpCircle, Info, Lightbulb, X } from 'lucide-react';
+import { Settings, Play, TrendingUp, Target, Award, AlertCircle, BarChart2, CheckCircle2, Clock, Loader2, HelpCircle, Info, Lightbulb, X, Trash2, XCircle } from 'lucide-react';
 import api from '../services/api';
 
 export default function OptimizationPage() {
@@ -66,6 +66,32 @@ export default function OptimizationPage() {
       setSelectedOptimization(optimization);
     } catch (error) {
       console.error('Failed to load optimization details:', error);
+    }
+  };
+
+  const handleCancelOptimization = async (optimizationId, e) => {
+    e.stopPropagation(); // Prevent triggering the row click
+    if (!confirm('Cancel this optimization? It will be marked as failed.')) return;
+
+    try {
+      await api.cancelOptimization(optimizationId);
+      loadOptimizations();
+    } catch (error) {
+      console.error('Failed to cancel optimization:', error);
+      alert('Failed to cancel optimization: ' + error.message);
+    }
+  };
+
+  const handleDeleteOptimization = async (optimizationId, e) => {
+    e.stopPropagation(); // Prevent triggering the row click
+    if (!confirm('Delete this optimization? This cannot be undone.')) return;
+
+    try {
+      await api.deleteOptimization(optimizationId);
+      loadOptimizations();
+    } catch (error) {
+      console.error('Failed to delete optimization:', error);
+      alert('Failed to delete optimization: ' + error.message);
     }
   };
 
@@ -604,7 +630,25 @@ export default function OptimizationPage() {
                       {opt.base_config.symbol} • {opt.base_config.start_date} to {opt.base_config.end_date}
                     </p>
                   </div>
-                  {getStatusBadge(opt.status)}
+                  <div className="flex items-center space-x-2">
+                    {getStatusBadge(opt.status)}
+                    {(opt.status === 'running' || opt.status === 'pending') && (
+                      <button
+                        onClick={(e) => handleCancelOptimization(opt.optimization_id, e)}
+                        className="p-2 hover:bg-red-900/50 rounded transition-colors"
+                        title="Cancel optimization"
+                      >
+                        <XCircle className="w-5 h-5 text-red-400" />
+                      </button>
+                    )}
+                    <button
+                      onClick={(e) => handleDeleteOptimization(opt.optimization_id, e)}
+                      className="p-2 hover:bg-red-900/50 rounded transition-colors"
+                      title="Delete optimization"
+                    >
+                      <Trash2 className="w-5 h-5 text-gray-400 hover:text-red-400" />
+                    </button>
+                  </div>
                 </div>
 
                 {opt.status === 'running' && (
