@@ -38,6 +38,7 @@ from strategies.strategy_utils import (
     calculate_risk_reward_ratio,
     get_default_ensemble_configs,
 )
+from strategies.strategy_cache import cached_strategy
 
 
 def calculate_momentum_metrics(stats_14day: Dict, current_price: float) -> Dict:
@@ -102,6 +103,7 @@ def calculate_momentum_metrics(stats_14day: Dict, current_price: float) -> Dict:
     }
 
 
+@cached_strategy
 def analyze_acceleration_strategy(stats_14day: Dict, current_price: float) -> Dict:
     """
     Analyze trading opportunity based on momentum acceleration/deceleration.

@@ -37,6 +37,7 @@ from strategies.strategy_utils import (
     calculate_ensemble_confidence,
     get_default_ensemble_configs,
 )
+from strategies.strategy_cache import cached_strategy
 
 
 def calculate_risk_metrics(stats: Dict, current_price: float, risk_free_rate: float = 0.05) -> Dict:
@@ -125,6 +126,7 @@ def calculate_risk_metrics(stats: Dict, current_price: float, risk_free_rate: fl
     }
 
 
+@cached_strategy
 def analyze_risk_adjusted_strategy(stats_14day: Dict, current_price: float) -> Dict:
     """
     Analyze trading opportunity based on comprehensive risk metrics.

@@ -36,6 +36,7 @@ from strategies.acceleration_strategy import analyze_acceleration_strategy
 from strategies.swing_trading_strategy import analyze_swing_trading_strategy
 from strategies.risk_adjusted_strategy import analyze_risk_adjusted_strategy
 from strategies.strategy_utils import load_ensemble_module, train_ensemble, get_default_ensemble_configs
+from strategies.strategy_cache import get_strategy_cache
 
 logger = logging.getLogger(__name__)
 
@@ -639,6 +640,10 @@ class BacktestEngine:
         logger.info(f"Sharpe ratio: {metrics.sharpe_ratio:.2f}")
         logger.info(f"Max drawdown: {metrics.max_drawdown*100:.2f}%")
 
+        # Log cache statistics
+        cache_stats = get_strategy_cache().stats()
+        logger.info(f"Strategy cache stats: {cache_stats['hits']} hits, {cache_stats['misses']} misses ({cache_stats['hit_rate_pct']}% hit rate)")
+
         return BacktestRun(
             run_id=run_id,
             name=f"Backtest {self.config.symbol}",
@@ -913,6 +918,10 @@ class BacktestEngine:
         logger.info(f"  Total trades: {aggregate_metrics.total_trades} ({winning_trades_count}W / {losing_trades_count}L)")
         logger.info(f"  Avg win: ${avg_win:.2f}, Avg loss: ${avg_loss:.2f}")
         logger.info(f"  Period win rate: {aggregate_metrics.period_win_rate*100:.0f}% ({winning_periods}/{len(all_period_metrics)} periods)")
+
+        # Log cache statistics
+        cache_stats = get_strategy_cache().stats()
+        logger.info(f"  Strategy cache stats: {cache_stats['hits']} hits, {cache_stats['misses']} misses ({cache_stats['hit_rate_pct']}% hit rate)")
 
         return BacktestRun(
             run_id=run_id,

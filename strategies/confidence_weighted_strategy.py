@@ -32,8 +32,10 @@ from strategies.strategy_utils import (
     format_strategy_output,
     get_default_ensemble_configs,
 )
+from strategies.strategy_cache import cached_strategy
 
 
+@cached_strategy
 def analyze_confidence_weighted_strategy(stats_14day: Dict, current_price: float) -> Dict:
     """
     Analyze trading opportunity based on ensemble confidence.

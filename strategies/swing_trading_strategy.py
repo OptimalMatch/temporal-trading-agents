@@ -36,6 +36,7 @@ from strategies.strategy_utils import (
     calculate_forecast_metrics,
     get_default_ensemble_configs,
 )
+from strategies.strategy_cache import cached_strategy
 
 
 def identify_swings(median_forecast: np.ndarray, min_swing_pct: float = 2.0) -> Dict:
@@ -129,6 +130,7 @@ def identify_swings(median_forecast: np.ndarray, min_swing_pct: float = 2.0) -> 
     }
 
 
+@cached_strategy
 def analyze_swing_trading_strategy(stats_14day: Dict, current_price: float) -> Dict:
     """
     Analyze swing trading opportunities within the forecast.
