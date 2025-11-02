@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Settings, Play, TrendingUp, Target, Award, AlertCircle, BarChart2, CheckCircle2, Clock, Loader2, HelpCircle, Info, Lightbulb, X, Trash2, XCircle } from 'lucide-react';
 import api from '../services/api';
+import StrategyEducation from '../components/StrategyEducation';
 
 export default function OptimizationPage() {
   const [optimizations, setOptimizations] = useState([]);
@@ -10,6 +11,7 @@ export default function OptimizationPage() {
   const [availableTickers, setAvailableTickers] = useState([]);
   const [tickersLoading, setTickersLoading] = useState(true);
   const [selectedMarket, setSelectedMarket] = useState('crypto');
+  const [showStrategyEducation, setShowStrategyEducation] = useState(false);
 
   // Form state - store parameter grids as strings for easier editing
   const [formData, setFormData] = useState({
@@ -566,6 +568,14 @@ export default function OptimizationPage() {
                 <div className="flex items-center space-x-2">
                   <button
                     type="button"
+                    onClick={() => setShowStrategyEducation(true)}
+                    className="px-3 py-1 text-xs bg-brand-900/30 hover:bg-brand-800/50 text-brand-400 rounded border border-brand-700 flex items-center space-x-1"
+                  >
+                    <HelpCircle className="w-3.5 h-3.5" />
+                    <span>Learn About Strategies</span>
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => {
                       const allStrategies = ['gradient', 'confidence', 'volatility', 'acceleration', 'swing', 'risk_adjusted', 'mean_reversion', 'multi_timeframe'];
                       setFormData({ ...formData, enabled_strategies: allStrategies });
@@ -972,6 +982,12 @@ export default function OptimizationPage() {
           </div>
         </div>
       )}
+
+      {/* Strategy Education Modal */}
+      <StrategyEducation
+        isOpen={showStrategyEducation}
+        onClose={() => setShowStrategyEducation(false)}
+      />
     </div>
   );
 }
