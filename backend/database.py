@@ -4,7 +4,7 @@ Adapted from claude-workflow-manager/backend/database.py
 """
 from motor.motor_asyncio import AsyncIOMotorClient
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 from bson import ObjectId
 
@@ -323,7 +323,7 @@ class Database:
             {"key": key},
             {
                 "$inc": {"usage_count": 1},
-                "$set": {"last_used": datetime.utcnow()}
+                "$set": {"last_used": datetime.now(timezone.utc)}
             }
         )
         return result.modified_count > 0
@@ -413,7 +413,7 @@ class Database:
 
     async def update_scheduled_task(self, task_id: str, updates: Dict[str, Any]) -> bool:
         """Update a scheduled task"""
-        updates["updated_at"] = datetime.utcnow()
+        updates["updated_at"] = datetime.now(timezone.utc)
         result = await self.db.scheduled_tasks.update_one(
             {"id": task_id},
             {"$set": updates}
@@ -431,9 +431,9 @@ class Database:
             {"id": task_id},
             {
                 "$set": {
-                    "last_run": datetime.utcnow(),
+                    "last_run": datetime.now(timezone.utc),
                     "next_run": next_run,
-                    "updated_at": datetime.utcnow()
+                    "updated_at": datetime.now(timezone.utc)
                 },
                 "$inc": {"run_count": 1}
             }
@@ -442,7 +442,7 @@ class Database:
 
     async def get_due_tasks(self) -> List[Dict]:
         """Get tasks that are due to run"""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         query = {
             "is_active": True,
             "next_run": {"$lte": now}
@@ -605,9 +605,9 @@ class Database:
         try:
             updates = {"status": status}
             if status == BacktestStatus.RUNNING:
-                updates["started_at"] = datetime.utcnow()
+                updates["started_at"] = datetime.now(timezone.utc)
             elif status in [BacktestStatus.COMPLETED, BacktestStatus.FAILED]:
-                updates["completed_at"] = datetime.utcnow()
+                updates["completed_at"] = datetime.now(timezone.utc)
             if error_message:
                 updates["error_message"] = error_message
 
@@ -695,12 +695,12 @@ class Database:
             from backend.models import OptimizationStatus
             update_dict = {
                 "status": status.value,
-                "updated_at": datetime.utcnow()
+                "updated_at": datetime.now(timezone.utc)
             }
             if error_message:
                 update_dict["error_message"] = error_message
             if status == OptimizationStatus.COMPLETED or status == OptimizationStatus.FAILED:
-                update_dict["completed_at"] = datetime.utcnow()
+                update_dict["completed_at"] = datetime.now(timezone.utc)
 
             await self.db.optimizations.update_one(
                 {"optimization_id": optimization_id},

@@ -490,6 +490,19 @@ function DataSyncPage() {
       <div className="bg-gray-800 border border-gray-700 rounded-lg p-6">
         <h2 className="text-xl font-bold text-gray-100 mb-4">Data Inventory</h2>
 
+        {/* Info about delta sync for paper trading */}
+        <div className="bg-blue-900/20 border border-blue-700 rounded-lg p-4 mb-4 flex items-start space-x-3">
+          <AlertCircle className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" />
+          <div className="text-sm">
+            <p className="text-blue-300 font-medium mb-1">Paper Trading Requires Recent Data</p>
+            <p className="text-gray-400">
+              For paper trading to generate signals, data must be recent (within last 24 hours).
+              Use the <ArrowUpCircle className="w-4 h-4 inline text-blue-400" /> <strong>Get Delta</strong> button
+              to fetch only the missing recent data without re-downloading the entire history.
+            </p>
+          </div>
+        </div>
+
         {inventory.length === 0 ? (
           <p className="text-gray-400 text-center py-8">No cached data</p>
         ) : (
@@ -514,10 +527,32 @@ function DataSyncPage() {
                     <td className="py-3 px-4 text-gray-300">{item.total_days.toLocaleString()}</td>
                     <td className="py-3 px-4 text-gray-300 text-sm">
                       {item.date_range_start && item.date_range_end ? (
-                        <>
-                          {new Date(item.date_range_start).toLocaleDateString()} -
-                          {new Date(item.date_range_end).toLocaleDateString()}
-                        </>
+                        <div>
+                          <div>
+                            {new Date(item.date_range_start).toLocaleDateString()} -
+                            {new Date(item.date_range_end).toLocaleDateString()}
+                          </div>
+                          {(() => {
+                            const endDate = new Date(item.date_range_end);
+                            const now = new Date();
+                            const daysBehind = Math.floor((now - endDate) / (1000 * 60 * 60 * 24));
+
+                            if (daysBehind > 7) {
+                              return (
+                                <div className="flex items-center space-x-1 mt-1">
+                                  <span className={`text-xs px-2 py-0.5 rounded ${
+                                    daysBehind > 30 ? 'bg-red-900/30 text-red-400 border border-red-700' :
+                                    daysBehind > 14 ? 'bg-yellow-900/30 text-yellow-400 border border-yellow-700' :
+                                    'bg-blue-900/30 text-blue-400 border border-blue-700'
+                                  }`}>
+                                    {daysBehind} days behind
+                                  </span>
+                                </div>
+                              );
+                            }
+                            return null;
+                          })()}
+                        </div>
                       ) : '-'}
                     </td>
                     <td className="py-3 px-4 text-gray-300">{formatBytes(item.file_size_bytes)}</td>
@@ -529,7 +564,7 @@ function DataSyncPage() {
                         <button
                           onClick={() => handleExtendRange(item.symbol, item.period, item.interval)}
                           className="p-2 hover:bg-blue-900/50 rounded transition-colors"
-                          title="Extend date range"
+                          title="Get Delta - Fetch only missing recent data (required for paper trading)"
                         >
                           <ArrowUpCircle className="w-4 h-4 text-blue-400" />
                         </button>
