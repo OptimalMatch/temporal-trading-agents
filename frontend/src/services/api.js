@@ -169,6 +169,22 @@ class APIService {
   async stopPaperTradingSession(sessionId) {
     return this.request(`/paper-trading/${sessionId}/stop`, { method: 'POST' });
   }
+
+  // Parameter Optimization
+  async createOptimization(request) {
+    return this.request('/optimize/parameters', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
+  }
+
+  async getOptimizations(limit = 50) {
+    return this.request(`/optimize?limit=${limit}`);
+  }
+
+  async getOptimization(optimizationId) {
+    return this.request(`/optimize/${optimizationId}`);
+  }
 }
 
 export const api = new APIService();
