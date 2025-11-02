@@ -553,6 +553,9 @@ class BacktestEngine:
 
             bar_counter += 1
 
+            # Track trades executed on this bar for regime analysis
+            trades_this_bar = []
+
             # Trading logic based on consensus signal
             portfolio_value = self.get_portfolio_value({self.config.symbol: current_price})
 
@@ -561,7 +564,7 @@ class BacktestEngine:
                 if current_position == 'short':
                     position = self.positions.get(self.config.symbol)
                     if position and position.shares > 0:
-                        self.execute_trade(
+                        close_trade = self.execute_trade(
                             timestamp=current_date,
                             symbol=self.config.symbol,
                             side='buy',
@@ -570,6 +573,8 @@ class BacktestEngine:
                             adv=adv,
                             strategy_signal=signal['strategy']
                         )
+                        if close_trade:
+                            trades_this_bar.append(close_trade)
 
                 # Open long position
                 position_size = portfolio_value * (self.config.optimizable.position_size_pct / 100)
@@ -583,6 +588,7 @@ class BacktestEngine:
                     strategy_signal=signal['strategy']
                 )
                 if trade:
+                    trades_this_bar.append(trade)
                     print(f"  ✅ BUY: {trade.shares} shares @ ${current_price:.2f} = ${trade.notional:.2f}")
                     logger.info(f"  BUY: {trade.shares} shares @ ${current_price:.2f} (${trade.notional:.2f})")
                     current_position = 'long'
@@ -603,6 +609,7 @@ class BacktestEngine:
                         strategy_signal=signal['strategy']
                     )
                     if trade:
+                        trades_this_bar.append(trade)
                         print(f"  ✅ SELL: {trade.shares} shares @ ${current_price:.2f} = ${trade.notional:.2f}")
                         logger.info(f"  SELL: {trade.shares} shares @ ${current_price:.2f} (${trade.notional:.2f})")
                     current_position = None
@@ -628,15 +635,25 @@ class BacktestEngine:
                     # Use standard historical data for simple backtests
                     regime_price_data = historical_df
 
-                # Track regime for this bar
+                # Track regime for this bar - pass trades only if they were executed on this bar
                 if regime_price_data is not None and len(regime_price_data) >= 20:
-                    last_trade = self.trades[-1].dict() if self.trades else None
-                    self.regime_tracker.update(
-                        timestamp=current_date,
-                        price_data=regime_price_data,
-                        trade=last_trade,
-                        bar_return=bar_return
-                    )
+                    # Pass each trade executed on this bar to regime tracker
+                    for trade in trades_this_bar:
+                        self.regime_tracker.update(
+                            timestamp=current_date,
+                            price_data=regime_price_data,
+                            trade=trade.dict(),
+                            bar_return=bar_return
+                        )
+
+                    # If no trades this bar, still update for regime detection and bar returns
+                    if not trades_this_bar:
+                        self.regime_tracker.update(
+                            timestamp=current_date,
+                            price_data=regime_price_data,
+                            trade=None,
+                            bar_return=bar_return
+                        )
 
         # Force-liquidate any open positions at the end of the period
         # This ensures each period ends flat (100% cash, no positions)
