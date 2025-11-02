@@ -447,6 +447,104 @@ flowchart TD
 - View data inventory by symbol with date ranges
 - Batch operations for multiple symbols
 
+#### Data Sync Workflow
+
+```mermaid
+flowchart TD
+    Start([User Requests<br/>Market Data]) --> Input[Specify Parameters<br/>- Symbol<br/>- Start Date<br/>- End Date<br/>- Data Provider]
+
+    Input --> CheckInventory{Check Data<br/>Inventory}
+
+    CheckInventory -->|No Existing Data| FullDownload[Full Download<br/>Entire Date Range]
+    CheckInventory -->|Has Partial Data| DeltaSync[Smart Delta Sync<br/>Calculate Missing Ranges]
+
+    DeltaSync --> Ranges[Identify Gaps<br/>Before: Start → Existing Start<br/>After: Existing End → End]
+    Ranges --> DeltaDownload[Download Only<br/>Missing Date Ranges]
+
+    FullDownload --> Provider{Data<br/>Provider?}
+    DeltaDownload --> Provider
+
+    Provider -->|Polygon.io| PolygonAPI[Fetch from Polygon<br/>- OHLCV Data<br/>- API Rate Limiting<br/>- Retry Logic]
+    Provider -->|Massive.com| MassiveAPI[Fetch from Massive<br/>- OHLCV Data<br/>- API Rate Limiting<br/>- Retry Logic]
+
+    PolygonAPI --> Validate[Validate Data<br/>- Check Completeness<br/>- Verify Date Range<br/>- Check for Gaps]
+    MassiveAPI --> Validate
+
+    Validate --> Valid{Data<br/>Valid?}
+
+    Valid -->|No| Error[Log Error<br/>Return Failure]
+    Valid -->|Yes| Transform[Transform Data<br/>- Standardize Format<br/>- Calculate Features<br/>- Add Timestamps]
+
+    Transform --> Merge{Merging with<br/>Existing Data?}
+
+    Merge -->|Yes| MergeData[Merge Datasets<br/>- Combine Ranges<br/>- Remove Duplicates<br/>- Sort by Date]
+    Merge -->|No| Store
+
+    MergeData --> Store[(Store in MongoDB<br/>market_data Collection<br/>Indexed by Symbol + Date)]
+
+    Store --> UpdateInventory[Update Inventory<br/>Track Date Ranges<br/>per Symbol]
+
+    UpdateInventory --> Success[Return Success<br/>Show Date Range<br/>Data Point Count]
+
+    Error --> End([Sync Complete])
+    Success --> End
+
+    style Start fill:#4f46e5,stroke:#333,stroke-width:2px,color:#fff
+    style DeltaSync fill:#8b5cf6,stroke:#333,stroke-width:2px,color:#fff
+    style Provider fill:#f59e0b,stroke:#333,stroke-width:2px,color:#fff
+    style Validate fill:#f59e0b,stroke:#333,stroke-width:2px,color:#fff
+    style Valid fill:#f59e0b,stroke:#333,stroke-width:2px,color:#fff
+    style Store fill:#10b981,stroke:#333,stroke-width:2px,color:#fff
+    style Success fill:#10b981,stroke:#333,stroke-width:2px,color:#fff
+    style Error fill:#ef4444,stroke:#333,stroke-width:2px,color:#fff
+    style End fill:#4f46e5,stroke:#333,stroke-width:2px,color:#fff
+```
+
+**Key Features:**
+- **Smart Delta Sync**: Only downloads missing date ranges, saving API calls and time
+- **Dual Provider Support**: Seamlessly switch between Polygon.io and Massive.com
+- **Data Validation**: Ensures completeness and quality before storage
+- **Inventory Tracking**: Maintains record of available data per symbol
+- **Error Handling**: Robust retry logic with rate limiting compliance
+
+#### Data Sync Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Dashboard as React Dashboard
+    participant API as Backend API
+    participant DB as MongoDB
+    participant Provider as Data Provider<br/>(Polygon/Massive)
+
+    User->>Dashboard: Request data sync<br/>(BTC-USD, 2024-01-01 to 2024-12-01)
+    Dashboard->>API: POST /api/v1/data/download<br/>{symbol, start_date, end_date}
+
+    API->>DB: Query inventory for BTC-USD
+    DB-->>API: Existing data: 2024-06-01 to 2024-10-01
+
+    Note over API: Calculate missing ranges:<br/>1. 2024-01-01 to 2024-05-31<br/>2. 2024-10-02 to 2024-12-01
+
+    API->>Provider: Fetch 2024-01-01 to 2024-05-31
+    Provider-->>API: OHLCV data (5 months)
+
+    API->>Provider: Fetch 2024-10-02 to 2024-12-01
+    Provider-->>API: OHLCV data (2 months)
+
+    Note over API: Validate & transform data<br/>Standardize format<br/>Calculate features
+
+    API->>DB: Merge with existing data
+    DB-->>API: Merge successful
+
+    API->>DB: Update inventory<br/>(2024-01-01 to 2024-12-01)
+    DB-->>API: Inventory updated
+
+    API-->>Dashboard: Success: 365 data points
+    Dashboard-->>User: Data sync complete<br/>Show date range & count
+
+    Note over Dashboard,User: Data ready for analysis
+```
+
 ---
 
 ## 8 Consensus Strategies Explained
