@@ -11,7 +11,7 @@ export default function OptimizationPage() {
   const [tickersLoading, setTickersLoading] = useState(true);
   const [selectedMarket, setSelectedMarket] = useState('crypto');
 
-  // Form state
+  // Form state - store parameter grids as strings for easier editing
   const [formData, setFormData] = useState({
     name: '',
     symbol: 'BTC-USD',
@@ -20,12 +20,12 @@ export default function OptimizationPage() {
     initialCapital: 100000,
     optimizationMetric: 'sharpe_ratio',
     topN: 10,
-    // Parameter grid
-    positionSizes: [5, 10, 15, 20],
-    minEdges: [30, 50, 70],
-    strongBuyThresholds: [0.75, 0.80, 0.85],
-    buyThresholds: [0.55, 0.60, 0.65],
-    moderateBuyThresholds: [0.45, 0.50, 0.55],
+    // Parameter grid - stored as strings to allow comma typing
+    positionSizes: '5, 10, 15, 20',
+    minEdges: '30, 50, 70',
+    strongBuyThresholds: '0.75, 0.80, 0.85',
+    buyThresholds: '0.55, 0.60, 0.65',
+    moderateBuyThresholds: '0.45, 0.50, 0.55',
   });
 
   useEffect(() => {
@@ -95,6 +95,11 @@ export default function OptimizationPage() {
     }
   };
 
+  // Helper function to parse comma-separated values
+  const parseValues = (str) => {
+    return str.split(',').map(v => parseFloat(v.trim())).filter(v => !isNaN(v));
+  };
+
   const handleCreateOptimization = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -115,11 +120,11 @@ export default function OptimizationPage() {
           },
         },
         parameter_grid: {
-          position_size_pct: formData.positionSizes,
-          min_edge_bps: formData.minEdges,
-          strong_buy_threshold: formData.strongBuyThresholds,
-          buy_threshold: formData.buyThresholds,
-          moderate_buy_threshold: formData.moderateBuyThresholds,
+          position_size_pct: parseValues(formData.positionSizes),
+          min_edge_bps: parseValues(formData.minEdges),
+          strong_buy_threshold: parseValues(formData.strongBuyThresholds),
+          buy_threshold: parseValues(formData.buyThresholds),
+          moderate_buy_threshold: parseValues(formData.moderateBuyThresholds),
           sell_threshold: [0.60],  // Keep these fixed for now
           moderate_sell_threshold: [0.50],
         },
@@ -140,11 +145,11 @@ export default function OptimizationPage() {
   };
 
   const calculateTotalCombinations = () => {
-    return formData.positionSizes.length *
-           formData.minEdges.length *
-           formData.strongBuyThresholds.length *
-           formData.buyThresholds.length *
-           formData.moderateBuyThresholds.length;
+    return parseValues(formData.positionSizes).length *
+           parseValues(formData.minEdges).length *
+           parseValues(formData.strongBuyThresholds).length *
+           parseValues(formData.buyThresholds).length *
+           parseValues(formData.moderateBuyThresholds).length;
   };
 
   const getStatusBadge = (status) => {
@@ -462,10 +467,10 @@ export default function OptimizationPage() {
                 </label>
                 <input
                   type="text"
-                  value={formData.positionSizes.join(', ')}
+                  value={formData.positionSizes}
                   onChange={(e) => setFormData({
                     ...formData,
-                    positionSizes: e.target.value.split(',').map(v => parseFloat(v.trim())).filter(v => !isNaN(v))
+                    positionSizes: e.target.value
                   })}
                   placeholder="5, 10, 15, 20"
                   className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-brand-500"
@@ -481,10 +486,10 @@ export default function OptimizationPage() {
                 </label>
                 <input
                   type="text"
-                  value={formData.minEdges.join(', ')}
+                  value={formData.minEdges}
                   onChange={(e) => setFormData({
                     ...formData,
-                    minEdges: e.target.value.split(',').map(v => parseFloat(v.trim())).filter(v => !isNaN(v))
+                    minEdges: e.target.value
                   })}
                   placeholder="30, 50, 70"
                   className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-brand-500"
@@ -500,10 +505,10 @@ export default function OptimizationPage() {
                 </label>
                 <input
                   type="text"
-                  value={formData.strongBuyThresholds.join(', ')}
+                  value={formData.strongBuyThresholds}
                   onChange={(e) => setFormData({
                     ...formData,
-                    strongBuyThresholds: e.target.value.split(',').map(v => parseFloat(v.trim())).filter(v => !isNaN(v))
+                    strongBuyThresholds: e.target.value
                   })}
                   placeholder="0.75, 0.80, 0.85"
                   className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-brand-500"
@@ -519,10 +524,10 @@ export default function OptimizationPage() {
                 </label>
                 <input
                   type="text"
-                  value={formData.buyThresholds.join(', ')}
+                  value={formData.buyThresholds}
                   onChange={(e) => setFormData({
                     ...formData,
-                    buyThresholds: e.target.value.split(',').map(v => parseFloat(v.trim())).filter(v => !isNaN(v))
+                    buyThresholds: e.target.value
                   })}
                   placeholder="0.55, 0.60, 0.65"
                   className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-brand-500"
@@ -538,10 +543,10 @@ export default function OptimizationPage() {
                 </label>
                 <input
                   type="text"
-                  value={formData.moderateBuyThresholds.join(', ')}
+                  value={formData.moderateBuyThresholds}
                   onChange={(e) => setFormData({
                     ...formData,
-                    moderateBuyThresholds: e.target.value.split(',').map(v => parseFloat(v.trim())).filter(v => !isNaN(v))
+                    moderateBuyThresholds: e.target.value
                   })}
                   placeholder="0.45, 0.50, 0.55"
                   className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-gray-100 placeholder-gray-500 focus:outline-none focus:border-brand-500"
