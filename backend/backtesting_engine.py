@@ -446,6 +446,8 @@ class BacktestEngine:
         Returns:
             BacktestRun with results
         """
+        start_time = datetime.utcnow()
+
         print(f"\n{'='*60}")
         print(f"STARTING SIMPLE BACKTEST FOR {self.config.symbol}")
         print(f"Date range: {price_data['date'].iloc[0]} to {price_data['date'].iloc[-1]}")
@@ -704,6 +706,9 @@ class BacktestEngine:
             regime_analysis = self.regime_tracker.get_regime_statistics()
             logger.info(f"Regime analysis: {len(regime_analysis.get('regime_statistics', {}))} regimes detected")
 
+        completed_at = datetime.utcnow()
+        execution_time_ms = int((completed_at - start_time).total_seconds() * 1000)
+
         return BacktestRun(
             run_id=run_id,
             name=f"Backtest {self.config.symbol}",
@@ -713,8 +718,9 @@ class BacktestEngine:
             regime_analysis=regime_analysis,
             trades=self.trades,
             equity_curve=self.equity_curve,
-            started_at=datetime.utcnow(),
-            completed_at=datetime.utcnow()
+            started_at=start_time,
+            completed_at=completed_at,
+            execution_time_ms=execution_time_ms
         )
 
     def run_walkforward_backtest(
@@ -727,6 +733,7 @@ class BacktestEngine:
 
         This is the proper way to test for overfitting.
         """
+        start_time = datetime.utcnow()
         logger.info(f"Starting walk-forward backtest for {self.config.symbol}")
 
         validator = WalkForwardValidator(self.config.walk_forward)
@@ -1002,6 +1009,9 @@ class BacktestEngine:
             if regime_stats:
                 logger.info(f"  Detected {len(regime_stats)} different market regimes")
 
+        completed_at = datetime.utcnow()
+        execution_time_ms = int((completed_at - start_time).total_seconds() * 1000)
+
         return BacktestRun(
             run_id=run_id,
             name=f"Walk-Forward Backtest {self.config.symbol}",
@@ -1012,8 +1022,9 @@ class BacktestEngine:
             regime_analysis=regime_analysis,
             trades=all_trades,
             equity_curve=all_equity_points,
-            started_at=datetime.utcnow(),
-            completed_at=datetime.utcnow()
+            started_at=start_time,
+            completed_at=completed_at,
+            execution_time_ms=execution_time_ms
         )
 
     def _get_consensus_signal(self, stats: Dict, current_price: float, historical_df: pd.DataFrame = None,
