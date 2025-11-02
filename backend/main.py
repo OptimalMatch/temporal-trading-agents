@@ -2096,12 +2096,32 @@ def run_optimization_in_thread(optimization_id: str, request_dict: dict, databas
         # Reconstruct request from dict
         request = OptimizationRequest(**request_dict)
 
+        # Calculate total combinations
+        total_combinations = 1
+        grid = request.parameter_grid
+        if grid.position_size_pct:
+            total_combinations *= len(grid.position_size_pct)
+        if grid.min_edge_bps:
+            total_combinations *= len(grid.min_edge_bps)
+        if grid.strong_buy_threshold:
+            total_combinations *= len(grid.strong_buy_threshold)
+        if grid.buy_threshold:
+            total_combinations *= len(grid.buy_threshold)
+        if grid.moderate_buy_threshold:
+            total_combinations *= len(grid.moderate_buy_threshold)
+        if grid.sell_threshold:
+            total_combinations *= len(grid.sell_threshold)
+        if grid.moderate_sell_threshold:
+            total_combinations *= len(grid.moderate_sell_threshold)
+
         # Update status to running (synchronous)
         sync_db.optimizations.update_one(
             {"optimization_id": optimization_id},
             {"$set": {
                 "status": OptimizationStatus.RUNNING.value,
-                "started_at": datetime.utcnow()
+                "started_at": datetime.utcnow(),
+                "total_combinations": total_combinations,
+                "completed_combinations": 0
             }}
         )
 
@@ -2148,6 +2168,20 @@ def run_optimization_in_thread(optimization_id: str, request_dict: dict, databas
         print(f"   Date range: {config.start_date} to {config.end_date}")
         print(f"   Optimization metric: {request.optimization_metric.value}")
 
+        # Define progress callback to update database
+        def update_progress(completed: int, total: int):
+            """Update optimization progress in database"""
+            try:
+                sync_db.optimizations.update_one(
+                    {"optimization_id": optimization_id},
+                    {"$set": {
+                        "completed_combinations": completed,
+                        "total_combinations": total
+                    }}
+                )
+            except Exception as e:
+                logger.error(f"Failed to update progress: {e}")
+
         # Run optimization
         optimizer = ParameterOptimizer(max_workers=2)  # Limit workers to avoid overload
         optimization_run = optimizer.optimize(
@@ -2155,7 +2189,8 @@ def run_optimization_in_thread(optimization_id: str, request_dict: dict, databas
             parameter_grid=request.parameter_grid,
             price_data=price_data,
             optimization_metric=request.optimization_metric,
-            top_n=request.top_n_results
+            top_n=request.top_n_results,
+            progress_callback=update_progress
         )
 
         # Update with optimization_id

@@ -188,7 +188,8 @@ class ParameterOptimizer:
         parameter_grid: ParameterGrid,
         price_data: pd.DataFrame,
         optimization_metric: OptimizationMetric = OptimizationMetric.SHARPE_RATIO,
-        top_n: int = 10
+        top_n: int = 10,
+        progress_callback: callable = None
     ) -> OptimizationRun:
         """
         Run parameter optimization using grid search.
@@ -199,6 +200,7 @@ class ParameterOptimizer:
             price_data: Price data for backtesting
             optimization_metric: Metric to optimize
             top_n: Number of top results to return
+            progress_callback: Optional callback function called with (completed, total) after each backtest
 
         Returns:
             Optimization run with results
@@ -250,6 +252,10 @@ class ParameterOptimizer:
 
                     completed += 1
                     optimization_run.completed_combinations = completed
+
+                    # Call progress callback if provided
+                    if progress_callback:
+                        progress_callback(completed, total_combinations)
 
                     if completed % 10 == 0 or completed == total_combinations:
                         logger.info(f"Progress: {completed}/{total_combinations} combinations completed")
