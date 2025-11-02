@@ -431,7 +431,8 @@ class BacktestEngine:
         self,
         price_data: pd.DataFrame,
         run_id: str,
-        full_price_history: pd.DataFrame = None
+        full_price_history: pd.DataFrame = None,
+        skip_reset: bool = False
     ) -> BacktestRun:
         """
         Run a simple backtest without walk-forward validation.
@@ -440,6 +441,7 @@ class BacktestEngine:
             price_data: DataFrame with columns [date, open, high, low, close, volume]
             run_id: Unique ID for this backtest run
             full_price_history: Optional full historical data for regime detection (includes data before price_data)
+            skip_reset: If True, skip resetting state (used by walk-forward to preserve regime tracker)
 
         Returns:
             BacktestRun with results
@@ -520,7 +522,8 @@ class BacktestEngine:
                 self.consensus_stats = None
                 self.multi_horizon_stats = None
 
-        self.reset()
+        if not skip_reset:
+            self.reset()
         current_position = None
         bar_counter = 0  # Use sequential counter for signal generation
         buy_signals = 0
@@ -813,7 +816,7 @@ class BacktestEngine:
             logger.info(f"  Test: {test_df['date'].iloc[0]} to {test_df['date'].iloc[-1]}")
 
             # Run backtest on test period using trained model
-            # Save regime_tracker before reset to preserve accumulated data across periods
+            # Reset state but preserve regime tracker
             saved_regime_tracker = self.regime_tracker
             self.reset()
             self.regime_tracker = saved_regime_tracker  # Restore to continue accumulating
@@ -822,7 +825,8 @@ class BacktestEngine:
             test_end_date = test_df['date'].iloc[-1]
             full_history_for_regime = price_data[price_data['date'] <= test_end_date].copy()
 
-            period_result = self.run_simple_backtest(test_df, run_id, full_price_history=full_history_for_regime)
+            # Call run_simple_backtest with skip_reset=True to avoid resetting regime tracker again
+            period_result = self.run_simple_backtest(test_df, run_id, full_price_history=full_history_for_regime, skip_reset=True)
 
             # Calculate capital deployment metrics from equity curve
             position_values = [point.get('position_value', 0) for point in period_result.equity_curve]
