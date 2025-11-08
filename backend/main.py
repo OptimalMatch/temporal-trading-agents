@@ -280,16 +280,16 @@ async def ensure_dataset_available(symbol: str, database: Database, interval: st
     return False
 
 # Wrapper functions for ProcessPoolExecutor (must be picklable)
-def _train_ensemble_worker(symbol: str, horizon: int, name: str, ensemble_path: str = "examples/crypto_ensemble_forecast.py"):
+def _train_ensemble_worker(symbol: str, horizon: int, name: str, interval: str = '1d', ensemble_path: str = "examples/crypto_ensemble_forecast.py"):
     """Worker function for training ensemble in separate process"""
     ensemble = load_ensemble_module(ensemble_path)
     configs = get_default_ensemble_configs(horizon)
-    return train_ensemble(symbol, horizon, configs, name, ensemble)
+    return train_ensemble(symbol, horizon, configs, name, ensemble, interval=interval)
 
-def _train_multiple_timeframes_worker(symbol: str, horizons: list, ensemble_path: str = "examples/crypto_ensemble_forecast.py"):
+def _train_multiple_timeframes_worker(symbol: str, horizons: list, interval: str = '1d', ensemble_path: str = "examples/crypto_ensemble_forecast.py"):
     """Worker function for training multiple timeframes in separate process"""
     ensemble = load_ensemble_module(ensemble_path)
-    return train_multiple_timeframes(symbol, ensemble, horizons)
+    return train_multiple_timeframes(symbol, ensemble, horizons, interval=interval)
 
 async def save_historical_prices(symbol: str, df, db: Database, source: str = "polygon") -> bool:
     """Save historical price data from DataFrame to database"""
@@ -614,15 +614,30 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
 
         logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Dataset confirmed available")
 
-        # Log: Training models
-        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Training ensemble models for consensus analysis")
+        # Auto-adjust horizons based on interval if not provided
+        if request.horizons is None:
+            if request.interval == '1h':
+                # For hourly data: 6h, 12h, 24h, 72h (3 days)
+                request.horizons = [6, 12, 24, 72]
+                logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Auto-adjusted horizons for hourly interval: {request.horizons}")
+            else:
+                # For daily data: 3d, 7d, 14d, 21d (default)
+                request.horizons = [3, 7, 14, 21]
+                logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Using default horizons for daily interval: {request.horizons}")
 
-        # Train 14-day ensemble - run in process pool to avoid blocking event loop
+        # Use middle horizon for initial ensemble training
+        middle_horizon = request.horizons[len(request.horizons) // 2]
+        interval_label = "HOUR" if request.interval == '1h' else "DAY"
+
+        # Log: Training models
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Training ensemble models for consensus analysis (interval: {request.interval}, horizon: {middle_horizon})")
+
+        # Train middle horizon ensemble - run in process pool to avoid blocking event loop
         loop = asyncio.get_event_loop()
         stats, df = await loop.run_in_executor(
             executor,
             _train_ensemble_worker,
-            request.symbol, 14, "14-DAY"
+            request.symbol, middle_horizon, f"{middle_horizon}-{interval_label}", request.interval
         )
         current_price = df['Close'].iloc[-1]
         logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Model training completed. Current price: ${current_price:.2f}")
@@ -690,7 +705,7 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
             timeframe_data = await loop.run_in_executor(
                 executor,
                 _train_multiple_timeframes_worker,
-                request.symbol, request.horizons
+                request.symbol, request.horizons, request.interval
             )
             result = analyze_multi_timeframe_strategy(timeframe_data, current_price)
             analysis = convert_strategy_result_to_model('timeframe', result, request.symbol, current_price, 0)
@@ -879,6 +894,7 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
         await database.db.consensus_results.update_one(
             {"id": consensus_id},
             {"$set": {
+                "interval": request.interval,
                 "current_price": current_price,
                 "consensus": consensus,
                 "strength": strength,
@@ -1057,6 +1073,7 @@ async def analyze_consensus(
         pending_consensus = ConsensusResult(
             id=consensus_id,
             symbol=request.symbol,
+            interval=request.interval,
             current_price=0.0,  # Will be updated when analysis runs
             consensus="PENDING",
             strength="PENDING",

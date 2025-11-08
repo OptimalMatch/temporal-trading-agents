@@ -28,29 +28,31 @@ def load_ensemble_module(module_path: str = "../examples/crypto_ensemble_forecas
 
 
 def train_ensemble(symbol: str, forecast_horizon: int, configs: List[Dict],
-                   name: str, ensemble_module) -> Tuple[Dict, pd.DataFrame]:
+                   name: str, ensemble_module, interval: str = '1d') -> Tuple[Dict, pd.DataFrame]:
     """
     Train an ensemble of models for a specific forecast horizon.
 
     Args:
         symbol: Trading symbol (e.g., 'BTC-USD')
-        forecast_horizon: Number of days to forecast
+        forecast_horizon: Number of periods to forecast
         configs: List of model configurations
         name: Display name for this ensemble
         ensemble_module: The loaded ensemble module
+        interval: Data interval ('1d' for daily, '1h' for hourly)
 
     Returns:
         Tuple of (ensemble_stats, latest_dataframe)
     """
+    interval_label = "hours" if interval == '1h' else "days"
     print(f"\n{'='*70}")
-    print(f"TRAINING {name} ENSEMBLE ({forecast_horizon}-day forecast)")
+    print(f"TRAINING {name} ENSEMBLE ({forecast_horizon}-{interval_label[:-1]} forecast at {interval} interval)")
     print(f"{'='*70}")
 
     # Determine period based on asset type
     # Stocks have 5 years of historical data, crypto has 2 years
     is_crypto = '-USD' in symbol or '-EUR' in symbol or '-GBP' in symbol
     period = '2y' if is_crypto else '5y'
-    print(f"📊 Using {period} of historical data for {'crypto' if is_crypto else 'stock'} analysis")
+    print(f"📊 Using {period} of historical data for {'crypto' if is_crypto else 'stock'} analysis (interval: {interval})")
 
     ensemble_models = []
     for config in configs:
@@ -61,13 +63,14 @@ def train_ensemble(symbol: str, forecast_horizon: int, configs: List[Dict],
             forecast_horizon=forecast_horizon,
             epochs=config['epochs'],
             focus=config['focus'],
-            model_name=config['name']
+            model_name=config['name'],
+            interval=interval
         )
         ensemble_models.append(model_info)
 
     # Make predictions
     ensemble_stats, df_latest = ensemble_module.make_ensemble_predictions(
-        ensemble_models, symbol, forecast_horizon
+        ensemble_models, symbol, forecast_horizon, interval=interval
     )
 
     return ensemble_stats, df_latest

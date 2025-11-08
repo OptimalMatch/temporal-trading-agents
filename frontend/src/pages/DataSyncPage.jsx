@@ -328,6 +328,27 @@ function DataSyncPage() {
     return `${month}/${day}/${shortYear}`;
   };
 
+  const formatDateWithTime = (isoString) => {
+    // Format ISO date string to MM/DD/YY HH:mm TZ in local timezone
+    const date = new Date(isoString);
+    const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+    // Get date components in local time
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const year = String(date.getFullYear()).slice(-2);
+
+    // Get time in local timezone
+    const timeString = date.toLocaleTimeString(undefined, {
+      timeZone: localTimeZone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    });
+
+    return `${month}/${day}/${year} ${timeString} ${localTimeZone}`;
+  };
+
   const formatBytes = (bytes) => {
     if (bytes === 0) return '0 B';
     const k = 1024;
@@ -662,7 +683,11 @@ function DataSyncPage() {
                       {item.date_range_start && item.date_range_end ? (
                         <div>
                           <div>
-                            {formatDateOnly(item.date_range_start)} - {formatDateOnly(item.date_range_end)}
+                            {formatDateOnly(item.date_range_start)} - {
+                              item.interval === '1h' || item.interval === '1m'
+                                ? formatDateWithTime(item.date_range_end)
+                                : formatDateOnly(item.date_range_end)
+                            }
                           </div>
                           {(() => {
                             const endDate = new Date(item.date_range_end);

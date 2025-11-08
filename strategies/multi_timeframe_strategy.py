@@ -36,14 +36,15 @@ from strategies.strategy_cache import cached_strategy
 
 
 def train_multiple_timeframes(symbol: str, ensemble_module,
-                              horizons: List[int] = [3, 7, 14, 21]) -> Dict:
+                              horizons: List[int] = [3, 7, 14, 21], interval: str = '1d') -> Dict:
     """
     Train ensembles for multiple forecast horizons with error handling.
 
     Args:
         symbol: Trading symbol
         ensemble_module: Loaded ensemble module
-        horizons: List of forecast horizons in days
+        horizons: List of forecast horizons in periods (days or hours depending on interval)
+        interval: Data interval ('1d' for daily, '1h' for hourly)
 
     Returns:
         Dictionary mapping horizon to (stats, df) tuple
@@ -57,7 +58,8 @@ def train_multiple_timeframes(symbol: str, ensemble_module,
         while retry_count < max_retries:
             try:
                 configs = get_default_ensemble_configs(horizon)
-                stats, df = train_ensemble(symbol, horizon, configs, f"{horizon}-DAY", ensemble_module)
+                interval_label = "HOUR" if interval == '1h' else "DAY"
+                stats, df = train_ensemble(symbol, horizon, configs, f"{horizon}-{interval_label}", ensemble_module, interval=interval)
                 results[horizon] = (stats, df)
                 break  # Success, exit retry loop
             except Exception as e:

@@ -106,16 +106,17 @@ def add_technical_indicators(df, focus='balanced'):
     return df, feature_columns
 
 
-def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, focus, model_name):
+def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, focus, model_name, interval='1d'):
     """Train a single model for the ensemble."""
+    interval_label = "hours" if interval == '1h' else "days"
     print(f"\n{'='*70}")
     print(f"Training {model_name}")
-    print(f"  Lookback: {lookback} days | Focus: {focus}")
+    print(f"  Lookback: {lookback} {interval_label} | Focus: {focus}")
     print(f"{'='*70}")
 
     # Fetch data
-    df = fetch_crypto_data(symbol, period=period, interval='1d')
-    print(f"✓ Fetched {len(df)} days of data")
+    df = fetch_crypto_data(symbol, period=period, interval=interval)
+    print(f"✓ Fetched {len(df)} data points ({interval} interval)")
 
     # Add indicators
     df, feature_columns = add_technical_indicators(df, focus=focus)
@@ -180,7 +181,7 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
     }
 
 
-def make_ensemble_predictions(ensemble_models, symbol, forecast_horizon=7):
+def make_ensemble_predictions(ensemble_models, symbol, forecast_horizon=7, interval='1d'):
     """Make predictions using all models in the ensemble."""
     print(f"\n{'='*70}")
     print("GENERATING ENSEMBLE PREDICTIONS")
@@ -195,7 +196,7 @@ def make_ensemble_predictions(ensemble_models, symbol, forecast_horizon=7):
 
     for model_info in ensemble_models:
         # Fetch latest data - use period to match training data and enable saving full history
-        df_latest = fetch_crypto_data(symbol, period=period)
+        df_latest = fetch_crypto_data(symbol, period=period, interval=interval)
         df_latest, _ = add_technical_indicators(df_latest, focus=model_info['focus'])
 
         # Prepare features

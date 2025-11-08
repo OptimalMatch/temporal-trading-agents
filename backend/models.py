@@ -50,7 +50,8 @@ class StrategyAnalysisRequest(BaseModel):
 class ConsensusRequest(BaseModel):
     """Request for consensus analysis across strategies"""
     symbol: str = Field(..., description="Trading symbol")
-    horizons: Optional[List[int]] = Field(default=[3, 7, 14, 21])
+    interval: str = Field(default='1d', description="Data interval: '1d' for daily, '1h' for hourly")
+    horizons: Optional[List[int]] = Field(default=None, description="Forecast horizons (auto-adjusted based on interval if not provided)")
 
 
 # ==================== Response Models ====================
@@ -181,6 +182,7 @@ class ConsensusResult(BaseModel):
     """Stored consensus result in database"""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     symbol: str
+    interval: str = '1d'  # Data interval used for analysis
     current_price: float
     consensus: str
     strength: str

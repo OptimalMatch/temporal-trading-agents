@@ -25,6 +25,7 @@ const POPULAR_SYMBOLS = [
 function AnalyzePage() {
   const [symbol, setSymbol] = useState('BTC-USD');
   const [selectedStrategy, setSelectedStrategy] = useState('all');
+  const [interval, setInterval] = useState('1d'); // '1d' for daily, '1h' for hourly
   const [horizons, setHorizons] = useState([3, 7, 14, 21]);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
@@ -69,7 +70,7 @@ function AnalyzePage() {
       let response;
 
       if (selectedStrategy === 'all') {
-        response = await api.analyzeConsensus(symbol, horizons);
+        response = await api.analyzeConsensus(symbol, horizons, interval);
       } else if (selectedStrategy === 'gradient') {
         response = await api.analyzeGradient(symbol);
       } else if (selectedStrategy === 'confidence') {
@@ -173,35 +174,77 @@ function AnalyzePage() {
             )}
           </div>
 
+          {/* Data Interval (for consensus only) */}
+          {selectedStrategy === 'all' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Data Interval
+              </label>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    setInterval('1d');
+                    setHorizons([3, 7, 14, 21]); // Reset to daily defaults
+                  }}
+                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                    interval === '1d'
+                      ? 'bg-brand-600 text-white'
+                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                  }`}
+                >
+                  Daily (1d)
+                </button>
+                <button
+                  onClick={() => {
+                    setInterval('1h');
+                    setHorizons([6, 12, 24, 72]); // Reset to hourly defaults (6h, 12h, 24h, 72h)
+                  }}
+                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                    interval === '1h'
+                      ? 'bg-brand-600 text-white'
+                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                  }`}
+                >
+                  Hourly (1h)
+                </button>
+              </div>
+              <p className="text-sm text-gray-400 mt-2">
+                {interval === '1d'
+                  ? 'Forecast based on daily data (good for long-term trends)'
+                  : 'Forecast based on hourly data (fresher signals, good for 24/7 crypto markets)'}
+              </p>
+            </div>
+          )}
+
           {/* Horizons (for consensus only) */}
           {selectedStrategy === 'all' && (
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">
-                Forecast Horizons (days)
+                Forecast Horizons ({interval === '1h' ? 'hours' : 'days'})
               </label>
               <div className="flex flex-wrap gap-2">
-                {[3, 7, 14, 21, 30].map(days => (
+                {(interval === '1h' ? [3, 6, 12, 24, 48, 72] : [3, 7, 14, 21, 30]).map(periods => (
                   <button
-                    key={days}
+                    key={periods}
                     onClick={() => {
-                      if (horizons.includes(days)) {
-                        setHorizons(horizons.filter(h => h !== days));
+                      if (horizons.includes(periods)) {
+                        setHorizons(horizons.filter(h => h !== periods));
                       } else {
-                        setHorizons([...horizons, days].sort((a, b) => a - b));
+                        setHorizons([...horizons, periods].sort((a, b) => a - b));
                       }
                     }}
                     className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                      horizons.includes(days)
+                      horizons.includes(periods)
                         ? 'bg-brand-600 text-white'
                         : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                     }`}
                   >
-                    {days}d
+                    {periods}{interval === '1h' ? 'h' : 'd'}
                   </button>
                 ))}
               </div>
               <p className="text-sm text-gray-400 mt-2">
-                Selected: {horizons.join(', ')} days
+                Selected: {horizons.join(', ')} {interval === '1h' ? 'hours' : 'days'}
               </p>
             </div>
           )}
