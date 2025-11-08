@@ -2847,7 +2847,8 @@ async def create_paper_trading_session(
             total_pnl=0.0,
             total_pnl_pct=0.0,
             total_trades=0,
-            started_at=session.started_at
+            started_at=session.started_at,
+            min_edge_bps=request.config.min_edge_bps
         )
 
     except Exception as e:
@@ -3412,7 +3413,8 @@ async def list_paper_trading_sessions(
                 total_pnl=s.total_pnl,
                 total_pnl_pct=s.total_pnl_pct,
                 total_trades=s.total_trades,
-                started_at=s.started_at
+                started_at=s.started_at,
+                min_edge_bps=s.config.min_edge_bps
             )
             for s in sessions
         ]

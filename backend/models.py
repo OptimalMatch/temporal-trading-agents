@@ -794,6 +794,7 @@ class PaperTradingSummary(BaseModel):
     total_pnl_pct: float
     total_trades: int
     started_at: datetime
+    min_edge_bps: float  # Minimum edge threshold for taking trades
 
     @field_serializer('started_at')
     def serialize_datetime(self, dt: datetime, _info):

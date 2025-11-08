@@ -414,6 +414,12 @@ export default function PaperTradingPage() {
                       </p>
                     </div>
                     <div>
+                      <p className="text-xs text-gray-500">Min Edge</p>
+                      <p className="text-sm font-semibold text-blue-400">
+                        {session.min_edge_bps} bps
+                      </p>
+                    </div>
+                    <div className="col-span-2">
                       <p className="text-xs text-gray-500">Started</p>
                       <p className="text-sm text-gray-400">
                         {formatLocalTime(session.started_at, 'short')}
