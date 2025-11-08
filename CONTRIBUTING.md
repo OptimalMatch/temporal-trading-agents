@@ -11,8 +11,11 @@ Before we can accept your contributions, you must sign a Contributor Assignment 
 The CAA allows us to:
 - Maintain clear ownership of the codebase
 - Enforce the AGPLv3 license effectively
+- Offer commercial licenses to companies that cannot release their source code
 - Protect the project and its users legally
 - Make future licensing decisions if needed
+
+**Note on Commercial Licensing**: This project is dual-licensed. While it's freely available under AGPLv3, we also offer commercial licenses to companies that need to use the software in closed-source projects. Copyright assignment through the CAA enables us to offer these commercial licenses, which helps fund ongoing development while keeping the open-source version freely available.
 
 ### How to Sign the CAA
 

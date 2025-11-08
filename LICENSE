@@ -21,6 +21,18 @@ ADDITIONAL TERMS
 Contributors must sign a Contributor Assignment Agreement (CAA).
 See CONTRIBUTING.md for details.
 
+COMMERCIAL LICENSING
+
+Companies that cannot or do not wish to release their source code under the
+terms of the AGPLv3 may purchase a commercial license from Unidatum Integrated
+Products LLC. A commercial license grants the right to use, modify, and
+distribute this software in closed-source projects without the copyleft
+requirements of the AGPL.
+
+For commercial licensing inquiries, please contact:
+  Email: licensing@unidatum.com
+  Website: https://unidatum.com
+
 PATENT NOTICE
 
 This software incorporates the temporal-forecasting library, which implements

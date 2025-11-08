@@ -1381,6 +1381,21 @@ Copyright (C) 2025 Unidatum Integrated Products LLC
 
 See the [LICENSE](./LICENSE) file for the full license text.
 
+### Commercial Licensing
+
+The AGPLv3 license requires that any modifications or derivative works be released under the same license, and that source code be made available to users who interact with the software over a network.
+
+**Companies that cannot release their source code** may purchase a **commercial license** from Unidatum Integrated Products LLC. A commercial license grants the right to:
+
+- Use this software in closed-source/proprietary projects
+- Modify and distribute without source code disclosure requirements
+- Deploy as a service without AGPLv3 obligations
+- Integrate into commercial products without copyleft restrictions
+
+For commercial licensing inquiries:
+- **Email**: licensing@unidatum.com
+- **Website**: https://unidatum.com
+
 ### Patent Notice
 
 This software incorporates the [temporal-forecasting](https://github.com/OptimalMatch/temporal) library, which implements technology that is the subject of a pending patent application:
