@@ -665,9 +665,14 @@ function DataSyncPage() {
                     <td className="py-3 px-4 text-gray-300 text-sm">
                       {item.last_auto_sync_at ? (
                         <div className="flex flex-col">
-                          <span>{new Date(item.last_auto_sync_at).toLocaleDateString()}</span>
+                          <span>{new Date(item.last_auto_sync_at).toLocaleDateString(undefined, { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone })}</span>
                           <span className="text-xs text-gray-500">
-                            {new Date(item.last_auto_sync_at).toLocaleTimeString()} {Intl.DateTimeFormat().resolvedOptions().timeZone}
+                            {new Date(item.last_auto_sync_at).toLocaleTimeString(undefined, {
+                              timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              second: '2-digit'
+                            })} {Intl.DateTimeFormat().resolvedOptions().timeZone}
                           </span>
                         </div>
                       ) : (
@@ -677,9 +682,14 @@ function DataSyncPage() {
                     <td className="py-3 px-4 text-gray-300 text-sm">
                       {item.last_auto_analysis_at ? (
                         <div className="flex flex-col">
-                          <span>{new Date(item.last_auto_analysis_at).toLocaleDateString()}</span>
+                          <span>{new Date(item.last_auto_analysis_at).toLocaleDateString(undefined, { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone })}</span>
                           <span className="text-xs text-gray-500">
-                            {new Date(item.last_auto_analysis_at).toLocaleTimeString()} {Intl.DateTimeFormat().resolvedOptions().timeZone}
+                            {new Date(item.last_auto_analysis_at).toLocaleTimeString(undefined, {
+                              timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              second: '2-digit'
+                            })} {Intl.DateTimeFormat().resolvedOptions().timeZone}
                           </span>
                         </div>
                       ) : (
@@ -689,9 +699,14 @@ function DataSyncPage() {
                     <td className="py-3 px-4 text-gray-300 text-sm">
                       {item.next_scheduled_sync ? (
                         <div className="flex flex-col">
-                          <span className="text-blue-400">{new Date(item.next_scheduled_sync).toLocaleDateString()}</span>
+                          <span className="text-blue-400">{new Date(item.next_scheduled_sync).toLocaleDateString(undefined, { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone })}</span>
                           <span className="text-xs text-gray-500">
-                            {new Date(item.next_scheduled_sync).toLocaleTimeString()} {Intl.DateTimeFormat().resolvedOptions().timeZone}
+                            {new Date(item.next_scheduled_sync).toLocaleTimeString(undefined, {
+                              timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              second: '2-digit'
+                            })} {Intl.DateTimeFormat().resolvedOptions().timeZone}
                           </span>
                         </div>
                       ) : (
