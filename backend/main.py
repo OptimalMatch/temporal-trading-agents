@@ -142,6 +142,10 @@ async def startup_event():
     await analysis_queue.start_processing()
     print("🎯 API: Analysis queue initialized")
 
+    # Restore auto-schedule jobs from database
+    sync_manager = await get_sync_manager(db.client.temporal_trading)
+    await sync_manager.restore_auto_schedules()
+
     # Resume monitoring for all active paper trading sessions
     active_sessions = await db.get_paper_trading_sessions(status=PaperTradingStatus.ACTIVE)
     if active_sessions:

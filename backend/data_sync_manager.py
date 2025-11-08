@@ -742,6 +742,47 @@ class DataSyncManager:
         cursor = self.db.data_inventory.find(query)
         return [DataInventory(**doc) async for doc in cursor]
 
+    async def restore_auto_schedules(self):
+        """
+        Restore auto-schedule jobs from database on startup.
+        This re-registers all enabled auto-schedules with APScheduler.
+        """
+        from backend.scheduler import get_scheduler
+        from backend.database import Database
+
+        print("🔄 AUTO-SCHEDULE: Restoring auto-schedules from database...")
+
+        # Get database instance
+        temp_db = Database()
+        await temp_db.connect()
+        scheduler = get_scheduler(temp_db)
+
+        # Find all inventory items with auto-schedule enabled
+        enabled_schedules = await self.db.data_inventory.find({
+            "auto_schedule_enabled": True
+        }).to_list(length=None)
+
+        restored_count = 0
+        for item_doc in enabled_schedules:
+            try:
+                item = DataInventory(**item_doc)
+
+                # Re-enable the auto-schedule (this will re-register with APScheduler)
+                next_run = await self.enable_auto_schedule(
+                    item.symbol,
+                    item.interval,
+                    item.schedule_frequency
+                )
+
+                restored_count += 1
+                print(f"  ✅ Restored auto-schedule: {item.symbol} ({item.interval}) - {item.schedule_frequency}")
+
+            except Exception as e:
+                print(f"  ❌ Failed to restore auto-schedule for {item_doc.get('symbol')}: {e}")
+
+        print(f"🔄 AUTO-SCHEDULE: Restored {restored_count} auto-schedule(s)")
+        return restored_count
+
 
 # Global instance
 _sync_manager: Optional[DataSyncManager] = None
