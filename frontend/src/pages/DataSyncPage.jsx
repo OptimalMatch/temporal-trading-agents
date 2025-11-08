@@ -666,7 +666,9 @@ function DataSyncPage() {
                       {item.last_auto_sync_at ? (
                         <div className="flex flex-col">
                           <span>{new Date(item.last_auto_sync_at).toLocaleDateString()}</span>
-                          <span className="text-xs text-gray-500">{new Date(item.last_auto_sync_at).toLocaleTimeString()}</span>
+                          <span className="text-xs text-gray-500">
+                            {new Date(item.last_auto_sync_at).toLocaleTimeString()} {Intl.DateTimeFormat().resolvedOptions().timeZone}
+                          </span>
                         </div>
                       ) : (
                         <span className="text-gray-500">Never</span>
@@ -676,7 +678,9 @@ function DataSyncPage() {
                       {item.last_auto_analysis_at ? (
                         <div className="flex flex-col">
                           <span>{new Date(item.last_auto_analysis_at).toLocaleDateString()}</span>
-                          <span className="text-xs text-gray-500">{new Date(item.last_auto_analysis_at).toLocaleTimeString()}</span>
+                          <span className="text-xs text-gray-500">
+                            {new Date(item.last_auto_analysis_at).toLocaleTimeString()} {Intl.DateTimeFormat().resolvedOptions().timeZone}
+                          </span>
                         </div>
                       ) : (
                         <span className="text-gray-500">Never</span>
@@ -686,7 +690,9 @@ function DataSyncPage() {
                       {item.next_scheduled_sync ? (
                         <div className="flex flex-col">
                           <span className="text-blue-400">{new Date(item.next_scheduled_sync).toLocaleDateString()}</span>
-                          <span className="text-xs text-gray-500">{new Date(item.next_scheduled_sync).toLocaleTimeString()}</span>
+                          <span className="text-xs text-gray-500">
+                            {new Date(item.next_scheduled_sync).toLocaleTimeString()} {Intl.DateTimeFormat().resolvedOptions().timeZone}
+                          </span>
                         </div>
                       ) : (
                         <span className="text-gray-500">-</span>
