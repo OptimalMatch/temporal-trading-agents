@@ -1343,14 +1343,17 @@ docker-compose up
 
 Contributions are welcome! Whether it's bug fixes, new strategies, improved documentation, or feature requests, we appreciate your help.
 
+**Important:** All contributors must sign a Contributor Assignment Agreement (CAA) before their contributions can be accepted. See [CONTRIBUTING.md](./CONTRIBUTING.md) for details.
+
 ### How to Contribute
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/my-new-feature`
-3. Make your changes with clear commit messages
-4. Write tests if applicable
-5. Update documentation as needed
-6. Submit a pull request
+1. Review the [Contributor Assignment Agreement](./CONTRIBUTOR_AGREEMENT.md)
+2. Fork the repository
+3. Create a feature branch: `git checkout -b feature/my-new-feature`
+4. Make your changes with clear commit messages
+5. Write tests if applicable
+6. Update documentation as needed
+7. Submit a pull request (include CAA acknowledgment in your first PR)
 
 ### Development Setup
 
@@ -1372,7 +1375,23 @@ npm test
 
 ## License
 
-See LICENSE file for details.
+This project is licensed under the **GNU Affero General Public License v3.0 (AGPLv3)**.
+
+Copyright (C) 2025 Unidatum Integrated Products LLC
+
+See the [LICENSE](./LICENSE) file for the full license text.
+
+### Patent Notice
+
+This software incorporates the [temporal-forecasting](https://github.com/OptimalMatch/temporal) library, which implements technology that is the subject of a pending patent application:
+
+**"Transformer-based Time Series Forecasting System and Method"**
+US Patent Application No. 63/910,189
+Filed: November 3, 2025
+
+### Contributor Assignment Agreement
+
+All contributors must sign a Contributor Assignment Agreement (CAA) before their contributions can be accepted. See [CONTRIBUTING.md](./CONTRIBUTING.md) for details.
 
 ---
 
