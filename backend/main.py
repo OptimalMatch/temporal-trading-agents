@@ -1978,6 +1978,78 @@ async def get_symbol_inventory(symbol: str):
     }
 
 
+@app.post("/api/v1/inventory/{symbol}/auto-schedule/enable")
+async def enable_auto_schedule(
+    symbol: str,
+    interval: str = Query(default='1d', description="Data interval"),
+    frequency: str = Query(default='daily', description="Schedule frequency: 'daily', '12h', '6h'")
+):
+    """
+    Enable automatic delta sync + analysis scheduling for a symbol.
+
+    Args:
+        symbol: Trading symbol
+        interval: Data interval
+        frequency: How often to run ('daily', '12h', '6h')
+
+    Returns:
+        Updated inventory with schedule information
+    """
+    sync_manager = await get_sync_manager(db.client.temporal_trading)
+
+    # Get existing inventory
+    inventory_items = await sync_manager.get_inventory(symbol=symbol)
+    existing_inventory = None
+    for item in inventory_items:
+        if item.interval == interval:
+            existing_inventory = item
+            break
+
+    if not existing_inventory:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No existing data found for {symbol} with interval {interval}"
+        )
+
+    # Enable auto-scheduling and register with scheduler
+    next_run = await sync_manager.enable_auto_schedule(symbol, interval, frequency)
+
+    return {
+        "message": f"Auto-schedule enabled for {symbol}",
+        "symbol": symbol,
+        "interval": interval,
+        "frequency": frequency,
+        "next_scheduled_sync": next_run.isoformat() if next_run else None
+    }
+
+
+@app.post("/api/v1/inventory/{symbol}/auto-schedule/disable")
+async def disable_auto_schedule(
+    symbol: str,
+    interval: str = Query(default='1d', description="Data interval")
+):
+    """
+    Disable automatic delta sync + analysis scheduling for a symbol.
+
+    Args:
+        symbol: Trading symbol
+        interval: Data interval
+
+    Returns:
+        Status message
+    """
+    sync_manager = await get_sync_manager(db.client.temporal_trading)
+
+    # Disable auto-scheduling and unregister from scheduler
+    await sync_manager.disable_auto_schedule(symbol, interval)
+
+    return {
+        "message": f"Auto-schedule disabled for {symbol}",
+        "symbol": symbol,
+        "interval": interval
+    }
+
+
 # Global cache for tickers (refresh every 24 hours)
 _tickers_cache = {"data": None, "timestamp": None, "ttl_hours": 24}
 

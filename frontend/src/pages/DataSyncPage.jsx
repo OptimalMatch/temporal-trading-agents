@@ -252,6 +252,63 @@ function DataSyncPage() {
     }
   };
 
+  const handleToggleAutoSchedule = async (symbol, interval, currentlyEnabled) => {
+    if (currentlyEnabled) {
+      // Disable auto-schedule
+      if (!confirm(`Disable auto-scheduling for ${symbol}?\n\nThis will stop automatic daily delta sync and analysis.`)) {
+        return;
+      }
+
+      try {
+        const res = await fetch(`${API_BASE}/inventory/${symbol}/auto-schedule/disable?interval=${interval}`, {
+          method: 'POST'
+        });
+
+        if (res.ok) {
+          alert(`✅ Auto-scheduling disabled for ${symbol}`);
+          // Refresh inventory to show updated status
+          window.location.reload();
+        } else {
+          const data = await res.json();
+          alert(`Error: ${data.detail || 'Failed to disable auto-scheduling'}`);
+        }
+      } catch (err) {
+        console.error('Error disabling auto-schedule:', err);
+        alert('Error disabling auto-scheduling');
+      }
+    } else {
+      // Enable auto-schedule
+      const frequency = prompt(
+        `Enable auto-scheduling for ${symbol}?\n\nSelect frequency:\n- daily (runs at 9 AM UTC)\n- 12h (every 12 hours)\n- 6h (every 6 hours)\n\nEnter frequency:`,
+        'daily'
+      );
+
+      if (!frequency || !['daily', '12h', '6h'].includes(frequency)) {
+        if (frequency) alert('Invalid frequency. Please enter: daily, 12h, or 6h');
+        return;
+      }
+
+      try {
+        const res = await fetch(`${API_BASE}/inventory/${symbol}/auto-schedule/enable?interval=${interval}&frequency=${frequency}`, {
+          method: 'POST'
+        });
+
+        const data = await res.json();
+
+        if (res.ok) {
+          alert(`✅ Auto-scheduling enabled for ${symbol}!\n\nFrequency: ${frequency}\nNext run: ${data.next_scheduled_sync ? new Date(data.next_scheduled_sync).toLocaleString() : 'Calculating...'}`);
+          // Refresh inventory to show updated status
+          window.location.reload();
+        } else {
+          alert(`Error: ${data.detail || 'Failed to enable auto-scheduling'}`);
+        }
+      } catch (err) {
+        console.error('Error enabling auto-schedule:', err);
+        alert('Error enabling auto-scheduling');
+      }
+    }
+  };
+
   const formatBytes = (bytes) => {
     if (bytes === 0) return '0 B';
     const k = 1024;
@@ -548,7 +605,10 @@ function DataSyncPage() {
                   <th className="text-left py-3 px-4 text-gray-400 font-medium">Data Points</th>
                   <th className="text-left py-3 px-4 text-gray-400 font-medium">Date Range</th>
                   <th className="text-left py-3 px-4 text-gray-400 font-medium">Size</th>
-                  <th className="text-left py-3 px-4 text-gray-400 font-medium">Last Updated</th>
+                  <th className="text-left py-3 px-4 text-gray-400 font-medium">Auto-Schedule</th>
+                  <th className="text-left py-3 px-4 text-gray-400 font-medium">Last Synced</th>
+                  <th className="text-left py-3 px-4 text-gray-400 font-medium">Last Analyzed</th>
+                  <th className="text-left py-3 px-4 text-gray-400 font-medium">Next Sync</th>
                   <th className="text-left py-3 px-4 text-gray-400 font-medium">Actions</th>
                 </tr>
               </thead>
@@ -589,8 +649,48 @@ function DataSyncPage() {
                       ) : '-'}
                     </td>
                     <td className="py-3 px-4 text-gray-300">{formatBytes(item.file_size_bytes)}</td>
+                    <td className="py-3 px-4">
+                      <button
+                        onClick={() => handleToggleAutoSchedule(item.symbol, item.interval, item.auto_schedule_enabled)}
+                        className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                          item.auto_schedule_enabled
+                            ? 'bg-green-900/50 text-green-400 border border-green-700 hover:bg-green-900/70'
+                            : 'bg-gray-700 text-gray-400 border border-gray-600 hover:bg-gray-600'
+                        }`}
+                        title={item.auto_schedule_enabled ? `Auto-schedule ON (${item.schedule_frequency})` : 'Click to enable auto-schedule'}
+                      >
+                        {item.auto_schedule_enabled ? `✓ ${item.schedule_frequency}` : 'OFF'}
+                      </button>
+                    </td>
                     <td className="py-3 px-4 text-gray-300 text-sm">
-                      {new Date(item.last_updated_at).toLocaleDateString()}
+                      {item.last_auto_sync_at ? (
+                        <div className="flex flex-col">
+                          <span>{new Date(item.last_auto_sync_at).toLocaleDateString()}</span>
+                          <span className="text-xs text-gray-500">{new Date(item.last_auto_sync_at).toLocaleTimeString()}</span>
+                        </div>
+                      ) : (
+                        <span className="text-gray-500">Never</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 text-gray-300 text-sm">
+                      {item.last_auto_analysis_at ? (
+                        <div className="flex flex-col">
+                          <span>{new Date(item.last_auto_analysis_at).toLocaleDateString()}</span>
+                          <span className="text-xs text-gray-500">{new Date(item.last_auto_analysis_at).toLocaleTimeString()}</span>
+                        </div>
+                      ) : (
+                        <span className="text-gray-500">Never</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 text-gray-300 text-sm">
+                      {item.next_scheduled_sync ? (
+                        <div className="flex flex-col">
+                          <span className="text-blue-400">{new Date(item.next_scheduled_sync).toLocaleDateString()}</span>
+                          <span className="text-xs text-gray-500">{new Date(item.next_scheduled_sync).toLocaleTimeString()}</span>
+                        </div>
+                      ) : (
+                        <span className="text-gray-500">-</span>
+                      )}
                     </td>
                     <td className="py-3 px-4">
                       <div className="flex items-center space-x-2">

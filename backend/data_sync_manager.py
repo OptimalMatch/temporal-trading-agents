@@ -314,6 +314,14 @@ class DataSyncManager:
                 print(f"🎯 Triggering consensus analysis for {job.symbol} after successful sync")
                 await self._trigger_consensus_analysis(job.symbol, loop)
 
+                # Update last_auto_analysis_at timestamp
+                sync_db.data_inventory.update_one(
+                    {"symbol": job.symbol, "interval": job.interval},
+                    {"$set": {
+                        "last_auto_analysis_at": datetime.now(timezone.utc)
+                    }}
+                )
+
         except Exception as e:
             # Update job as failed (using sync client)
             sync_db.data_sync_jobs.update_one(
@@ -539,6 +547,190 @@ class DataSyncManager:
                 print(f"⚠️  Failed to start consensus analysis for {symbol}: {response.status_code} - {response.text}")
         except Exception as e:
             print(f"❌ Error triggering consensus analysis for {symbol}: {e}")
+
+    # ==================== Auto-Scheduling Management ====================
+
+    async def enable_auto_schedule(self, symbol: str, interval: str, frequency: str) -> Optional[datetime]:
+        """
+        Enable automatic delta sync + analysis scheduling for a symbol.
+
+        Args:
+            symbol: Trading symbol
+            interval: Data interval
+            frequency: Schedule frequency ('daily', '12h', '6h')
+
+        Returns:
+            Next scheduled run time
+        """
+        from apscheduler.triggers.cron import CronTrigger
+        from apscheduler.triggers.interval import IntervalTrigger
+
+        # Import scheduler
+        from backend.scheduler import get_scheduler
+        from backend.database import Database
+
+        # Get database instance - we need it for the scheduler
+        temp_db = Database()
+        await temp_db.connect()
+        scheduler = get_scheduler(temp_db)
+
+        # Determine trigger based on frequency
+        trigger = None
+        if frequency == "daily":
+            # Run at 9 AM UTC every day
+            trigger = CronTrigger(hour=9, minute=0)
+        elif frequency == "12h":
+            # Run every 12 hours
+            trigger = IntervalTrigger(hours=12)
+        elif frequency == "6h":
+            # Run every 6 hours
+            trigger = IntervalTrigger(hours=6)
+        else:
+            raise ValueError(f"Unsupported frequency: {frequency}")
+
+        # Create unique job ID for this symbol+interval combination
+        job_id = f"auto_sync_{symbol}_{interval}"
+
+        # Schedule the job
+        job = scheduler.scheduler.add_job(
+            self._run_scheduled_delta_sync,
+            trigger=trigger,
+            args=[symbol, interval],
+            id=job_id,
+            replace_existing=True,
+            name=f"Auto Delta Sync: {symbol} ({interval})"
+        )
+
+        next_run = job.next_run_time
+
+        # Update inventory with schedule settings
+        await self.db.data_inventory.update_one(
+            {"symbol": symbol, "interval": interval},
+            {"$set": {
+                "auto_schedule_enabled": True,
+                "schedule_frequency": frequency,
+                "next_scheduled_sync": next_run,
+                "scheduler_job_id": job_id
+            }}
+        )
+
+        print(f"✅ Auto-schedule enabled for {symbol} ({interval}): {frequency}, next run: {next_run}")
+
+        return next_run
+
+    async def disable_auto_schedule(self, symbol: str, interval: str):
+        """
+        Disable automatic delta sync + analysis scheduling for a symbol.
+
+        Args:
+            symbol: Trading symbol
+            interval: Data interval
+        """
+        from backend.scheduler import get_scheduler
+        from backend.database import Database
+
+        # Get database instance
+        temp_db = Database()
+        await temp_db.connect()
+        scheduler = get_scheduler(temp_db)
+
+        # Get inventory to find job ID
+        inventory_doc = await self.db.data_inventory.find_one({
+            "symbol": symbol,
+            "interval": interval
+        })
+
+        if inventory_doc and inventory_doc.get("scheduler_job_id"):
+            job_id = inventory_doc["scheduler_job_id"]
+            try:
+                scheduler.scheduler.remove_job(job_id)
+                print(f"✅ Removed scheduled job {job_id}")
+            except Exception as e:
+                print(f"⚠️  Failed to remove job {job_id}: {e}")
+
+        # Update inventory
+        await self.db.data_inventory.update_one(
+            {"symbol": symbol, "interval": interval},
+            {"$set": {
+                "auto_schedule_enabled": False,
+                "next_scheduled_sync": None,
+                "scheduler_job_id": None
+            }}
+        )
+
+        print(f"✅ Auto-schedule disabled for {symbol} ({interval})")
+
+    async def _run_scheduled_delta_sync(self, symbol: str, interval: str):
+        """
+        Run scheduled delta sync + analysis.
+        This is called by APScheduler.
+
+        Args:
+            symbol: Trading symbol
+            interval: Data interval
+        """
+        import asyncio
+
+        print(f"🔄 Running scheduled delta sync for {symbol} ({interval})")
+
+        # Get current inventory
+        inventory_doc = await self.db.data_inventory.find_one({
+            "symbol": symbol,
+            "interval": interval
+        })
+
+        if not inventory_doc:
+            print(f"⚠️  No inventory found for {symbol} ({interval}), skipping")
+            return
+
+        inventory = DataInventory(**inventory_doc)
+
+        # Determine new period (extend by the schedule frequency)
+        # For simplicity, we'll always try to get "today" as the end date
+        from strategies.massive_s3_data_source import get_massive_s3_source
+        from datetime import datetime as dt
+
+        s3_source = get_massive_s3_source()
+
+        # Get current period and extend it to today
+        current_period = inventory.period
+
+        # Use the same period but it will fetch delta to today
+        # The extend endpoint will calculate what's missing
+        new_period = current_period  # Keep same period, just extend to current date
+
+        # Make HTTP request to schedule delta sync endpoint
+        import requests
+        import os
+
+        backend_url = os.getenv("BACKEND_URL", "http://backend:8000")
+
+        try:
+            response = requests.post(
+                f"{backend_url}/api/v1/inventory/{symbol}/schedule-delta-sync",
+                params={
+                    "new_period": new_period,
+                    "interval": interval,
+                    "trigger_analysis": True
+                },
+                timeout=30
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                print(f"✅ Scheduled delta sync started for {symbol}: {data.get('job_id')}")
+
+                # Update last run times
+                await self.db.data_inventory.update_one(
+                    {"symbol": symbol, "interval": interval},
+                    {"$set": {
+                        "last_auto_sync_at": dt.now(timezone.utc)
+                    }}
+                )
+            else:
+                print(f"⚠️  Failed to start delta sync for {symbol}: {response.status_code} - {response.text}")
+        except Exception as e:
+            print(f"❌ Error running scheduled delta sync for {symbol}: {e}")
 
     # ==================== Inventory Management ====================
 
