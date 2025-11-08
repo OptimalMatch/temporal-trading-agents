@@ -389,6 +389,14 @@ class DataInventory(BaseModel):
     is_complete: bool = False  # Whether we have all available data
     missing_dates: List[str] = []  # List of missing date ranges
 
+    # Auto-scheduling fields
+    auto_schedule_enabled: bool = False  # Whether auto delta-sync + analysis is enabled
+    schedule_frequency: str = "daily"  # Frequency: "daily", "12h", "6h", or cron expression
+    last_auto_sync_at: Optional[datetime] = None  # Last time auto-sync ran
+    last_auto_analysis_at: Optional[datetime] = None  # Last time auto-analysis ran
+    next_scheduled_sync: Optional[datetime] = None  # Next scheduled sync time
+    scheduler_job_id: Optional[str] = None  # APScheduler job ID for tracking
+
 
 class WatchlistAddRequest(BaseModel):
     """Request to add ticker to watchlist"""

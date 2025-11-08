@@ -46,6 +46,7 @@ from backend.websocket_manager import manager as ws_manager
 from backend.scheduler import get_scheduler
 from backend.data_sync_manager import get_sync_manager
 from backend.backtesting_engine import BacktestEngine
+from backend.analysis_queue import get_analysis_queue
 
 # Import strategies
 from strategies.strategy_utils import load_ensemble_module, train_ensemble, get_default_ensemble_configs
@@ -135,6 +136,11 @@ async def startup_event():
     scheduler.start()
     await scheduler.load_scheduled_tasks()
     print("📅 API: Scheduler initialized")
+
+    # Initialize and start analysis queue
+    analysis_queue = get_analysis_queue()
+    await analysis_queue.start_processing()
+    print("🎯 API: Analysis queue initialized")
 
     # Resume monitoring for all active paper trading sessions
     active_sessions = await db.get_paper_trading_sessions(status=PaperTradingStatus.ACTIVE)
@@ -1078,6 +1084,75 @@ async def analyze_consensus(
         raise HTTPException(status_code=500, detail=f"Failed to start consensus analysis: {str(e)}")
 
 
+@app.post("/api/v1/analyze/consensus/enqueue")
+async def enqueue_consensus_analysis(
+    request: ConsensusRequest,
+    database: Database = Depends(get_database)
+):
+    """
+    Enqueue consensus analysis to prevent concurrent GPU usage.
+    Analysis will run when GPU is available (one at a time).
+    """
+    try:
+        analysis_queue = get_analysis_queue()
+
+        # Define callback that will be executed when this job reaches front of queue
+        async def run_analysis_callback(symbol: str):
+            """Callback to run consensus analysis"""
+            # Create pending consensus record
+            consensus_id = str(uuid.uuid4())
+            pending_consensus = ConsensusResult(
+                id=consensus_id,
+                symbol=symbol,
+                current_price=0.0,
+                consensus="PENDING",
+                strength="PENDING",
+                bullish_count=0,
+                bearish_count=0,
+                neutral_count=0,
+                total_count=0,
+                bullish_strategies=[],
+                bearish_strategies=[],
+                neutral_strategies=[],
+                avg_position=0.0,
+                strategy_results=[],
+                status=AnalysisStatus.PENDING
+            )
+
+            # Store in database
+            await database.create_consensus_result(pending_consensus)
+
+            # Run consensus analysis directly (not in background task)
+            await run_consensus_analysis_background(consensus_id, request, database)
+
+        # Enqueue the analysis
+        job_id = await analysis_queue.enqueue_analysis(request.symbol, run_analysis_callback)
+
+        # Get queue stats
+        stats = analysis_queue.get_stats()
+
+        return {
+            "job_id": job_id,
+            "symbol": request.symbol,
+            "queue_position": stats["queue_size"],
+            "message": f"Analysis enqueued for {request.symbol}"
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to enqueue consensus analysis: {str(e)}")
+
+
+@app.get("/api/v1/analyze/queue/status")
+async def get_analysis_queue_status():
+    """Get current analysis queue status"""
+    try:
+        analysis_queue = get_analysis_queue()
+        stats = analysis_queue.get_stats()
+        return stats
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get queue status: {str(e)}")
+
+
 # ==================== History Endpoints ====================
 
 @app.get("/api/v1/history/analyses")
@@ -1852,6 +1927,117 @@ async def extend_data_range(
     }
 
 
+@app.post("/api/v1/inventory/{symbol}/schedule-delta-sync")
+async def schedule_delta_sync_with_analysis(
+    symbol: str,
+    new_period: str = Query(..., description="New period to extend to (e.g., '5y')"),
+    interval: str = Query(default='1d', description="Data interval"),
+    trigger_analysis: bool = Query(default=True, description="Trigger strategy analysis after sync")
+):
+    """
+    Schedule delta sync for a symbol and optionally trigger strategy analysis after completion.
+    This is the recommended way to ensure fresh data for paper trading.
+
+    Args:
+        symbol: Trading symbol
+        new_period: New period to extend to (must be wider than current)
+        interval: Data interval
+        trigger_analysis: Whether to run consensus analysis after sync completes
+
+    Returns:
+        Job information including whether analysis will be triggered
+    """
+    from strategies.massive_s3_data_source import get_massive_s3_source
+    from datetime import datetime
+
+    sync_manager = await get_sync_manager(db.client.temporal_trading)
+
+    # Get existing inventory to find current coverage
+    inventory_items = await sync_manager.get_inventory(symbol=symbol)
+
+    # Find matching inventory item for this interval
+    existing_inventory = None
+    for item in inventory_items:
+        if item.interval == interval:
+            existing_inventory = item
+            break
+
+    if not existing_inventory:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No existing data found for {symbol} with interval {interval}. Use regular sync instead."
+        )
+
+    # Convert new period to dates
+    s3_source = get_massive_s3_source()
+    new_start, new_end = s3_source._convert_period_to_dates(new_period)
+
+    # Get existing date range
+    existing_start = existing_inventory.date_range_start
+    existing_end = existing_inventory.date_range_end
+
+    if not existing_start or not existing_end:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Existing data has incomplete date range information. Use re-download instead."
+        )
+
+    # Calculate delta ranges to fetch
+    delta_ranges = []
+
+    # Check if we need to fetch earlier data
+    if new_start < existing_start:
+        delta_ranges.append(("before", new_start, existing_start))
+
+    # Check if we need to fetch later data
+    if new_end > existing_end:
+        delta_ranges.append(("after", existing_end, new_end))
+
+    if not delta_ranges:
+        return {
+            "message": "No new data to fetch. Existing coverage already includes the requested period.",
+            "existing_start": existing_start.isoformat(),
+            "existing_end": existing_end.isoformat(),
+            "requested_start": new_start.isoformat(),
+            "requested_end": new_end.isoformat()
+        }
+
+    # Create a special sync job for delta download
+    job = await sync_manager.create_sync_job(symbol, new_period, interval)
+
+    # Add metadata to track that this is a delta/merge job and whether to trigger analysis
+    await db.client.temporal_trading.data_sync_jobs.update_one(
+        {"job_id": job.job_id},
+        {"$set": {
+            "is_delta_job": True,
+            "old_period": existing_inventory.period,
+            "trigger_analysis_on_complete": trigger_analysis,
+            "delta_ranges": [
+                {"type": r[0], "start": r[1].isoformat(), "end": r[2].isoformat()}
+                for r in delta_ranges
+            ]
+        }}
+    )
+
+    # Start the job
+    started = await sync_manager.start_sync_job(job.job_id)
+
+    return {
+        "message": f"Started delta download for {symbol}" + (" with auto-analysis" if trigger_analysis else ""),
+        "job_id": job.job_id,
+        "started": started,
+        "trigger_analysis": trigger_analysis,
+        "delta_ranges": [
+            {"type": r[0], "start": r[1].isoformat(), "end": r[2].isoformat()}
+            for r in delta_ranges
+        ],
+        "existing_coverage": {
+            "start": existing_start.isoformat(),
+            "end": existing_end.isoformat()
+        }
+    }
+
+
 @app.get("/api/v1/inventory/{symbol}")
 async def get_symbol_inventory(symbol: str):
     """Get inventory details for a specific symbol."""
@@ -1864,6 +2050,78 @@ async def get_symbol_inventory(symbol: str):
     return {
         "symbol": symbol,
         "coverage": [item.dict() for item in inventory]
+    }
+
+
+@app.post("/api/v1/inventory/{symbol}/auto-schedule/enable")
+async def enable_auto_schedule(
+    symbol: str,
+    interval: str = Query(default='1d', description="Data interval"),
+    frequency: str = Query(default='daily', description="Schedule frequency: 'daily', '12h', '6h'")
+):
+    """
+    Enable automatic delta sync + analysis scheduling for a symbol.
+
+    Args:
+        symbol: Trading symbol
+        interval: Data interval
+        frequency: How often to run ('daily', '12h', '6h')
+
+    Returns:
+        Updated inventory with schedule information
+    """
+    sync_manager = await get_sync_manager(db.client.temporal_trading)
+
+    # Get existing inventory
+    inventory_items = await sync_manager.get_inventory(symbol=symbol)
+    existing_inventory = None
+    for item in inventory_items:
+        if item.interval == interval:
+            existing_inventory = item
+            break
+
+    if not existing_inventory:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No existing data found for {symbol} with interval {interval}"
+        )
+
+    # Enable auto-scheduling and register with scheduler
+    next_run = await sync_manager.enable_auto_schedule(symbol, interval, frequency)
+
+    return {
+        "message": f"Auto-schedule enabled for {symbol}",
+        "symbol": symbol,
+        "interval": interval,
+        "frequency": frequency,
+        "next_scheduled_sync": next_run.isoformat() if next_run else None
+    }
+
+
+@app.post("/api/v1/inventory/{symbol}/auto-schedule/disable")
+async def disable_auto_schedule(
+    symbol: str,
+    interval: str = Query(default='1d', description="Data interval")
+):
+    """
+    Disable automatic delta sync + analysis scheduling for a symbol.
+
+    Args:
+        symbol: Trading symbol
+        interval: Data interval
+
+    Returns:
+        Status message
+    """
+    sync_manager = await get_sync_manager(db.client.temporal_trading)
+
+    # Disable auto-scheduling and unregister from scheduler
+    await sync_manager.disable_auto_schedule(symbol, interval)
+
+    return {
+        "message": f"Auto-schedule disabled for {symbol}",
+        "symbol": symbol,
+        "interval": interval
     }
 
 
@@ -2887,7 +3145,7 @@ async def get_paper_trading_signal(symbol: str, config: PaperTradingConfig) -> O
                 consensus_score = 0
 
             # Estimate expected return from forecast data
-            forecast_data = latest_analysis.get('forecast_data', {})
+            forecast_data = latest_analysis.get('forecast_data') or {}
             ensemble_median = forecast_data.get('ensemble_median', [])
             current_price_db = latest_analysis.get('current_price', current_price)
 
@@ -3005,7 +3263,7 @@ async def execute_paper_trade(session: PaperTradingSession, signal: Dict) -> tup
                     price=current_price,
                     notional=shares * current_price,
                     transaction_cost=transaction_cost,
-                    strategy_signal=signal.get('strategies', {}),
+                    strategy_signal=json.dumps(signal.get('strategies', {})),
                     was_executed=False,
                     rejection_reason="Insufficient cash"
                 )
@@ -3038,7 +3296,7 @@ async def execute_paper_trade(session: PaperTradingSession, signal: Dict) -> tup
                 price=current_price,
                 notional=shares * current_price,
                 transaction_cost=transaction_cost,
-                strategy_signal=signal.get('strategies', {}),
+                strategy_signal=json.dumps(signal.get('strategies', {})),
                 was_executed=True,
                 metadata={'consensus_score': signal.get('consensus_score', 0)}
             )
@@ -3087,7 +3345,7 @@ async def execute_paper_trade(session: PaperTradingSession, signal: Dict) -> tup
                 price=current_price,
                 notional=shares * current_price,
                 transaction_cost=transaction_cost,
-                strategy_signal=signal.get('strategies', {}),
+                strategy_signal=json.dumps(signal.get('strategies', {})),
                 was_executed=True,
                 metadata={
                     'realized_pnl': realized_pnl,
@@ -3163,12 +3421,36 @@ async def list_paper_trading_sessions(
 async def get_paper_trading_session(session_id: str) -> PaperTradingSession:
     """
     Get detailed paper trading session by session_id.
+    Updates position current prices and unrealized P&L before returning.
     """
     try:
         session = await db.get_paper_trading_session(session_id)
 
         if not session:
             raise HTTPException(status_code=404, detail=f"Paper trading session {session_id} not found")
+
+        # Update positions with current prices and unrealized P&L
+        updated_positions = []
+        for position in session.positions:
+            current_price = await get_current_price(position.symbol)
+            if current_price:
+                unrealized_pnl = (current_price - position.entry_price) * position.shares
+                unrealized_pnl_pct = ((current_price - position.entry_price) / position.entry_price) * 100
+
+                # Create updated position using model_copy
+                updated_position = position.model_copy(update={
+                    'current_price': current_price,
+                    'unrealized_pnl': unrealized_pnl,
+                    'unrealized_pnl_pct': unrealized_pnl_pct
+                })
+                updated_positions.append(updated_position)
+            else:
+                # If we can't fetch current price, keep the stored values
+                logger.warning(f"Could not fetch current price for {position.symbol}, using stored values")
+                updated_positions.append(position)
+
+        # Update session with new positions
+        session = session.model_copy(update={'positions': updated_positions})
 
         return session
 
