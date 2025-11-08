@@ -44,10 +44,20 @@ function DataSyncPage() {
 
         if (jobsRes.ok) {
           const data = await jobsRes.json();
-          // Filter for active/pending/paused jobs
-          setActiveJobs(data.jobs.filter(j =>
-            ['running', 'pending', 'paused'].includes(j.status)
-          ));
+          // Filter for active/pending/paused jobs OR recently completed (within 2 minutes)
+          const now = new Date();
+          setActiveJobs(data.jobs.filter(j => {
+            if (['running', 'pending', 'paused'].includes(j.status)) {
+              return true;
+            }
+            // Show completed jobs from the last 2 minutes
+            if (j.status === 'completed' && j.completed_at) {
+              const completedAt = new Date(j.completed_at);
+              const ageMinutes = (now - completedAt) / (1000 * 60);
+              return ageMinutes <= 2;
+            }
+            return false;
+          }));
         }
 
         if (watchlistRes.ok) {
@@ -351,11 +361,11 @@ function DataSyncPage() {
       <div className="bg-gray-800 border border-gray-700 rounded-lg p-6">
         <h2 className="text-xl font-bold text-gray-100 mb-4 flex items-center">
           <Download className="w-5 h-5 mr-2 text-brand-500" />
-          Active Downloads
+          Active & Recent Downloads
         </h2>
 
         {activeJobs.length === 0 ? (
-          <p className="text-gray-400 text-center py-8">No active downloads</p>
+          <p className="text-gray-400 text-center py-8">No active or recent downloads</p>
         ) : (
           <div className="space-y-4">
             {activeJobs.map(job => (
@@ -368,10 +378,11 @@ function DataSyncPage() {
                     </span>
                     <span className={`px-2 py-1 rounded text-xs ${
                       job.status === 'running' ? 'bg-green-900/50 text-green-400' :
+                      job.status === 'completed' ? 'bg-blue-900/50 text-blue-400' :
                       job.status === 'paused' ? 'bg-yellow-900/50 text-yellow-400' :
                       'bg-gray-600 text-gray-300'
                     }`}>
-                      {job.status}
+                      {job.status === 'completed' ? '✓ completed' : job.status}
                     </span>
                   </div>
 
@@ -622,8 +633,7 @@ function DataSyncPage() {
                       {item.date_range_start && item.date_range_end ? (
                         <div>
                           <div>
-                            {new Date(item.date_range_start).toLocaleDateString()} -
-                            {new Date(item.date_range_end).toLocaleDateString()}
+                            {item.date_range_start.split('T')[0]} - {item.date_range_end.split('T')[0]}
                           </div>
                           {(() => {
                             const endDate = new Date(item.date_range_end);
