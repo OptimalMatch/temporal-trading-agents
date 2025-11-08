@@ -34,5 +34,5 @@ torch==2.2.0
 torchvision==0.17.0
 torchaudio==2.2.0
 
-# Temporal forecasting
-temporal-forecasting
+# Temporal forecasting (v0.3.3 includes mixed precision training for 1.5-2x speedup)
+temporal-forecasting==0.3.3
