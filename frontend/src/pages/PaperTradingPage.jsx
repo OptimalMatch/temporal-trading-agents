@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import {
   Play, TrendingUp, TrendingDown, Activity, DollarSign,
-  Pause, Square, AlertCircle, CheckCircle, Loader2, Trash2, Clock
+  Pause, Square, AlertCircle, CheckCircle, Loader2, Trash2, Clock, Target
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { api } from '../services/api';
@@ -11,6 +11,8 @@ export default function PaperTradingPage() {
   const [selectedSession, setSelectedSession] = useState(null);
   const [loading, setLoading] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [sessionToAssign, setSessionToAssign] = useState(null);
 
   // Helper to format UTC timestamp to local timezone
   // Backend now sends timezone-aware timestamps (with 'Z' suffix)
@@ -48,7 +50,9 @@ export default function PaperTradingPage() {
     check_interval_minutes: 1,
     auto_execute: true,
     use_consensus: true,
+    experiment_id: '',
   });
+  const [experiments, setExperiments] = useState([]);
 
   useEffect(() => {
     loadSessions();
@@ -70,6 +74,16 @@ export default function PaperTradingPage() {
       setSessions(data);
     } catch (error) {
       console.error('Failed to load paper trading sessions:', error);
+    }
+  };
+
+  const loadExperiments = async () => {
+    try {
+      const response = await fetch('/api/v1/experiments?status=active');
+      const data = await response.json();
+      setExperiments(data);
+    } catch (error) {
+      console.error('Failed to load experiments:', error);
     }
   };
 
@@ -106,15 +120,28 @@ export default function PaperTradingPage() {
     setShowCreateForm(false);
 
     try {
-      await api.createPaperTradingSession({
+      const response = await api.createPaperTradingSession({
         name: formData.name || `Paper Trading ${formData.symbol}`,
         config,
       });
+
+      // If experiment selected, add session to experiment
+      if (formData.experiment_id) {
+        try {
+          await fetch(`/api/v1/experiments/${formData.experiment_id}/add-session?session_id=${response.session_id}`, {
+            method: 'POST'
+          });
+        } catch (expError) {
+          console.error('Failed to add session to experiment:', expError);
+          // Don't fail the whole operation, just log the error
+        }
+      }
 
       // Reset form
       setFormData({
         ...formData,
         name: '',
+        experiment_id: '',
       });
 
       loadSessions();
@@ -180,6 +207,26 @@ export default function PaperTradingPage() {
     }
   };
 
+  const handleAssignToExperiment = async (experimentId) => {
+    if (!sessionToAssign) return;
+
+    try {
+      await fetch(`/api/v1/experiments/${experimentId}/add-session?session_id=${sessionToAssign}`, {
+        method: 'POST'
+      });
+
+      setShowAssignModal(false);
+      setSessionToAssign(null);
+      loadSessions();
+      if (selectedSession?.session_id === sessionToAssign) {
+        loadSessionDetails(sessionToAssign);
+      }
+    } catch (error) {
+      console.error('Failed to assign session to experiment:', error);
+      alert('Failed to assign session to experiment');
+    }
+  };
+
   const getStatusBadge = (status) => {
     const styles = {
       active: 'bg-green-900/30 text-green-300 border-green-700',
@@ -216,7 +263,10 @@ export default function PaperTradingPage() {
           </p>
         </div>
         <button
-          onClick={() => setShowCreateForm(true)}
+          onClick={() => {
+            setShowCreateForm(true);
+            loadExperiments();
+          }}
           className="flex items-center space-x-2 px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white rounded-lg transition-colors"
         >
           <Play className="w-5 h-5" />
@@ -244,6 +294,28 @@ export default function PaperTradingPage() {
                     placeholder="My Paper Trading Session"
                     className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-brand-500"
                   />
+                </div>
+
+                {/* Experiment (Optional) */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1">
+                    Experiment (Optional)
+                  </label>
+                  <select
+                    value={formData.experiment_id}
+                    onChange={(e) => setFormData({ ...formData, experiment_id: e.target.value })}
+                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  >
+                    <option value="">No experiment (standalone session)</option>
+                    {experiments.map((exp) => (
+                      <option key={exp.experiment_id} value={exp.experiment_id}>
+                        {exp.name} ({exp.symbol}) - {exp.session_ids.length} sessions
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Add this session to an experiment for A/B testing
+                  </p>
                 </div>
 
                 {/* Symbol */}
@@ -361,6 +433,66 @@ export default function PaperTradingPage() {
         </div>
       )}
 
+      {/* Assign to Experiment Modal */}
+      {showAssignModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-lg max-w-lg w-full border border-gray-700">
+            <div className="p-6">
+              <h2 className="text-2xl font-bold text-gray-100 mb-4">Assign to Experiment</h2>
+              <p className="text-gray-400 mb-4">Select an experiment to assign this session to:</p>
+
+              {experiments.length === 0 ? (
+                <div className="text-center py-8">
+                  <p className="text-gray-500">No active experiments found</p>
+                  <p className="text-sm text-gray-600 mt-1">Create an experiment first</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {experiments.map((exp) => (
+                    <button
+                      key={exp.experiment_id}
+                      onClick={() => handleAssignToExperiment(exp.experiment_id)}
+                      className="w-full p-4 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg text-left transition-colors"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <h3 className="font-semibold text-gray-100">{exp.name}</h3>
+                          <p className="text-sm text-gray-400 mt-1">{exp.description}</p>
+                          <div className="flex items-center space-x-3 mt-2">
+                            <span className="text-xs text-gray-500">
+                              Symbol: <span className="text-gray-400 font-mono">{exp.symbol}</span>
+                            </span>
+                            <span className="text-xs text-gray-500">
+                              Parameter: <span className="text-gray-400">{exp.parameter_tested}</span>
+                            </span>
+                            <span className="text-xs text-gray-500">
+                              Sessions: <span className="text-gray-400">{exp.session_ids.length}</span>
+                            </span>
+                          </div>
+                        </div>
+                        <Target className="w-5 h-5 text-purple-400" />
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end mt-6">
+                <button
+                  onClick={() => {
+                    setShowAssignModal(false);
+                    setSessionToAssign(null);
+                  }}
+                  className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Sessions List */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-gray-800 border border-gray-700 rounded-lg p-6">
@@ -430,6 +562,14 @@ export default function PaperTradingPage() {
                     </div>
                   </div>
 
+                  {/* Experiment Badge */}
+                  {session.experiment_group && (
+                    <div className="mt-2 text-xs text-purple-400 flex items-center space-x-1">
+                      <Target className="w-3 h-3" />
+                      <span>In experiment</span>
+                    </div>
+                  )}
+
                   {/* Action Buttons */}
                   <div className="flex items-center space-x-2 mt-3">
                     {session.status === 'active' && (
@@ -465,6 +605,18 @@ export default function PaperTradingPage() {
                         <Square className="w-3 h-3" />
                       </button>
                     )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSessionToAssign(session.session_id);
+                        setShowAssignModal(true);
+                        loadExperiments();
+                      }}
+                      className="text-xs px-2 py-1 bg-purple-900/30 hover:bg-purple-800/50 text-purple-400 rounded border border-purple-700"
+                      title="Assign to experiment"
+                    >
+                      <Target className="w-3 h-3" />
+                    </button>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();

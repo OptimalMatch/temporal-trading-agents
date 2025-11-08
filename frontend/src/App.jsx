@@ -1,5 +1,5 @@
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { Activity, Calendar, History, Play, TrendingUp, Database, BarChart3, Settings, Info, Zap, Clock } from 'lucide-react';
+import { Activity, Calendar, History, Play, TrendingUp, Database, BarChart3, Settings, Info, Zap, Clock, Target } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import Dashboard from './pages/Dashboard';
 import HistoryPage from './pages/HistoryPage';
@@ -9,6 +9,7 @@ import DataSyncPage from './pages/DataSyncPage';
 import BacktestPage from './pages/BacktestPage';
 import OptimizationPage from './pages/OptimizationPage';
 import PaperTradingPage from './pages/PaperTradingPage';
+import ExperimentsPage from './pages/ExperimentsPage';
 import AboutPage from './pages/AboutPage';
 
 function Navigation() {
@@ -29,6 +30,7 @@ function Navigation() {
     { path: '/backtest', label: 'Backtest', icon: BarChart3 },
     { path: '/optimize', label: 'Optimize', icon: Settings },
     { path: '/paper', label: 'Paper', icon: Zap },
+    { path: '/experiments', label: 'Experiments', icon: Target },
     { path: '/history', label: 'History', icon: History },
     { path: '/scheduler', label: 'Scheduler', icon: Calendar },
     { path: '/data-sync', label: 'Data', icon: Database },
@@ -111,6 +113,7 @@ function App() {
             <Route path="/backtest" element={<BacktestPage />} />
             <Route path="/optimize" element={<OptimizationPage />} />
             <Route path="/paper" element={<PaperTradingPage />} />
+            <Route path="/experiments" element={<ExperimentsPage />} />
             <Route path="/history" element={<HistoryPage />} />
             <Route path="/scheduler" element={<SchedulerPage />} />
             <Route path="/data-sync" element={<DataSyncPage />} />

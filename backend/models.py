@@ -744,6 +744,29 @@ class SignalLog(BaseModel):
         return dt.isoformat().replace('+00:00', 'Z')
 
 
+class Experiment(BaseModel):
+    """Experiment for comparing paper trading strategies"""
+    experiment_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    description: str
+    symbol: str  # Symbol being tested (e.g., BTC-USD)
+    parameter_tested: str  # What parameter is being tested (e.g., "min_edge_bps")
+    status: str = "active"  # active, completed, archived
+    session_ids: List[str] = []  # List of session IDs in this experiment
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    completed_at: Optional[datetime] = None
+    metadata: Dict[str, Any] = {}  # Additional metadata
+
+    @field_serializer('created_at', 'completed_at')
+    def serialize_datetime(self, dt: Optional[datetime], _info):
+        """Serialize datetime with timezone"""
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat().replace('+00:00', 'Z')
+
+
 class PaperTradingSession(BaseModel):
     """Paper trading session"""
     session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -766,6 +789,7 @@ class PaperTradingSession(BaseModel):
     started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     stopped_at: Optional[datetime] = None
     error_message: Optional[str] = None
+    experiment_group: Optional[str] = None  # ID of experiment this session belongs to
 
     @field_serializer('last_signal_check', 'next_signal_check', 'started_at', 'stopped_at')
     def serialize_datetime(self, dt: Optional[datetime], _info):

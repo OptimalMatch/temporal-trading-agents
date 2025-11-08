@@ -791,3 +791,77 @@ class Database:
         except Exception as e:
             print(f"Error deleting paper trading session: {e}")
             return False
+
+    # ========================================
+    # Experiment Methods
+    # ========================================
+
+    async def store_experiment(self, experiment) -> bool:
+        """Store an experiment"""
+        try:
+            experiment_dict = experiment.dict()
+            await self.db.experiments.insert_one(experiment_dict)
+            return True
+        except Exception as e:
+            print(f"Error storing experiment: {e}")
+            return False
+
+    async def get_experiment(self, experiment_id: str):
+        """Get experiment by experiment_id"""
+        try:
+            from backend.models import Experiment
+            experiment = await self.db.experiments.find_one({"experiment_id": experiment_id})
+            if experiment:
+                del experiment["_id"]
+                return Experiment(**experiment)
+            return None
+        except Exception as e:
+            print(f"Error retrieving experiment {experiment_id}: {e}")
+            return None
+
+    async def get_experiments(
+        self,
+        symbol: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 50
+    ):
+        """Get list of experiments with optional filters"""
+        try:
+            from backend.models import Experiment
+            query = {}
+            if symbol:
+                query["symbol"] = symbol
+            if status:
+                query["status"] = status
+
+            cursor = self.db.experiments.find(query).sort("created_at", -1).limit(limit)
+            experiments = []
+            async for experiment in cursor:
+                del experiment["_id"]
+                experiments.append(Experiment(**experiment))
+            return experiments
+        except Exception as e:
+            print(f"Error retrieving experiments: {e}")
+            return []
+
+    async def update_experiment(self, experiment) -> bool:
+        """Update experiment"""
+        try:
+            experiment_dict = experiment.dict()
+            result = await self.db.experiments.update_one(
+                {"experiment_id": experiment.experiment_id},
+                {"$set": experiment_dict}
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            print(f"Error updating experiment: {e}")
+            return False
+
+    async def delete_experiment(self, experiment_id: str) -> bool:
+        """Delete an experiment"""
+        try:
+            result = await self.db.experiments.delete_one({"experiment_id": experiment_id})
+            return result.deleted_count > 0
+        except Exception as e:
+            print(f"Error deleting experiment: {e}")
+            return False
