@@ -247,9 +247,11 @@ class DataSyncManager:
 
             # Check if S3 data covers the full range
             latest_s3_date = s3_data.index.max()
-            if latest_s3_date < pd.Timestamp(end_date, tz='UTC'):
+            # Convert end_date to pandas Timestamp (it's already timezone-aware)
+            end_date_ts = pd.Timestamp(end_date) if not isinstance(end_date, pd.Timestamp) else end_date
+            if latest_s3_date < end_date_ts:
                 # Gap exists, fill with REST API
-                gap_days = (pd.Timestamp(end_date, tz='UTC') - latest_s3_date).days
+                gap_days = (end_date_ts - latest_s3_date).days
                 if gap_days > 1:
                     try:
                         print(f"📡 Filling {gap_days} day gap with REST API...")
