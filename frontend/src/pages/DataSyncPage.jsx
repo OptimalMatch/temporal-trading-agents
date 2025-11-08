@@ -319,6 +319,14 @@ function DataSyncPage() {
     }
   };
 
+  const formatDateOnly = (isoString) => {
+    // Format ISO date string (YYYY-MM-DD...) to MM/DD/YY without timezone conversion
+    const datePart = isoString.split('T')[0]; // Get YYYY-MM-DD
+    const [year, month, day] = datePart.split('-');
+    const shortYear = year.slice(-2); // Get last 2 digits of year
+    return `${month}/${day}/${shortYear}`;
+  };
+
   const formatBytes = (bytes) => {
     if (bytes === 0) return '0 B';
     const k = 1024;
@@ -633,7 +641,7 @@ function DataSyncPage() {
                       {item.date_range_start && item.date_range_end ? (
                         <div>
                           <div>
-                            {item.date_range_start.split('T')[0]} - {item.date_range_end.split('T')[0]}
+                            {formatDateOnly(item.date_range_start)} - {formatDateOnly(item.date_range_end)}
                           </div>
                           {(() => {
                             const endDate = new Date(item.date_range_end);
