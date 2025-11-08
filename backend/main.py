@@ -46,6 +46,7 @@ from backend.websocket_manager import manager as ws_manager
 from backend.scheduler import get_scheduler
 from backend.data_sync_manager import get_sync_manager
 from backend.backtesting_engine import BacktestEngine
+from backend.analysis_queue import get_analysis_queue
 
 # Import strategies
 from strategies.strategy_utils import load_ensemble_module, train_ensemble, get_default_ensemble_configs
@@ -135,6 +136,11 @@ async def startup_event():
     scheduler.start()
     await scheduler.load_scheduled_tasks()
     print("📅 API: Scheduler initialized")
+
+    # Initialize and start analysis queue
+    analysis_queue = get_analysis_queue()
+    await analysis_queue.start_processing()
+    print("🎯 API: Analysis queue initialized")
 
     # Resume monitoring for all active paper trading sessions
     active_sessions = await db.get_paper_trading_sessions(status=PaperTradingStatus.ACTIVE)
@@ -1076,6 +1082,75 @@ async def analyze_consensus(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to start consensus analysis: {str(e)}")
+
+
+@app.post("/api/v1/analyze/consensus/enqueue")
+async def enqueue_consensus_analysis(
+    request: ConsensusRequest,
+    database: Database = Depends(get_database)
+):
+    """
+    Enqueue consensus analysis to prevent concurrent GPU usage.
+    Analysis will run when GPU is available (one at a time).
+    """
+    try:
+        analysis_queue = get_analysis_queue()
+
+        # Define callback that will be executed when this job reaches front of queue
+        async def run_analysis_callback(symbol: str):
+            """Callback to run consensus analysis"""
+            # Create pending consensus record
+            consensus_id = str(uuid.uuid4())
+            pending_consensus = ConsensusResult(
+                id=consensus_id,
+                symbol=symbol,
+                current_price=0.0,
+                consensus="PENDING",
+                strength="PENDING",
+                bullish_count=0,
+                bearish_count=0,
+                neutral_count=0,
+                total_count=0,
+                bullish_strategies=[],
+                bearish_strategies=[],
+                neutral_strategies=[],
+                avg_position=0.0,
+                strategy_results=[],
+                status=AnalysisStatus.PENDING
+            )
+
+            # Store in database
+            await database.create_consensus_result(pending_consensus)
+
+            # Run consensus analysis directly (not in background task)
+            await run_consensus_analysis_background(consensus_id, request, database)
+
+        # Enqueue the analysis
+        job_id = await analysis_queue.enqueue_analysis(request.symbol, run_analysis_callback)
+
+        # Get queue stats
+        stats = analysis_queue.get_stats()
+
+        return {
+            "job_id": job_id,
+            "symbol": request.symbol,
+            "queue_position": stats["queue_size"],
+            "message": f"Analysis enqueued for {request.symbol}"
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to enqueue consensus analysis: {str(e)}")
+
+
+@app.get("/api/v1/analyze/queue/status")
+async def get_analysis_queue_status():
+    """Get current analysis queue status"""
+    try:
+        analysis_queue = get_analysis_queue()
+        stats = analysis_queue.get_stats()
+        return stats
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get queue status: {str(e)}")
 
 
 # ==================== History Endpoints ====================
