@@ -287,6 +287,9 @@ class DataSyncManager:
                 if is_delta:
                     print(f"🔀 Merging delta data with existing cache for {job.symbol}")
                     self.cache.merge_and_set(data, job.symbol, job.period, job.interval)
+                    # Reload the full merged dataset from cache for inventory update
+                    data = self.cache.get(job.symbol, job.period, job.interval)
+                    print(f"📊 Reloaded merged dataset: {len(data) if data is not None else 0} rows")
                 else:
                     self.cache.set(data, job.symbol, job.period, job.interval)
 
@@ -358,7 +361,20 @@ class DataSyncManager:
 
     def _update_inventory_sync(self, sync_db, symbol: str, period: str, interval: str, data, old_period: str = None):
         """Update data inventory after successful download (synchronous version for background threads)"""
-        if data is None or data.empty:
+        # If no new data but this is a delta job, try to use existing cache data
+        if (data is None or data.empty) and old_period:
+            print(f"ℹ️  No new data found for delta sync, checking existing cache...")
+            # Try to load existing cache data using the OLD period
+            existing_data = self.cache.get(symbol, old_period, interval)
+            if existing_data is not None and not existing_data.empty:
+                print(f"✓ Found existing cache with {len(existing_data)} rows, updating inventory with new period")
+                # Update the cache with the new period
+                self.cache.set(existing_data, symbol, period, interval)
+                data = existing_data
+            else:
+                print(f"⚠️  No existing cache data found, skipping inventory update")
+                return
+        elif data is None or data.empty:
             return
 
         inventory = DataInventory(
