@@ -10,6 +10,7 @@ function DataSyncPage() {
   const [inventory, setInventory] = useState([]);
   const [newSymbol, setNewSymbol] = useState('');
   const [newPeriod, setNewPeriod] = useState('2y');
+  const [newInterval, setNewInterval] = useState('1d');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [availableTickers, setAvailableTickers] = useState([]);
@@ -94,7 +95,7 @@ function DataSyncPage() {
         body: JSON.stringify({
           symbol: newSymbol.toUpperCase(),
           period: newPeriod,
-          interval: '1d',
+          interval: newInterval,
           auto_sync: true
         })
       });
@@ -123,9 +124,9 @@ function DataSyncPage() {
     }
   };
 
-  const handleStartSync = async (symbol, period = '2y') => {
+  const handleStartSync = async (symbol, period = '2y', interval = '1d') => {
     try {
-      const res = await fetch(`${API_BASE}/sync/jobs?symbol=${symbol}&period=${period}&interval=1d`, {
+      const res = await fetch(`${API_BASE}/sync/jobs?symbol=${symbol}&period=${period}&interval=${interval}`, {
         method: 'POST'
       });
 
@@ -542,6 +543,16 @@ function DataSyncPage() {
               <option value="2y">2 years</option>
               <option value="5y">5 years</option>
             </select>
+            <select
+              value={newInterval}
+              onChange={(e) => setNewInterval(e.target.value)}
+              className="bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-gray-100 focus:outline-none focus:border-brand-500"
+              title="Data interval - Note: Intraday data (1h/1m) will be much larger"
+            >
+              <option value="1d">Daily (1d)</option>
+              <option value="1h">Hourly (1h)</option>
+              <option value="1m">Minute (1m)</option>
+            </select>
             <button
               type="submit"
               disabled={tickersLoading}
@@ -580,7 +591,7 @@ function DataSyncPage() {
                   )}
                 </div>
                 <button
-                  onClick={() => handleStartSync(item.symbol, item.period)}
+                  onClick={() => handleStartSync(item.symbol, item.period, item.interval)}
                   className="w-full bg-brand-600 hover:bg-brand-700 text-white px-4 py-2 rounded text-sm font-medium transition-colors flex items-center justify-center space-x-2"
                 >
                   <Download className="w-4 h-4" />
