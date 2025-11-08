@@ -39,7 +39,8 @@ from backend.models import (
     BacktestStatus, PaperTradingConfig, PaperTradingSession, PaperTradingCreateRequest,
     PaperTradingSummary, PaperTradingStatus,
     OptimizableParams, ParameterGrid, OptimizationRequest, OptimizationResult,
-    OptimizationRun, OptimizationStatus, OptimizationMetric
+    OptimizationRun, OptimizationStatus, OptimizationMetric,
+    Experiment
 )
 from backend.database import Database
 from backend.websocket_manager import manager as ws_manager
@@ -3556,6 +3557,228 @@ async def delete_paper_trading_session(session_id: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete session: {str(e)}")
+
+
+# ========================================
+# Experiment Endpoints
+# ========================================
+
+@app.post("/api/v1/experiments", response_model=Experiment)
+async def create_experiment(
+    name: str = Query(..., description="Experiment name"),
+    description: str = Query(..., description="Experiment description"),
+    symbol: str = Query(..., description="Trading symbol"),
+    parameter_tested: str = Query(..., description="Parameter being tested (e.g., 'min_edge_bps')")
+) -> Experiment:
+    """
+    Create a new experiment for A/B testing trading strategies.
+    """
+    try:
+        experiment = Experiment(
+            name=name,
+            description=description,
+            symbol=symbol,
+            parameter_tested=parameter_tested,
+            status="active"
+        )
+
+        # Store in database
+        await db.store_experiment(experiment)
+
+        print(f"🧪 EXPERIMENT: Created experiment {experiment.experiment_id} for {symbol}")
+
+        return experiment
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create experiment: {str(e)}")
+
+
+@app.get("/api/v1/experiments", response_model=List[Experiment])
+async def list_experiments(
+    symbol: Optional[str] = Query(None, description="Filter by symbol"),
+    status: Optional[str] = Query(None, description="Filter by status (active, completed)")
+) -> List[Experiment]:
+    """
+    Get list of experiments with optional filters.
+    """
+    try:
+        experiments = await db.get_experiments(symbol=symbol, status=status)
+        return experiments
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list experiments: {str(e)}")
+
+
+@app.get("/api/v1/experiments/{experiment_id}", response_model=Experiment)
+async def get_experiment(experiment_id: str) -> Experiment:
+    """
+    Get a specific experiment by ID.
+    """
+    try:
+        experiment = await db.get_experiment(experiment_id)
+
+        if not experiment:
+            raise HTTPException(status_code=404, detail=f"Experiment {experiment_id} not found")
+
+        return experiment
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get experiment: {str(e)}")
+
+
+@app.post("/api/v1/experiments/{experiment_id}/add-session")
+async def add_session_to_experiment(
+    experiment_id: str,
+    session_id: str = Query(..., description="Paper trading session ID to add")
+):
+    """
+    Add a paper trading session to an experiment.
+    """
+    try:
+        experiment = await db.get_experiment(experiment_id)
+        if not experiment:
+            raise HTTPException(status_code=404, detail=f"Experiment {experiment_id} not found")
+
+        session = await db.get_paper_trading_session(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+        # Add session to experiment
+        if session_id not in experiment.session_ids:
+            experiment.session_ids.append(session_id)
+            await db.update_experiment(experiment)
+
+        # Update session with experiment group
+        session.experiment_group = experiment_id
+        await db.update_paper_trading_session(session)
+
+        print(f"🧪 EXPERIMENT: Added session {session_id} to experiment {experiment_id}")
+
+        return {"message": f"Session {session_id} added to experiment {experiment_id}"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to add session to experiment: {str(e)}")
+
+
+@app.post("/api/v1/experiments/{experiment_id}/complete")
+async def complete_experiment(experiment_id: str):
+    """
+    Mark an experiment as completed.
+    """
+    try:
+        experiment = await db.get_experiment(experiment_id)
+        if not experiment:
+            raise HTTPException(status_code=404, detail=f"Experiment {experiment_id} not found")
+
+        experiment.status = "completed"
+        experiment.completed_at = datetime.now(timezone.utc)
+        await db.update_experiment(experiment)
+
+        print(f"🧪 EXPERIMENT: Completed experiment {experiment_id}")
+
+        return {"message": f"Experiment {experiment_id} marked as completed"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to complete experiment: {str(e)}")
+
+
+@app.get("/api/v1/experiments/{experiment_id}/compare")
+async def compare_experiment_sessions(experiment_id: str):
+    """
+    Get comparison data for all sessions in an experiment.
+    Returns performance metrics for each session.
+    """
+    try:
+        experiment = await db.get_experiment(experiment_id)
+        if not experiment:
+            raise HTTPException(status_code=404, detail=f"Experiment {experiment_id} not found")
+
+        # Get all sessions in the experiment
+        session_comparisons = []
+        for session_id in experiment.session_ids:
+            session = await db.get_paper_trading_session(session_id)
+            if session:
+                # Calculate metrics using session-level data
+                win_rate = 0.0
+                if session.total_trades > 0:
+                    win_rate = (session.winning_trades / session.total_trades) * 100
+
+                # Calculate max drawdown from equity tracking
+                # For now, use a simple calculation based on current equity vs peak
+                max_dd = 0.0
+                if session.starting_capital > 0:
+                    peak_equity = max(session.starting_capital, session.current_equity)
+                    current_dd = ((peak_equity - session.current_equity) / peak_equity) * 100
+                    max_dd = max(0, current_dd)
+
+                comparison_data = {
+                    "session_id": session_id,
+                    "name": session.name,
+                    "min_edge_bps": session.config.min_edge_bps,
+                    "status": session.status,
+                    "total_pnl": session.total_pnl,
+                    "total_pnl_pct": session.total_pnl_pct,
+                    "total_trades": session.total_trades,
+                    "winning_trades": session.winning_trades,
+                    "losing_trades": session.losing_trades,
+                    "win_rate": win_rate,
+                    "max_drawdown": max_dd,
+                    "sharpe_ratio": 0.0,  # TODO: Track equity history for proper Sharpe calculation
+                    "started_at": session.started_at,
+                    "stopped_at": session.stopped_at
+                }
+
+                session_comparisons.append(comparison_data)
+
+        return {
+            "experiment": experiment,
+            "sessions": session_comparisons,
+            "summary": {
+                "total_sessions": len(session_comparisons),
+                "best_pnl_session": max(session_comparisons, key=lambda x: x["total_pnl"])["session_id"] if session_comparisons else None
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to compare experiment sessions: {str(e)}")
+
+
+@app.delete("/api/v1/experiments/{experiment_id}")
+async def delete_experiment(experiment_id: str):
+    """
+    Delete an experiment (does not delete associated sessions).
+    """
+    try:
+        experiment = await db.get_experiment(experiment_id)
+        if not experiment:
+            raise HTTPException(status_code=404, detail=f"Experiment {experiment_id} not found")
+
+        # Remove experiment_group from all associated sessions
+        for session_id in experiment.session_ids:
+            session = await db.get_paper_trading_session(session_id)
+            if session:
+                session.experiment_group = None
+                await db.update_paper_trading_session(session)
+
+        # Delete experiment
+        await db.delete_experiment(experiment_id)
+
+        print(f"🧪 EXPERIMENT: Deleted experiment {experiment_id}")
+
+        return {"message": f"Experiment {experiment_id} deleted"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete experiment: {str(e)}")
 
 
 if __name__ == "__main__":
