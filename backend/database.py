@@ -200,10 +200,14 @@ class Database:
             results.append(result)
         return results
 
-    async def get_latest_consensus(self, symbol: str) -> Optional[Dict]:
-        """Get the most recent consensus for a symbol"""
+    async def get_latest_consensus(self, symbol: str, interval: str = None) -> Optional[Dict]:
+        """Get the most recent consensus for a symbol, optionally filtered by interval"""
+        query = {"symbol": symbol}
+        if interval:
+            query["interval"] = interval
+
         consensus = await self.db.consensus_results.find_one(
-            {"symbol": symbol},
+            query,
             sort=[("created_at", -1)]
         )
         if consensus:

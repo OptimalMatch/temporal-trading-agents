@@ -3136,9 +3136,34 @@ async def get_paper_trading_signal(symbol: str, config: PaperTradingConfig) -> O
         print(f"✅ SIGNAL CHECK: Current price for {symbol}: ${current_price:.2f}")
 
         # 2. Get latest forecast from database (generated from historical data)
-        # Look for recent consensus analysis or forecast
+        # Prefer hourly analysis when available for fresher signals
         print(f"📊 SIGNAL CHECK: Looking for recent forecast for {symbol}...")
-        latest_analysis = await db.get_latest_consensus(symbol=symbol)
+
+        # Try hourly analysis first
+        hourly_analysis = await db.get_latest_consensus(symbol=symbol, interval='1h')
+
+        # Check if hourly analysis is fresh (< 2 hours old)
+        use_hourly = False
+        if hourly_analysis:
+            analyzed_at_hourly = hourly_analysis.get('analyzed_at') or hourly_analysis.get('created_at')
+            if analyzed_at_hourly:
+                if isinstance(analyzed_at_hourly, str):
+                    analyzed_at_hourly = datetime.fromisoformat(analyzed_at_hourly.replace('Z', '+00:00'))
+                elif hasattr(analyzed_at_hourly, 'replace') and not analyzed_at_hourly.tzinfo:
+                    analyzed_at_hourly = analyzed_at_hourly.replace(tzinfo=timezone.utc)
+                hourly_age = datetime.now(timezone.utc) - analyzed_at_hourly
+                hourly_age_hours = hourly_age.total_seconds() / 3600
+                if hourly_age_hours < 2:  # Use hourly if less than 2 hours old
+                    use_hourly = True
+                    print(f"✅ SIGNAL CHECK: Using hourly analysis ({hourly_age_hours:.1f}h old)")
+
+        # Use hourly if fresh, otherwise fall back to daily
+        if use_hourly:
+            latest_analysis = hourly_analysis
+        else:
+            latest_analysis = await db.get_latest_consensus(symbol=symbol, interval='1d')
+            if latest_analysis:
+                print(f"✅ SIGNAL CHECK: Using daily analysis (no fresh hourly available)")
 
         if not latest_analysis:
             diagnostic_info['rejection_reason'] = "No forecast found in database (need to run consensus analysis)"
