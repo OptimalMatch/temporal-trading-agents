@@ -397,6 +397,18 @@ class DataInventory(BaseModel):
     next_scheduled_sync: Optional[datetime] = None  # Next scheduled sync time
     scheduler_job_id: Optional[str] = None  # APScheduler job ID for tracking
 
+    @field_serializer('date_range_start', 'date_range_end', 'last_updated_at',
+                     'last_auto_sync_at', 'last_auto_analysis_at', 'next_scheduled_sync')
+    def serialize_datetime(self, dt: Optional[datetime], _info):
+        """Serialize datetime with Z suffix for UTC times"""
+        if dt is None:
+            return None
+        # Ensure datetime is UTC and format with Z suffix
+        if dt.tzinfo is None:
+            # Assume naive datetime is UTC
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat()
+
 
 class WatchlistAddRequest(BaseModel):
     """Request to add ticker to watchlist"""
