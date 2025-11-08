@@ -190,7 +190,7 @@ class DataSyncManager:
 
             # Step 2: Check for gap between latest S3 data and today
             latest_s3_date = s3_data.index.max()
-            today = pd.Timestamp.now(tz='UTC').normalize()
+            today = pd.Timestamp.now(tz='UTC').floor('D')  # Floor to midnight UTC
             gap_days = (today - latest_s3_date).days
 
             print(f"📊 Latest S3 data: {latest_s3_date.strftime('%Y-%m-%d')}")
