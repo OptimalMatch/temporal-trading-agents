@@ -190,6 +190,10 @@ class DataSyncManager:
 
             # Step 2: Check for gap between latest S3 data and today
             latest_s3_date = s3_data.index.max()
+            # Ensure latest_s3_date is timezone-aware (S3 data might be naive)
+            if latest_s3_date.tzinfo is None:
+                latest_s3_date = latest_s3_date.tz_localize('UTC')
+
             today = pd.Timestamp.now(tz='UTC').floor('D')  # Floor to midnight UTC
             gap_days = (today - latest_s3_date).days
 
@@ -247,8 +251,16 @@ class DataSyncManager:
 
             # Check if S3 data covers the full range
             latest_s3_date = s3_data.index.max()
+            # Ensure latest_s3_date is timezone-aware (S3 data might be naive)
+            if latest_s3_date.tzinfo is None:
+                latest_s3_date = latest_s3_date.tz_localize('UTC')
+
             # Convert end_date to pandas Timestamp (it's already timezone-aware)
             end_date_ts = pd.Timestamp(end_date) if not isinstance(end_date, pd.Timestamp) else end_date
+            # Ensure end_date_ts is timezone-aware too
+            if end_date_ts.tzinfo is None:
+                end_date_ts = end_date_ts.tz_localize('UTC')
+
             if latest_s3_date < end_date_ts:
                 # Gap exists, fill with REST API
                 gap_days = (end_date_ts - latest_s3_date).days
