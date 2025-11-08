@@ -330,22 +330,22 @@ def visualize_trading_strategy(strategy_data):
 def main():
     symbol = 'BTC-USD'
 
-    # 7-day ensemble config
+    # 7-day ensemble config (optimized epochs for faster training)
     configs_7day = [
-        {'lookback': 30, 'focus': 'momentum', 'epochs': 20, 'name': 'Short-term Momentum'},
-        {'lookback': 60, 'focus': 'balanced', 'epochs': 25, 'name': 'Medium-term Balanced'},
-        {'lookback': 90, 'focus': 'balanced', 'epochs': 25, 'name': 'Long-term Trend'},
-        {'lookback': 60, 'focus': 'mean_reversion', 'epochs': 20, 'name': 'Mean Reversion'},
-        {'lookback': 45, 'focus': 'momentum', 'epochs': 20, 'name': 'Mid-term Momentum'},
+        {'lookback': 30, 'focus': 'momentum', 'epochs': 15, 'name': 'Short-term Momentum'},
+        {'lookback': 60, 'focus': 'balanced', 'epochs': 15, 'name': 'Medium-term Balanced'},
+        {'lookback': 90, 'focus': 'balanced', 'epochs': 15, 'name': 'Long-term Trend'},
+        {'lookback': 60, 'focus': 'mean_reversion', 'epochs': 15, 'name': 'Mean Reversion'},
+        {'lookback': 45, 'focus': 'momentum', 'epochs': 15, 'name': 'Mid-term Momentum'},
     ]
 
-    # 14-day ensemble config (reduced lookbacks)
+    # 14-day ensemble config (reduced lookbacks, optimized epochs)
     configs_14day = [
-        {'lookback': 30, 'focus': 'momentum', 'epochs': 20, 'name': 'Short-term Momentum'},
-        {'lookback': 45, 'focus': 'balanced', 'epochs': 25, 'name': 'Medium-term Balanced'},
-        {'lookback': 60, 'focus': 'balanced', 'epochs': 25, 'name': 'Long-term Trend'},
-        {'lookback': 45, 'focus': 'mean_reversion', 'epochs': 20, 'name': 'Mean Reversion'},
-        {'lookback': 30, 'focus': 'momentum', 'epochs': 20, 'name': 'Mid-term Momentum'},
+        {'lookback': 30, 'focus': 'momentum', 'epochs': 15, 'name': 'Short-term Momentum'},
+        {'lookback': 45, 'focus': 'balanced', 'epochs': 15, 'name': 'Medium-term Balanced'},
+        {'lookback': 60, 'focus': 'balanced', 'epochs': 15, 'name': 'Long-term Trend'},
+        {'lookback': 45, 'focus': 'mean_reversion', 'epochs': 15, 'name': 'Mean Reversion'},
+        {'lookback': 30, 'focus': 'momentum', 'epochs': 15, 'name': 'Mid-term Momentum'},
     ]
 
     # Train both ensembles
