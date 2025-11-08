@@ -1866,9 +1866,21 @@ async def extend_data_range(
     s3_source = get_massive_s3_source()
     new_start, new_end = s3_source._convert_period_to_dates(new_period)
 
+    # Ensure new_start and new_end are timezone-aware (UTC)
+    if new_start.tzinfo is None:
+        new_start = new_start.replace(tzinfo=timezone.utc)
+    if new_end.tzinfo is None:
+        new_end = new_end.replace(tzinfo=timezone.utc)
+
     # Get existing date range
     existing_start = existing_inventory.date_range_start
     existing_end = existing_inventory.date_range_end
+
+    # Ensure existing dates are timezone-aware
+    if existing_start and existing_start.tzinfo is None:
+        existing_start = existing_start.replace(tzinfo=timezone.utc)
+    if existing_end and existing_end.tzinfo is None:
+        existing_end = existing_end.replace(tzinfo=timezone.utc)
 
     if not existing_start or not existing_end:
         raise HTTPException(
@@ -1977,9 +1989,21 @@ async def schedule_delta_sync_with_analysis(
     s3_source = get_massive_s3_source()
     new_start, new_end = s3_source._convert_period_to_dates(new_period)
 
+    # Ensure new_start and new_end are timezone-aware (UTC)
+    if new_start.tzinfo is None:
+        new_start = new_start.replace(tzinfo=timezone.utc)
+    if new_end.tzinfo is None:
+        new_end = new_end.replace(tzinfo=timezone.utc)
+
     # Get existing date range
     existing_start = existing_inventory.date_range_start
     existing_end = existing_inventory.date_range_end
+
+    # Ensure existing dates are timezone-aware
+    if existing_start and existing_start.tzinfo is None:
+        existing_start = existing_start.replace(tzinfo=timezone.utc)
+    if existing_end and existing_end.tzinfo is None:
+        existing_end = existing_end.replace(tzinfo=timezone.utc)
 
     if not existing_start or not existing_end:
         raise HTTPException(

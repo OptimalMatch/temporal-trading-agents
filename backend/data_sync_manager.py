@@ -206,10 +206,9 @@ class DataSyncManager:
                 try:
                     print(f"📡 Fetching recent {gap_days} days from REST API...")
 
-                    # Calculate period for REST API (just the gap)
-                    gap_period = f"{gap_days}d" if gap_days < 30 else f"{gap_days//30}mo"
-
-                    rest_data = fetch_crypto_data_polygon(symbol, gap_period, interval)
+                    # Fetch from day after latest_s3_date to today
+                    gap_start = latest_s3_date + pd.Timedelta(days=1)
+                    rest_data = fetch_crypto_data_polygon(symbol, interval=interval, start_date=gap_start, end_date=today)
 
                     if rest_data is not None and not rest_data.empty:
                         # Merge S3 + REST API data
@@ -243,11 +242,9 @@ class DataSyncManager:
             s3_data = s3_source.fetch_data_range(symbol, start_date, end_date, interval, progress_callback)
 
             if s3_data is None or s3_data.empty:
-                # No S3 data, try REST API for entire range
+                # No S3 data, try REST API for entire range with explicit dates
                 print(f"⚠️  No S3 data for range, trying REST API...")
-                days_in_range = (end_date - start_date).days
-                gap_period = f"{days_in_range}d" if days_in_range < 30 else f"{days_in_range//30}mo"
-                return fetch_crypto_data_polygon(symbol, gap_period, interval)
+                return fetch_crypto_data_polygon(symbol, interval=interval, start_date=start_date, end_date=end_date)
 
             # Check if S3 data covers the full range
             latest_s3_date = s3_data.index.max()
@@ -267,8 +264,9 @@ class DataSyncManager:
                 if gap_days > 1:
                     try:
                         print(f"📡 Filling {gap_days} day gap with REST API...")
-                        gap_period = f"{gap_days}d"
-                        rest_data = fetch_crypto_data_polygon(symbol, gap_period, interval)
+                        # Fetch from day after latest_s3_date to end_date
+                        gap_start = latest_s3_date + pd.Timedelta(days=1)
+                        rest_data = fetch_crypto_data_polygon(symbol, interval=interval, start_date=gap_start, end_date=end_date_ts)
 
                         if rest_data is not None and not rest_data.empty:
                             combined = pd.concat([s3_data, rest_data])

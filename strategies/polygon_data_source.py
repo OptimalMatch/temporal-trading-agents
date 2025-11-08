@@ -9,14 +9,16 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 
-def fetch_crypto_data_polygon(symbol: str, period: str = '2y', interval: str = '1d') -> Optional[pd.DataFrame]:
+def fetch_crypto_data_polygon(symbol: str, period: str = '2y', interval: str = '1d', start_date=None, end_date=None) -> Optional[pd.DataFrame]:
     """
     Fetch cryptocurrency data from Polygon.io/Massive.com REST API.
 
     Args:
         symbol: Trading symbol (e.g., 'BTC-USD', 'ETH-USD')
-        period: Data period (e.g., '2y', '1y', '6mo', '3mo', '1mo')
+        period: Data period (e.g., '2y', '1y', '6mo', '3mo', '1mo') - ignored if start_date/end_date provided
         interval: Data interval (e.g., '1d', '1h', '5m')
+        start_date: Optional explicit start date (datetime object)
+        end_date: Optional explicit end date (datetime object)
 
     Returns:
         DataFrame with columns: Open, High, Low, Close, Volume
@@ -34,18 +36,26 @@ def fetch_crypto_data_polygon(symbol: str, period: str = '2y', interval: str = '
         polygon_symbol = symbol
 
     # Calculate date range
-    end_date = datetime.now()
-    period_map = {
-        '1mo': 30,
-        '3mo': 90,
-        '6mo': 180,
-        '1y': 365,
-        '2y': 730,
-        '5y': 1825,
-        'max': 3650
-    }
-    days = period_map.get(period, 730)
-    start_date = end_date - timedelta(days=days)
+    if start_date and end_date:
+        # Use explicit dates if provided
+        if hasattr(start_date, 'to_pydatetime'):
+            start_date = start_date.to_pydatetime()
+        if hasattr(end_date, 'to_pydatetime'):
+            end_date = end_date.to_pydatetime()
+    else:
+        # Calculate from period
+        end_date = datetime.now()
+        period_map = {
+            '1mo': 30,
+            '3mo': 90,
+            '6mo': 180,
+            '1y': 365,
+            '2y': 730,
+            '5y': 1825,
+            'max': 3650
+        }
+        days = period_map.get(period, 730)
+        start_date = end_date - timedelta(days=days)
 
     # Convert interval to Polygon format
     interval_map = {
