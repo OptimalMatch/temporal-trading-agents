@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Download, Plus, Trash2, Pause, Play, X, Database, Clock, CheckCircle, AlertCircle, RefreshCw, ArrowUpCircle } from 'lucide-react';
+import { Download, Plus, Trash2, Pause, Play, X, Database, Clock, CheckCircle, AlertCircle, RefreshCw, ArrowUpCircle, Zap } from 'lucide-react';
 import api from '../services/api';
 
 const API_BASE = '/api/v1';
@@ -219,6 +219,36 @@ function DataSyncPage() {
     } catch (err) {
       console.error('Error extending range:', err);
       alert('Error extending data range');
+    }
+  };
+
+  const handleScheduleDeltaSync = async (symbol, currentPeriod, interval) => {
+    const newPeriod = prompt(
+      `Schedule Delta Sync + Analysis for ${symbol}\n\nCurrent period: ${currentPeriod}\nEnter new period (must be wider, e.g., '5y', '10y'):\n\nThis will:\n1. Fetch only missing data (delta)\n2. Automatically run consensus analysis after sync`,
+      '5y'
+    );
+
+    if (!newPeriod) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/inventory/${symbol}/schedule-delta-sync?new_period=${newPeriod}&interval=${interval}&trigger_analysis=true`, {
+        method: 'POST'
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        if (data.started) {
+          alert(`✅ Delta sync scheduled with auto-analysis!\n\nSymbol: ${symbol}\nFetching missing data:\n${data.delta_ranges.map(r => `- ${r.type}: ${r.start.split('T')[0]} to ${r.end.split('T')[0]}`).join('\n')}\n\n🎯 Consensus analysis will run automatically after sync completes.`);
+        } else {
+          alert(data.message);
+        }
+      } else {
+        alert(`Error: ${data.detail || 'Failed to schedule delta sync'}`);
+      }
+    } catch (err) {
+      console.error('Error scheduling delta sync:', err);
+      alert('Error scheduling delta sync');
     }
   };
 
@@ -495,10 +525,13 @@ function DataSyncPage() {
           <AlertCircle className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" />
           <div className="text-sm">
             <p className="text-blue-300 font-medium mb-1">Paper Trading Requires Recent Data</p>
-            <p className="text-gray-400">
+            <p className="text-gray-400 mb-2">
               For paper trading to generate signals, data must be recent (within last 24 hours).
-              Use the <ArrowUpCircle className="w-4 h-4 inline text-blue-400" /> <strong>Get Delta</strong> button
-              to fetch only the missing recent data without re-downloading the entire history.
+              Use the <Zap className="w-4 h-4 inline text-green-400" /> <strong className="text-green-400">Delta Sync + Auto Analysis</strong> button
+              to fetch only the missing recent data and automatically run consensus strategy analysis.
+            </p>
+            <p className="text-gray-500 text-xs">
+              Alternatively, use <ArrowUpCircle className="w-3 h-3 inline text-blue-400" /> <strong>Get Delta</strong> to only fetch data without analysis.
             </p>
           </div>
         </div>
@@ -561,6 +594,13 @@ function DataSyncPage() {
                     </td>
                     <td className="py-3 px-4">
                       <div className="flex items-center space-x-2">
+                        <button
+                          onClick={() => handleScheduleDeltaSync(item.symbol, item.period, item.interval)}
+                          className="p-2 hover:bg-green-900/50 rounded transition-colors border border-green-700/50"
+                          title="Delta Sync + Auto Analysis - Fetch missing data and run strategy analysis automatically (recommended for paper trading)"
+                        >
+                          <Zap className="w-4 h-4 text-green-400" />
+                        </button>
                         <button
                           onClick={() => handleExtendRange(item.symbol, item.period, item.interval)}
                           className="p-2 hover:bg-blue-900/50 rounded transition-colors"

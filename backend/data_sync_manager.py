@@ -309,6 +309,11 @@ class DataSyncManager:
             # Clear progress marker
             self.cache.clear_progress(job.symbol, job.period, job.interval)
 
+            # Trigger strategy analysis if requested
+            if job_doc.get('trigger_analysis_on_complete', False):
+                print(f"🎯 Triggering consensus analysis for {job.symbol} after successful sync")
+                await self._trigger_consensus_analysis(job.symbol, loop)
+
         except Exception as e:
             # Update job as failed (using sync client)
             sync_db.data_sync_jobs.update_one(
@@ -500,6 +505,40 @@ class DataSyncManager:
         """Remove ticker from watchlist"""
         result = await self.db.ticker_watchlist.delete_one({"symbol": symbol})
         return result.deleted_count > 0
+
+    # ==================== Strategy Analysis Triggering ====================
+
+    async def _trigger_consensus_analysis(self, symbol: str, loop):
+        """
+        Trigger consensus analysis for a symbol after data sync completes.
+        This is called from background threads, so we need to handle it carefully.
+
+        Args:
+            symbol: Trading symbol
+            loop: Event loop for async execution
+        """
+        import requests
+        import os
+
+        # Get the backend URL from environment or use default
+        backend_url = os.getenv("BACKEND_URL", "http://backend:8000")
+
+        # Make HTTP request to trigger consensus analysis
+        # We use requests (sync) because we're in a background thread
+        try:
+            response = requests.post(
+                f"{backend_url}/api/v1/analyze/consensus",
+                json={"symbol": symbol},
+                timeout=10
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                print(f"✅ Consensus analysis started for {symbol}: analysis_id={data.get('analysis_id')}")
+            else:
+                print(f"⚠️  Failed to start consensus analysis for {symbol}: {response.status_code} - {response.text}")
+        except Exception as e:
+            print(f"❌ Error triggering consensus analysis for {symbol}: {e}")
 
     # ==================== Inventory Management ====================
 
