@@ -137,7 +137,7 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
     # Optimized DataLoader settings for faster training
     train_loader = DataLoader(
         train_dataset,
-        batch_size=1536,  # Optimized for RTX 4090 (24GB VRAM) - 3x increase from 512
+        batch_size=1280,  # Optimized for RTX 4090 (24GB VRAM) - balanced for 85-90% VRAM usage
         shuffle=True,
         num_workers=8,  # Parallel data loading - increased for better CPU utilization
         pin_memory=True,  # Faster GPU transfer
@@ -145,7 +145,7 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=1536,  # Match training batch size
+        batch_size=1280,  # Match training batch size
         shuffle=False,
         num_workers=8,
         pin_memory=True,
