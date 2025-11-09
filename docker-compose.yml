@@ -39,6 +39,7 @@ services:
       - MASSIVE_S3_ENDPOINT=${MASSIVE_S3_ENDPOINT}
       - MASSIVE_S3_BUCKET=${MASSIVE_S3_BUCKET}
       - MASSIVE_API_KEY=${MASSIVE_API_KEY}
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
     ports:
       - "10750:8000"
     volumes:
