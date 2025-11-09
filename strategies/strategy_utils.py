@@ -49,11 +49,12 @@ def train_ensemble(symbol: str, forecast_horizon: int, configs: List[Dict],
         Tuple of (ensemble_stats, latest_dataframe)
     """
     # Auto-detect appropriate cache age based on data interval
+    # With fine-tuning, we can use much older models and adapt them to new data
     if max_cache_age_hours is None:
         if interval == '1h':
-            max_cache_age_hours = 6.0  # Hourly data: retrain after 6 hours of new data
+            max_cache_age_hours = 168.0  # Hourly data: 7 days (168 hours) - fine-tune weekly
         else:  # '1d' or other daily-like intervals
-            max_cache_age_hours = 48.0  # Daily data: retrain after 2 days (only 2 new candles)
+            max_cache_age_hours = 720.0  # Daily data: 30 days - fine-tune monthly
 
     interval_label = "hours" if interval == '1h' else "days"
     print(f"\n{'='*70}")
