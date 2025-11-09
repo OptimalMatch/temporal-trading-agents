@@ -156,10 +156,22 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
     train_dataset = TimeSeriesDataset(train_data, lookback, forecast_horizon)
     val_dataset = TimeSeriesDataset(val_data, lookback, forecast_horizon)
 
+    # Adaptive batch size based on interval and dataset size
+    # Daily data: fewer samples (~1774 for 5y) → smaller batch size (512)
+    # Hourly data: more samples (~43800 for 5y) → larger batch size (1280)
+    if interval == '1d':
+        batch_size = 512  # Optimized for daily data with RTX 4090
+    else:
+        batch_size = 1280  # Optimized for hourly data with RTX 4090
+
+    # Ensure batch size doesn't exceed dataset size
+    max_batch_size = min(batch_size, len(train_dataset) // 2)  # At least 2 batches
+    batch_size = max(32, max_batch_size)  # Minimum batch size of 32
+
     # Optimized DataLoader settings for faster training
     train_loader = DataLoader(
         train_dataset,
-        batch_size=1280,  # Optimized for RTX 4090 (24GB VRAM) - balanced for 85-90% VRAM usage
+        batch_size=batch_size,
         shuffle=True,
         num_workers=8,  # Parallel data loading - increased for better CPU utilization
         pin_memory=True,  # Faster GPU transfer
@@ -167,7 +179,7 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=1280,  # Match training batch size
+        batch_size=batch_size,  # Match training batch size
         shuffle=False,
         num_workers=8,
         pin_memory=True,
