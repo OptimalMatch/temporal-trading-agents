@@ -137,29 +137,29 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
     # Optimized DataLoader settings for faster training
     train_loader = DataLoader(
         train_dataset,
-        batch_size=512,  # Increased to 512 to maximize GPU utilization (RTX 4080 has 16GB VRAM)
+        batch_size=1536,  # Optimized for RTX 4090 (24GB VRAM) - 3x increase from 512
         shuffle=True,
-        num_workers=4,  # Parallel data loading
+        num_workers=8,  # Parallel data loading - increased for better CPU utilization
         pin_memory=True,  # Faster GPU transfer
         persistent_workers=True  # Keep workers alive between epochs
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=512,  # Match training batch size
+        batch_size=1536,  # Match training batch size
         shuffle=False,
-        num_workers=4,
+        num_workers=8,
         pin_memory=True,
         persistent_workers=True
     )
 
-    # Create model
+    # Create model - optimized for RTX 4090 (24GB VRAM)
     model = Temporal(
         input_dim=data.shape[1],
-        d_model=256,  # Smaller for faster training
-        num_encoder_layers=4,
-        num_decoder_layers=4,
+        d_model=512,  # Increased from 256 for better model capacity
+        num_encoder_layers=6,  # Increased from 4 for deeper network
+        num_decoder_layers=6,  # Increased from 4 for deeper network
         num_heads=8,
-        d_ff=1024,
+        d_ff=2048,  # Increased from 1024 for wider feedforward network
         forecast_horizon=forecast_horizon,
         dropout=0.1
     )
