@@ -591,6 +591,32 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
         # Log: Starting
         logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Starting consensus analysis for {request.symbol}")
 
+        # Ensure database record exists (create if needed)
+        existing_record = await database.db.consensus_results.find_one({"id": consensus_id})
+        if not existing_record:
+            # Create initial pending record
+            pending_consensus = ConsensusResult(
+                id=consensus_id,
+                symbol=request.symbol,
+                interval=request.interval,
+                current_price=0.0,  # Will be updated when analysis runs
+                consensus="PENDING",
+                strength="PENDING",
+                bullish_count=0,
+                bearish_count=0,
+                neutral_count=0,
+                total_count=0,
+                bullish_strategies=[],
+                bearish_strategies=[],
+                neutral_strategies=[],
+                avg_position=0.0,
+                strategy_results=[],
+                status=AnalysisStatus.PENDING,
+                created_at=datetime.now(timezone.utc)
+            )
+            await database.create_consensus_result(pending_consensus)
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Created initial database record")
+
         # Send WebSocket update: Starting
         await ws_manager.send_progress(
             task_id=consensus_id,
