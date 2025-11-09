@@ -12,7 +12,7 @@ import {
   ReferenceLine
 } from 'recharts';
 
-function ForecastChart({ forecastData, symbol }) {
+function ForecastChart({ forecastData, symbol, interval = '1d' }) {
   const [showIndividualModels, setShowIndividualModels] = useState(true);
   const [historicalDays, setHistoricalDays] = useState(120);
   const [extendedHistoricalData, setExtendedHistoricalData] = useState(null);
@@ -30,7 +30,9 @@ function ForecastChart({ forecastData, symbol }) {
         setLoadingHistory(true);
         try {
           // Use relative path to go through nginx proxy
-          const response = await fetch(`/api/v1/history/prices/${symbol}`);
+          // Pass interval parameter for hourly data to read from pickle cache
+          const url = `/api/v1/history/prices/${symbol}${interval ? `?interval=${interval}` : ''}`;
+          const response = await fetch(url);
           if (response.ok) {
             const data = await response.json();
             // Extract close prices from the historical data
@@ -51,7 +53,7 @@ function ForecastChart({ forecastData, symbol }) {
       // Don't need extended data, clear it
       setExtendedHistoricalData(null);
     }
-  }, [symbol, historicalDays, forecastData]);
+  }, [symbol, historicalDays, forecastData, interval]);
 
   if (!forecastData) {
     return (

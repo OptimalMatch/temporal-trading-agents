@@ -207,7 +207,11 @@ function Dashboard() {
           <div className="space-y-6">
             <StrategyCard consensus={stats.latest_consensus} />
             {stats.latest_consensus.forecast_data && (
-              <ForecastChart forecastData={stats.latest_consensus.forecast_data} symbol={stats.latest_consensus.symbol} />
+              <ForecastChart
+                forecastData={stats.latest_consensus.forecast_data}
+                symbol={stats.latest_consensus.symbol}
+                interval={stats.latest_consensus.interval || '1d'}
+              />
             )}
           </div>
         </div>

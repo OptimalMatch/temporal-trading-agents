@@ -927,9 +927,13 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
         # Build forecast data for visualization
         forecast_data = build_forecast_data(stats, df, 14, current_price)
 
-        # Save historical prices to separate collection
-        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Saving historical price data to database")
-        await save_historical_prices(request.symbol, df, database, source="polygon")
+        # Save historical prices to separate collection (skip for 1h to avoid MongoDB 16MB limit)
+        if request.interval != '1h':
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Saving historical price data to database")
+            await save_historical_prices(request.symbol, df, database, source="polygon")
+        else:
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Skipping MongoDB save for 1h data (using pickle cache)")
+
 
         # Update consensus result in database
         logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Saving consensus results to database")
@@ -1381,12 +1385,54 @@ async def get_consensus_history(
 @app.get("/api/v1/history/prices/{symbol}")
 async def get_historical_prices(
     symbol: str,
+    interval: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     database: Database = Depends(get_database)
 ):
-    """Get historical price data for a symbol"""
+    """Get historical price data for a symbol
+
+    For 1h interval data, reads from pickle cache to avoid MongoDB 16MB limit.
+    For 1d interval data, reads from MongoDB.
+    """
     try:
+        # For hourly data, read from pickle cache instead of MongoDB
+        if interval == '1h':
+            from backend.cache_manager import CacheManager
+            cache_manager = CacheManager()
+
+            # Try to load from cache (5y period for hourly data)
+            cache_key = cache_manager.cache._make_cache_key(symbol, '5y', '1h')
+            df = cache_manager.cache.get(cache_key)
+
+            if df is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No hourly data cached for {symbol}. Run analysis first to populate cache."
+                )
+
+            # Convert DataFrame to price points format
+            prices = []
+            for idx, row in df.iterrows():
+                price_point = {
+                    "date": idx.strftime("%Y-%m-%d %H:%M:%S") if hasattr(idx, 'strftime') else str(idx),
+                    "open": float(row['Open']) if 'Open' in row else float(row['Close']),
+                    "high": float(row['High']) if 'High' in row else float(row['Close']),
+                    "low": float(row['Low']) if 'Low' in row else float(row['Close']),
+                    "close": float(row['Close']),
+                    "volume": float(row['Volume']) if 'Volume' in row and not pd.isna(row['Volume']) else None
+                }
+                prices.append(price_point)
+
+            return {
+                "symbol": symbol,
+                "interval": interval,
+                "count": len(prices),
+                "prices": prices,
+                "source": "pickle_cache"
+            }
+
+        # For daily data or when interval not specified, use MongoDB
         if start_date or end_date:
             prices = await database.get_historical_prices_range(
                 symbol=symbol,
@@ -1402,8 +1448,10 @@ async def get_historical_prices(
 
         return {
             "symbol": symbol,
+            "interval": interval or "1d",
             "count": len(prices) if isinstance(prices, list) else 0,
-            "prices": prices
+            "prices": prices,
+            "source": "mongodb"
         }
     except HTTPException:
         raise
