@@ -137,7 +137,7 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
     # Optimized DataLoader settings for faster training
     train_loader = DataLoader(
         train_dataset,
-        batch_size=128,  # Increased from 32 for better GPU utilization
+        batch_size=512,  # Increased to 512 to maximize GPU utilization (RTX 4080 has 16GB VRAM)
         shuffle=True,
         num_workers=4,  # Parallel data loading
         pin_memory=True,  # Faster GPU transfer
@@ -145,7 +145,7 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=128,
+        batch_size=512,  # Match training batch size
         shuffle=False,
         num_workers=4,
         pin_memory=True,

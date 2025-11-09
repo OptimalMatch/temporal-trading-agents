@@ -63,6 +63,8 @@ from strategies.risk_adjusted_strategy import analyze_risk_adjusted_strategy
 # Custom JSON encoder for datetime serialization with timezone
 class CustomJSONResponse(JSONResponse):
     def render(self, content: Any) -> bytes:
+        import math
+
         def datetime_serializer(obj):
             if isinstance(obj, datetime):
                 # Ensure datetime is timezone-aware (default to UTC if naive)
@@ -70,6 +72,10 @@ class CustomJSONResponse(JSONResponse):
                     obj = obj.replace(tzinfo=timezone.utc)
                 # Serialize with timezone info (ISO 8601 with Z)
                 return obj.isoformat().replace('+00:00', 'Z')
+            # Handle NaN and Infinity values
+            if isinstance(obj, float):
+                if math.isnan(obj) or math.isinf(obj):
+                    return None
             raise TypeError(f"Type {type(obj)} not serializable")
 
         return json.dumps(
