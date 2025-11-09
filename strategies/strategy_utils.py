@@ -70,17 +70,24 @@ def train_ensemble(symbol: str, forecast_horizon: int, configs: List[Dict],
     from strategies.data_cache import get_cache
     cache = get_cache()
 
+    # For daily intervals, prefer shorter periods to avoid learning from stale historical data
+    # For hourly intervals, longer periods are fine (5y hourly is more recent than 5y daily)
+    # Crypto markets evolve quickly - old price levels aren't predictive
+    if interval == '1d':
+        preferred_periods = ['2y', '1y', '6mo', '5y']  # Prefer 2y for daily
+    else:  # '1h' or other short intervals
+        preferred_periods = ['5y', '2y', '1y', '6mo']  # Prefer 5y for hourly
+
     # Try to detect what data is available by checking cache
-    # Try periods in descending order: 5y, 2y, 1y, 6mo
     available_period = None
-    for test_period in ['5y', '2y', '1y', '6mo']:
+    for test_period in preferred_periods:
         cached_data = cache.get(symbol, test_period, interval=interval)
         if cached_data is not None and not cached_data.empty:
             available_period = test_period
             break
 
-    # Default to 5y if nothing found (will trigger data fetch)
-    period = available_period or '5y'
+    # Default based on interval if nothing found
+    period = available_period or ('2y' if interval == '1d' else '5y')
 
     is_crypto = '-USD' in symbol or '-EUR' in symbol or '-GBP' in symbol
     asset_type = 'crypto' if is_crypto else 'stock'
