@@ -45,7 +45,7 @@ from backend.models import (
     RemoteInstance, RemoteInstanceCreate, RemoteInstanceUpdate, RemoteInstanceStatus,
     RemoteForecast,
     HuggingFaceConfig, HuggingFaceConfigCreate, HuggingFaceConfigUpdate,
-    ModelExportRequest, ModelImportRequest
+    ModelExportRequest, ModelImportRequest, EnsembleExportRequest
 )
 from backend.database import Database
 from backend.websocket_manager import manager as ws_manager
@@ -71,6 +71,20 @@ class CustomJSONResponse(JSONResponse):
     def render(self, content: Any) -> bytes:
         import math
 
+        def clean_float_values(obj):
+            """Recursively clean NaN and Inf values from data structures"""
+            if isinstance(obj, float):
+                if math.isnan(obj) or math.isinf(obj):
+                    return None
+                return obj
+            elif isinstance(obj, dict):
+                return {k: clean_float_values(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [clean_float_values(item) for item in obj]
+            elif isinstance(obj, tuple):
+                return tuple(clean_float_values(item) for item in obj)
+            return obj
+
         def datetime_serializer(obj):
             if isinstance(obj, datetime):
                 # Ensure datetime is timezone-aware (default to UTC if naive)
@@ -78,14 +92,13 @@ class CustomJSONResponse(JSONResponse):
                     obj = obj.replace(tzinfo=timezone.utc)
                 # Serialize with timezone info (ISO 8601 with Z)
                 return obj.isoformat().replace('+00:00', 'Z')
-            # Handle NaN and Infinity values
-            if isinstance(obj, float):
-                if math.isnan(obj) or math.isinf(obj):
-                    return None
             raise TypeError(f"Type {type(obj)} not serializable")
 
+        # Clean NaN/Inf values before serialization
+        cleaned_content = clean_float_values(content)
+
         return json.dumps(
-            content,
+            cleaned_content,
             ensure_ascii=False,
             allow_nan=False,
             indent=None,
@@ -4895,6 +4908,200 @@ async def get_cache_stats():
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get cache stats: {str(e)}")
+
+
+@app.post("/api/v1/huggingface/export-ensemble")
+async def export_ensemble_to_huggingface(
+    request: EnsembleExportRequest,
+    db: Database = Depends(get_database)
+):
+    """
+    Export all ensemble models from a consensus analysis to HuggingFace Hub.
+    """
+    try:
+        from strategies.model_cache import get_model_cache
+
+        cache = get_model_cache()
+
+        # Get consensus result from database
+        consensus = await db.get_consensus_result(request.consensus_id)
+        if not consensus:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Consensus analysis {request.consensus_id} not found"
+            )
+
+        symbol = consensus["symbol"]
+        interval = consensus.get("interval", "1h")
+
+        # Get HF config for token and repo_id
+        hf_config = await db.get_hf_config_by_symbol_interval(symbol, interval)
+
+        # Determine repo_id and token
+        repo_id = request.repo_id or (hf_config.get("repo_id") if hf_config else None)
+        token = hf_config.get("token") if hf_config else None
+        private = hf_config.get("private", False) if hf_config else False
+
+        if not repo_id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No HuggingFace repo_id configured for {symbol} ({interval}). "
+                       "Either provide repo_id in request or create a HuggingFace config first."
+            )
+
+        # Get model_info - either from consensus metadata or from default ensemble configs
+        model_configs = consensus.get("model_info")
+
+        if not model_configs:
+            # Reconstruct from metadata or use defaults
+            # Get horizon from metadata if available
+            metadata = consensus.get("metadata", {})
+            horizon = metadata.get("horizon")
+
+            if not horizon:
+                # Try to infer from horizons in metadata or use middle default
+                horizons = metadata.get("horizons")
+                if horizons:
+                    horizon = horizons[len(horizons) // 2]
+                else:
+                    # Default to middle horizon based on interval
+                    horizon = 12 if interval == '1h' else 7
+
+            # Get default configs for this horizon
+            from strategies.strategy_utils import get_default_ensemble_configs
+            configs = get_default_ensemble_configs(horizon)
+
+            # Convert configs to model_info format
+            model_configs = [
+                {
+                    "lookback": cfg["lookback"],
+                    "focus": cfg["focus"],
+                    "forecast_horizon": horizon
+                }
+                for cfg in configs
+            ]
+            print(f"🔧 ENSEMBLE EXPORT: Reconstructed {len(model_configs)} model configs for horizon={horizon}, interval={interval}")
+            print(f"🔧 ENSEMBLE EXPORT: Model configs: {model_configs}")
+        else:
+            print(f"🔧 ENSEMBLE EXPORT: Using {len(model_configs)} model configs from consensus")
+
+        # Export all models from the consensus
+        exported_models = []
+        failed_models = []
+
+        # Build ensemble metadata for model cards
+        all_members = [
+            {
+                "focus": cfg["focus"],
+                "lookback": cfg["lookback"],
+                "path": f"../{cfg['focus']}_lookback{cfg['lookback']}"
+            }
+            for cfg in model_configs
+        ]
+
+        print(f"🔧 ENSEMBLE EXPORT: Starting export for {symbol} ({interval}) to {repo_id}")
+
+        for member_index, model_info in enumerate(model_configs, 1):
+            try:
+                lookback = model_info["lookback"]
+                focus = model_info["focus"]
+                forecast_horizon = model_info["forecast_horizon"]
+
+                print(f"🔍 Checking cache for: {symbol}/{interval} lookback={lookback} focus={focus} horizon={forecast_horizon}")
+
+                # Check if model exists in cache
+                if not cache.exists(
+                    symbol,
+                    interval,
+                    lookback,
+                    focus,
+                    forecast_horizon
+                ):
+                    print(f"❌ Model not found in cache: {focus} (lookback={lookback})")
+                    failed_models.append({
+                        "lookback": lookback,
+                        "focus": focus,
+                        "error": "Model not found in cache"
+                    })
+                    continue
+
+                print(f"✅ Model found in cache: {focus} (lookback={lookback}), exporting...")
+
+                # Create subdirectory path for this model variant
+                subdir_name = f"{focus}_lookback{lookback}"
+
+                # Build ensemble info for this model
+                ensemble_info = {
+                    "total_members": len(model_configs),
+                    "member_index": member_index,
+                    "all_members": all_members
+                }
+
+                # Export to HuggingFace
+                url = cache.export_to_huggingface(
+                    symbol=symbol,
+                    interval=interval,
+                    lookback=lookback,
+                    focus=focus,
+                    forecast_horizon=forecast_horizon,
+                    repo_id=repo_id,
+                    token=token,
+                    private=private,
+                    commit_message=request.commit_message or f"Export ensemble model: {focus} (lookback={lookback})",
+                    path_in_repo=subdir_name,
+                    ensemble_info=ensemble_info
+                )
+
+                print(f"✅ Successfully exported {focus} to {url}")
+                exported_models.append({
+                    "lookback": lookback,
+                    "focus": focus,
+                    "url": url
+                })
+
+            except Exception as e:
+                print(f"❌ Error exporting {model_info.get('focus')}: {str(e)}")
+                failed_models.append({
+                    "lookback": model_info.get("lookback"),
+                    "focus": model_info.get("focus"),
+                    "error": str(e)
+                })
+
+        # Update last_export timestamp if we have a config
+        if hf_config and exported_models:
+            await db.update_hf_config_export_timestamp(hf_config["id"])
+
+        # Upload ensemble overview README to repository root
+        if exported_models:
+            print(f"📝 ENSEMBLE EXPORT: Creating overview README at repository root...")
+            try:
+                cache.export_ensemble_overview_to_huggingface(
+                    symbol=symbol,
+                    interval=interval,
+                    forecast_horizon=forecast_horizon,
+                    repo_id=repo_id,
+                    all_members=all_members,
+                    token=token,
+                    consensus_id=request.consensus_id
+                )
+                print(f"✅ ENSEMBLE EXPORT: Overview README uploaded successfully")
+            except Exception as e:
+                print(f"⚠️  ENSEMBLE EXPORT: Failed to upload overview README: {str(e)}")
+                # Don't fail the entire export if just the overview fails
+
+        print(f"📊 ENSEMBLE EXPORT: Complete - {len(exported_models)} succeeded, {len(failed_models)} failed out of {len(model_configs)} total")
+
+        return {
+            "message": f"Exported {len(exported_models)} of {len(model_configs)} models",
+            "exported": exported_models,
+            "failed": failed_models,
+            "repo_id": repo_id
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to export ensemble: {str(e)}")
 
 
 if __name__ == "__main__":

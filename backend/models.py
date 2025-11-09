@@ -979,3 +979,10 @@ class ModelImportRequest(BaseModel):
     focus: str
     forecast_horizon: int
     force: bool = False  # Force re-download even if cached
+
+
+class EnsembleExportRequest(BaseModel):
+    """Request to export all ensemble models from a consensus analysis"""
+    consensus_id: str
+    repo_id: Optional[str] = None  # Override config repo_id
+    commit_message: Optional[str] = None
