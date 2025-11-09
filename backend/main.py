@@ -4949,50 +4949,99 @@ async def export_ensemble_to_huggingface(
                        "Either provide repo_id in request or create a HuggingFace config first."
             )
 
+        # Get model_info - either from consensus metadata or from default ensemble configs
+        model_configs = consensus.get("model_info")
+
+        if not model_configs:
+            # Reconstruct from metadata or use defaults
+            # Get horizon from metadata if available
+            metadata = consensus.get("metadata", {})
+            horizon = metadata.get("horizon")
+
+            if not horizon:
+                # Try to infer from horizons in metadata or use middle default
+                horizons = metadata.get("horizons")
+                if horizons:
+                    horizon = horizons[len(horizons) // 2]
+                else:
+                    # Default to middle horizon based on interval
+                    horizon = 12 if interval == '1h' else 7
+
+            # Get default configs for this horizon
+            from strategies.strategy_utils import get_default_ensemble_configs
+            configs = get_default_ensemble_configs(horizon)
+
+            # Convert configs to model_info format
+            model_configs = [
+                {
+                    "lookback": cfg["lookback"],
+                    "focus": cfg["focus"],
+                    "forecast_horizon": horizon
+                }
+                for cfg in configs
+            ]
+            print(f"🔧 ENSEMBLE EXPORT: Reconstructed {len(model_configs)} model configs for horizon={horizon}, interval={interval}")
+            print(f"🔧 ENSEMBLE EXPORT: Model configs: {model_configs}")
+        else:
+            print(f"🔧 ENSEMBLE EXPORT: Using {len(model_configs)} model configs from consensus")
+
         # Export all models from the consensus
         exported_models = []
         failed_models = []
 
-        for model_info in consensus.get("model_info", []):
+        print(f"🔧 ENSEMBLE EXPORT: Starting export for {symbol} ({interval}) to {repo_id}")
+
+        for model_info in model_configs:
             try:
+                lookback = model_info["lookback"]
+                focus = model_info["focus"]
+                forecast_horizon = model_info["forecast_horizon"]
+
+                print(f"🔍 Checking cache for: {symbol}/{interval} lookback={lookback} focus={focus} horizon={forecast_horizon}")
+
                 # Check if model exists in cache
                 if not cache.exists(
                     symbol,
                     interval,
-                    model_info["lookback"],
-                    model_info["focus"],
-                    model_info["forecast_horizon"]
+                    lookback,
+                    focus,
+                    forecast_horizon
                 ):
+                    print(f"❌ Model not found in cache: {focus} (lookback={lookback})")
                     failed_models.append({
-                        "lookback": model_info["lookback"],
-                        "focus": model_info["focus"],
+                        "lookback": lookback,
+                        "focus": focus,
                         "error": "Model not found in cache"
                     })
                     continue
+
+                print(f"✅ Model found in cache: {focus} (lookback={lookback}), exporting...")
 
                 # Export to HuggingFace
                 url = cache.export_to_huggingface(
                     symbol=symbol,
                     interval=interval,
-                    lookback=model_info["lookback"],
-                    focus=model_info["focus"],
-                    forecast_horizon=model_info["forecast_horizon"],
+                    lookback=lookback,
+                    focus=focus,
+                    forecast_horizon=forecast_horizon,
                     repo_id=repo_id,
                     token=token,
                     private=private,
-                    commit_message=request.commit_message or f"Export ensemble model: {model_info['focus']} (lookback={model_info['lookback']})"
+                    commit_message=request.commit_message or f"Export ensemble model: {focus} (lookback={lookback})"
                 )
 
+                print(f"✅ Successfully exported {focus} to {url}")
                 exported_models.append({
-                    "lookback": model_info["lookback"],
-                    "focus": model_info["focus"],
+                    "lookback": lookback,
+                    "focus": focus,
                     "url": url
                 })
 
             except Exception as e:
+                print(f"❌ Error exporting {model_info.get('focus')}: {str(e)}")
                 failed_models.append({
-                    "lookback": model_info["lookback"],
-                    "focus": model_info["focus"],
+                    "lookback": model_info.get("lookback"),
+                    "focus": model_info.get("focus"),
                     "error": str(e)
                 })
 
@@ -5000,8 +5049,10 @@ async def export_ensemble_to_huggingface(
         if hf_config and exported_models:
             await db.update_hf_config_export_timestamp(hf_config["id"])
 
+        print(f"📊 ENSEMBLE EXPORT: Complete - {len(exported_models)} succeeded, {len(failed_models)} failed out of {len(model_configs)} total")
+
         return {
-            "message": f"Exported {len(exported_models)} of {len(consensus.get('model_info', []))} models",
+            "message": f"Exported {len(exported_models)} of {len(model_configs)} models",
             "exported": exported_models,
             "failed": failed_models,
             "repo_id": repo_id

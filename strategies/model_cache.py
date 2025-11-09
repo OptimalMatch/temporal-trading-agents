@@ -34,13 +34,16 @@ class ModelCache:
     - Support for incremental learning (fine-tuning)
     """
 
-    def __init__(self, cache_dir: str = "/tmp/model_cache"):
+    def __init__(self, cache_dir: str = None):
         """
         Initialize the model cache.
 
         Args:
-            cache_dir: Directory to store cached models
+            cache_dir: Directory to store cached models. If None, uses MODEL_CACHE_DIR env var or default.
         """
+        import os
+        if cache_dir is None:
+            cache_dir = os.environ.get('MODEL_CACHE_DIR', '/app/model_cache')
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 

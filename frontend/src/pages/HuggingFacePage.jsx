@@ -31,7 +31,7 @@ function HuggingFacePage() {
 
   const [exportFormData, setExportFormData] = useState({
     lookback: 45,
-    focus: 'momentum',
+    focus: 'gradient',
     forecast_horizon: 24,
     commit_message: ''
   });
@@ -39,7 +39,7 @@ function HuggingFacePage() {
   const [importFormData, setImportFormData] = useState({
     repo_id: '',
     lookback: 45,
-    focus: 'momentum',
+    focus: 'gradient',
     forecast_horizon: 24,
     force: false
   });
@@ -175,7 +175,7 @@ function HuggingFacePage() {
     setSelectedConfig(config);
     setExportFormData({
       lookback: 45,
-      focus: 'momentum',
+      focus: 'gradient',
       forecast_horizon: 24,
       commit_message: `Export ${config.symbol} model for ${config.interval} trading`
     });
@@ -615,16 +615,14 @@ function HuggingFacePage() {
                   className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-gray-100"
                   required
                 >
-                  <option value="momentum">Momentum</option>
-                  <option value="balanced">Balanced</option>
-                  <option value="mean_reversion">Mean Reversion</option>
-                  <option value="risk_adjusted">Risk Adjusted</option>
-                  <option value="swing">Swing</option>
-                  <option value="acceleration">Acceleration</option>
-                  <option value="volatility">Volatility</option>
-                  <option value="timeframe">Timeframe</option>
-                  <option value="confidence">Confidence</option>
                   <option value="gradient">Gradient</option>
+                  <option value="confidence">Confidence</option>
+                  <option value="timeframe">Timeframe</option>
+                  <option value="volatility">Volatility</option>
+                  <option value="mean_reversion">Mean Reversion</option>
+                  <option value="acceleration">Acceleration</option>
+                  <option value="swing">Swing</option>
+                  <option value="risk_adjusted">Risk Adjusted</option>
                 </select>
               </div>
 
@@ -721,16 +719,14 @@ function HuggingFacePage() {
                   className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-gray-100"
                   required
                 >
-                  <option value="momentum">Momentum</option>
-                  <option value="balanced">Balanced</option>
-                  <option value="mean_reversion">Mean Reversion</option>
-                  <option value="risk_adjusted">Risk Adjusted</option>
-                  <option value="swing">Swing</option>
-                  <option value="acceleration">Acceleration</option>
-                  <option value="volatility">Volatility</option>
-                  <option value="timeframe">Timeframe</option>
-                  <option value="confidence">Confidence</option>
                   <option value="gradient">Gradient</option>
+                  <option value="confidence">Confidence</option>
+                  <option value="timeframe">Timeframe</option>
+                  <option value="volatility">Volatility</option>
+                  <option value="mean_reversion">Mean Reversion</option>
+                  <option value="acceleration">Acceleration</option>
+                  <option value="swing">Swing</option>
+                  <option value="risk_adjusted">Risk Adjusted</option>
                 </select>
               </div>
 
@@ -806,8 +802,8 @@ function HuggingFacePage() {
                   {consensusAnalyses
                     .filter(c => c.symbol === selectedConfig?.symbol)
                     .map((consensus) => (
-                      <option key={consensus.consensus_id} value={consensus.consensus_id}>
-                        {consensus.symbol} - {new Date(consensus.timestamp).toLocaleDateString()} ({consensus.model_info?.length || 0} models)
+                      <option key={consensus.id} value={consensus.id}>
+                        {consensus.symbol} - {new Date(consensus.created_at).toLocaleDateString()} ({consensus.total_count || 0} models)
                       </option>
                     ))}
                 </select>
