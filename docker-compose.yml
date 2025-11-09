@@ -29,6 +29,7 @@ services:
       dockerfile: backend/Dockerfile
     container_name: temporal-trading-backend
     restart: unless-stopped
+    shm_size: '4gb'  # Increased shared memory for PyTorch DataLoader with multiple workers
     environment:
       - MONGODB_URL=mongodb://mongodb:27017
       - PYTHONUNBUFFERED=1
