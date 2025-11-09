@@ -157,13 +157,13 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
     val_dataset = TimeSeriesDataset(val_data, lookback, forecast_horizon)
 
     # Adaptive batch size based on interval and dataset size
-    # Daily data: fewer samples (~1774 for 5y) → smaller batch size (128)
-    # Hourly data: more samples (~43800 for 5y) → larger batch size (768)
-    # Very conservative to handle 4+ parallel processes during multi-strategy analysis
+    # Daily data: fewer samples (~1774 for 5y) → batch size (128)
+    # Hourly data: MASSIVE samples (2.6M+!) → very small batch size (256)
+    # Ultra-conservative to handle huge hourly datasets with 4+ parallel processes
     if interval == '1d':
-        batch_size = 128  # Very conservative for daily with 4+ parallel processes
+        batch_size = 128  # Daily intervals
     else:
-        batch_size = 768  # Conservative for hourly with parallel training
+        batch_size = 256  # Hourly intervals - reduced due to massive dataset size
 
     # Ensure batch size doesn't exceed dataset size
     max_batch_size = min(batch_size, len(train_dataset) // 2)  # At least 2 batches
