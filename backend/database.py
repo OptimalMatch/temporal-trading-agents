@@ -6,6 +6,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 import os
+import uuid
 from bson import ObjectId
 
 from backend.models import (
