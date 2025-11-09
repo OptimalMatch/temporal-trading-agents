@@ -71,6 +71,20 @@ class CustomJSONResponse(JSONResponse):
     def render(self, content: Any) -> bytes:
         import math
 
+        def clean_float_values(obj):
+            """Recursively clean NaN and Inf values from data structures"""
+            if isinstance(obj, float):
+                if math.isnan(obj) or math.isinf(obj):
+                    return None
+                return obj
+            elif isinstance(obj, dict):
+                return {k: clean_float_values(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [clean_float_values(item) for item in obj]
+            elif isinstance(obj, tuple):
+                return tuple(clean_float_values(item) for item in obj)
+            return obj
+
         def datetime_serializer(obj):
             if isinstance(obj, datetime):
                 # Ensure datetime is timezone-aware (default to UTC if naive)
@@ -78,14 +92,13 @@ class CustomJSONResponse(JSONResponse):
                     obj = obj.replace(tzinfo=timezone.utc)
                 # Serialize with timezone info (ISO 8601 with Z)
                 return obj.isoformat().replace('+00:00', 'Z')
-            # Handle NaN and Infinity values
-            if isinstance(obj, float):
-                if math.isnan(obj) or math.isinf(obj):
-                    return None
             raise TypeError(f"Type {type(obj)} not serializable")
 
+        # Clean NaN/Inf values before serialization
+        cleaned_content = clean_float_values(content)
+
         return json.dumps(
-            content,
+            cleaned_content,
             ensure_ascii=False,
             allow_nan=False,
             indent=None,
