@@ -197,6 +197,30 @@ class APIService {
   async cancelOptimization(optimizationId) {
     return this.request(`/optimize/${optimizationId}/cancel`, { method: 'POST' });
   }
+
+  // Generic HTTP methods for federation and other endpoints
+  async get(endpoint) {
+    return this.request(endpoint, { method: 'GET' });
+  }
+
+  async post(endpoint, data = null) {
+    const options = { method: 'POST' };
+    if (data) {
+      options.body = JSON.stringify(data);
+    }
+    return this.request(endpoint, options);
+  }
+
+  async patch(endpoint, data) {
+    return this.request(endpoint, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async delete(endpoint) {
+    return this.request(endpoint, { method: 'DELETE' });
+  }
 }
 
 export const api = new APIService();
