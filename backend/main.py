@@ -4603,7 +4603,7 @@ async def delete_experiment(experiment_id: str):
 @app.post("/api/v1/huggingface/configs", status_code=201)
 async def create_hf_config(
     config: HuggingFaceConfigCreate,
-    db: Database = Depends(get_db)
+    db: Database = Depends(get_database)
 ):
     """
     Create a new HuggingFace configuration for a symbol+interval.
@@ -4633,7 +4633,7 @@ async def create_hf_config(
 @app.get("/api/v1/huggingface/configs")
 async def get_all_hf_configs(
     enabled_only: bool = False,
-    db: Database = Depends(get_db)
+    db: Database = Depends(get_database)
 ):
     """
     Get all HuggingFace configurations.
@@ -4649,7 +4649,7 @@ async def get_all_hf_configs(
 @app.get("/api/v1/huggingface/configs/{config_id}")
 async def get_hf_config(
     config_id: str,
-    db: Database = Depends(get_db)
+    db: Database = Depends(get_database)
 ):
     """
     Get a specific HuggingFace configuration by ID.
@@ -4671,7 +4671,7 @@ async def get_hf_config(
 async def get_hf_config_by_symbol_interval(
     symbol: str,
     interval: str,
-    db: Database = Depends(get_db)
+    db: Database = Depends(get_database)
 ):
     """
     Get HuggingFace configuration for a specific symbol+interval.
@@ -4696,7 +4696,7 @@ async def get_hf_config_by_symbol_interval(
 async def update_hf_config(
     config_id: str,
     update: HuggingFaceConfigUpdate,
-    db: Database = Depends(get_db)
+    db: Database = Depends(get_database)
 ):
     """
     Update a HuggingFace configuration.
@@ -4731,7 +4731,7 @@ async def update_hf_config(
 @app.delete("/api/v1/huggingface/configs/{config_id}")
 async def delete_hf_config(
     config_id: str,
-    db: Database = Depends(get_db)
+    db: Database = Depends(get_database)
 ):
     """
     Delete a HuggingFace configuration.
@@ -4762,7 +4762,7 @@ async def delete_hf_config(
 @app.post("/api/v1/huggingface/export")
 async def export_model_to_huggingface(
     request: ModelExportRequest,
-    db: Database = Depends(get_db)
+    db: Database = Depends(get_database)
 ):
     """
     Export a trained model to HuggingFace Hub.
@@ -4835,7 +4835,7 @@ async def export_model_to_huggingface(
 @app.post("/api/v1/huggingface/import")
 async def import_model_from_huggingface(
     request: ModelImportRequest,
-    db: Database = Depends(get_db)
+    db: Database = Depends(get_database)
 ):
     """
     Import a pre-trained model from HuggingFace Hub.
