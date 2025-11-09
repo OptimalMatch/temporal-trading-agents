@@ -10,6 +10,7 @@ function DataSyncPage() {
   const [inventory, setInventory] = useState([]);
   const [newSymbol, setNewSymbol] = useState('');
   const [newPeriod, setNewPeriod] = useState('2y');
+  const [newInterval, setNewInterval] = useState('1d');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [availableTickers, setAvailableTickers] = useState([]);
@@ -44,10 +45,20 @@ function DataSyncPage() {
 
         if (jobsRes.ok) {
           const data = await jobsRes.json();
-          // Filter for active/pending/paused jobs
-          setActiveJobs(data.jobs.filter(j =>
-            ['running', 'pending', 'paused'].includes(j.status)
-          ));
+          // Filter for active/pending/paused jobs OR recently completed (within 2 minutes)
+          const now = new Date();
+          setActiveJobs(data.jobs.filter(j => {
+            if (['running', 'pending', 'paused'].includes(j.status)) {
+              return true;
+            }
+            // Show completed jobs from the last 2 minutes
+            if (j.status === 'completed' && j.completed_at) {
+              const completedAt = new Date(j.completed_at);
+              const ageMinutes = (now - completedAt) / (1000 * 60);
+              return ageMinutes <= 2;
+            }
+            return false;
+          }));
         }
 
         if (watchlistRes.ok) {
@@ -84,7 +95,7 @@ function DataSyncPage() {
         body: JSON.stringify({
           symbol: newSymbol.toUpperCase(),
           period: newPeriod,
-          interval: '1d',
+          interval: newInterval,
           auto_sync: true
         })
       });
@@ -113,9 +124,9 @@ function DataSyncPage() {
     }
   };
 
-  const handleStartSync = async (symbol, period = '2y') => {
+  const handleStartSync = async (symbol, period = '2y', interval = '1d') => {
     try {
-      const res = await fetch(`${API_BASE}/sync/jobs?symbol=${symbol}&period=${period}&interval=1d`, {
+      const res = await fetch(`${API_BASE}/sync/jobs?symbol=${symbol}&period=${period}&interval=${interval}`, {
         method: 'POST'
       });
 
@@ -309,6 +320,35 @@ function DataSyncPage() {
     }
   };
 
+  const formatDateOnly = (isoString) => {
+    // Format ISO date string (YYYY-MM-DD...) to MM/DD/YY without timezone conversion
+    const datePart = isoString.split('T')[0]; // Get YYYY-MM-DD
+    const [year, month, day] = datePart.split('-');
+    const shortYear = year.slice(-2); // Get last 2 digits of year
+    return `${month}/${day}/${shortYear}`;
+  };
+
+  const formatDateWithTime = (isoString) => {
+    // Format ISO date string to MM/DD/YY HH:mm TZ in local timezone
+    const date = new Date(isoString);
+    const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+    // Get date components in local time
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const year = String(date.getFullYear()).slice(-2);
+
+    // Get time in local timezone
+    const timeString = date.toLocaleTimeString(undefined, {
+      timeZone: localTimeZone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    });
+
+    return `${month}/${day}/${year} ${timeString} ${localTimeZone}`;
+  };
+
   const formatBytes = (bytes) => {
     if (bytes === 0) return '0 B';
     const k = 1024;
@@ -351,11 +391,11 @@ function DataSyncPage() {
       <div className="bg-gray-800 border border-gray-700 rounded-lg p-6">
         <h2 className="text-xl font-bold text-gray-100 mb-4 flex items-center">
           <Download className="w-5 h-5 mr-2 text-brand-500" />
-          Active Downloads
+          Active & Recent Downloads
         </h2>
 
         {activeJobs.length === 0 ? (
-          <p className="text-gray-400 text-center py-8">No active downloads</p>
+          <p className="text-gray-400 text-center py-8">No active or recent downloads</p>
         ) : (
           <div className="space-y-4">
             {activeJobs.map(job => (
@@ -368,10 +408,11 @@ function DataSyncPage() {
                     </span>
                     <span className={`px-2 py-1 rounded text-xs ${
                       job.status === 'running' ? 'bg-green-900/50 text-green-400' :
+                      job.status === 'completed' ? 'bg-blue-900/50 text-blue-400' :
                       job.status === 'paused' ? 'bg-yellow-900/50 text-yellow-400' :
                       'bg-gray-600 text-gray-300'
                     }`}>
-                      {job.status}
+                      {job.status === 'completed' ? '✓ completed' : job.status}
                     </span>
                   </div>
 
@@ -523,6 +564,16 @@ function DataSyncPage() {
               <option value="2y">2 years</option>
               <option value="5y">5 years</option>
             </select>
+            <select
+              value={newInterval}
+              onChange={(e) => setNewInterval(e.target.value)}
+              className="bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-gray-100 focus:outline-none focus:border-brand-500"
+              title="Data interval - Note: Intraday data (1h/1m) will be much larger"
+            >
+              <option value="1d">Daily (1d)</option>
+              <option value="1h">Hourly (1h)</option>
+              <option value="1m">Minute (1m)</option>
+            </select>
             <button
               type="submit"
               disabled={tickersLoading}
@@ -561,7 +612,7 @@ function DataSyncPage() {
                   )}
                 </div>
                 <button
-                  onClick={() => handleStartSync(item.symbol, item.period)}
+                  onClick={() => handleStartSync(item.symbol, item.period, item.interval)}
                   className="w-full bg-brand-600 hover:bg-brand-700 text-white px-4 py-2 rounded text-sm font-medium transition-colors flex items-center justify-center space-x-2"
                 >
                   <Download className="w-4 h-4" />
@@ -602,6 +653,7 @@ function DataSyncPage() {
                 <tr className="border-b border-gray-700">
                   <th className="text-left py-3 px-4 text-gray-400 font-medium">Symbol</th>
                   <th className="text-left py-3 px-4 text-gray-400 font-medium">Period</th>
+                  <th className="text-left py-3 px-4 text-gray-400 font-medium">Interval</th>
                   <th className="text-left py-3 px-4 text-gray-400 font-medium">Data Points</th>
                   <th className="text-left py-3 px-4 text-gray-400 font-medium">Date Range</th>
                   <th className="text-left py-3 px-4 text-gray-400 font-medium">Size</th>
@@ -617,13 +669,25 @@ function DataSyncPage() {
                   <tr key={idx} className="border-b border-gray-700/50 hover:bg-gray-700/30">
                     <td className="py-3 px-4 text-gray-100 font-medium">{item.symbol}</td>
                     <td className="py-3 px-4 text-gray-300">{item.period}</td>
+                    <td className="py-3 px-4">
+                      <span className={`px-2 py-1 rounded text-xs font-medium ${
+                        item.interval === '1m' ? 'bg-purple-900/30 text-purple-400 border border-purple-700' :
+                        item.interval === '1h' ? 'bg-blue-900/30 text-blue-400 border border-blue-700' :
+                        'bg-green-900/30 text-green-400 border border-green-700'
+                      }`}>
+                        {item.interval === '1m' ? 'Minute' : item.interval === '1h' ? 'Hourly' : 'Daily'}
+                      </span>
+                    </td>
                     <td className="py-3 px-4 text-gray-300">{item.total_days.toLocaleString()}</td>
                     <td className="py-3 px-4 text-gray-300 text-sm">
                       {item.date_range_start && item.date_range_end ? (
                         <div>
                           <div>
-                            {new Date(item.date_range_start).toLocaleDateString()} -
-                            {new Date(item.date_range_end).toLocaleDateString()}
+                            {formatDateOnly(item.date_range_start)} - {
+                              item.interval === '1h' || item.interval === '1m'
+                                ? formatDateWithTime(item.date_range_end)
+                                : formatDateOnly(item.date_range_end)
+                            }
                           </div>
                           {(() => {
                             const endDate = new Date(item.date_range_end);

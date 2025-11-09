@@ -6,7 +6,7 @@ import os
 import gzip
 import io
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Callable
 import boto3
 from botocore.config import Config
@@ -135,6 +135,12 @@ class MassiveS3DataSource:
                         filename = key.split('/')[-1]
                         date_str = filename.replace('.csv.gz', '')
                         file_date = datetime.strptime(date_str, '%Y-%m-%d')
+
+                        # Normalize timezone handling for comparison
+                        # If start_date/end_date are timezone-aware, make file_date timezone-aware too
+                        # If they're naive, keep file_date naive for consistent comparison
+                        if start_date.tzinfo is not None:
+                            file_date = file_date.replace(tzinfo=timezone.utc)
 
                         if start_date <= file_date <= end_date:
                             files.append((key, size))

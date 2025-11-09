@@ -106,16 +106,17 @@ def add_technical_indicators(df, focus='balanced'):
     return df, feature_columns
 
 
-def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, focus, model_name):
+def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, focus, model_name, interval='1d'):
     """Train a single model for the ensemble."""
+    interval_label = "hours" if interval == '1h' else "days"
     print(f"\n{'='*70}")
     print(f"Training {model_name}")
-    print(f"  Lookback: {lookback} days | Focus: {focus}")
+    print(f"  Lookback: {lookback} {interval_label} | Focus: {focus}")
     print(f"{'='*70}")
 
     # Fetch data
-    df = fetch_crypto_data(symbol, period=period, interval='1d')
-    print(f"✓ Fetched {len(df)} days of data")
+    df = fetch_crypto_data(symbol, period=period, interval=interval)
+    print(f"✓ Fetched {len(df)} data points ({interval} interval)")
 
     # Add indicators
     df, feature_columns = add_technical_indicators(df, focus=focus)
@@ -133,8 +134,23 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
     train_dataset = TimeSeriesDataset(train_data, lookback, forecast_horizon)
     val_dataset = TimeSeriesDataset(val_data, lookback, forecast_horizon)
 
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
+    # Optimized DataLoader settings for faster training
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=512,  # Increased to 512 to maximize GPU utilization (RTX 4080 has 16GB VRAM)
+        shuffle=True,
+        num_workers=4,  # Parallel data loading
+        pin_memory=True,  # Faster GPU transfer
+        persistent_workers=True  # Keep workers alive between epochs
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=512,  # Match training batch size
+        shuffle=False,
+        num_workers=4,
+        pin_memory=True,
+        persistent_workers=True
+    )
 
     # Create model
     model = Temporal(
@@ -155,14 +171,15 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
         optimizer=optimizer,
         criterion=torch.nn.MSELoss(),
         device="cuda" if torch.cuda.is_available() else "cpu",
-        grad_clip=1.0
+        grad_clip=1.0,
+        use_amp=True  # Enable mixed precision training for 1.5-2x speedup
     )
 
     history = trainer.fit(
         train_loader=train_loader,
         val_loader=val_loader,
         num_epochs=epochs,
-        early_stopping_patience=8,
+        early_stopping_patience=5,  # Reduced from 8 for faster convergence
         save_path=None  # Don't save individual models
     )
 
@@ -180,7 +197,7 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
     }
 
 
-def make_ensemble_predictions(ensemble_models, symbol, forecast_horizon=7):
+def make_ensemble_predictions(ensemble_models, symbol, forecast_horizon=7, interval='1d'):
     """Make predictions using all models in the ensemble."""
     print(f"\n{'='*70}")
     print("GENERATING ENSEMBLE PREDICTIONS")
@@ -195,7 +212,7 @@ def make_ensemble_predictions(ensemble_models, symbol, forecast_horizon=7):
 
     for model_info in ensemble_models:
         # Fetch latest data - use period to match training data and enable saving full history
-        df_latest = fetch_crypto_data(symbol, period=period)
+        df_latest = fetch_crypto_data(symbol, period=period, interval=interval)
         df_latest, _ = add_technical_indicators(df_latest, focus=model_info['focus'])
 
         # Prepare features
@@ -388,13 +405,13 @@ def main():
     symbol = 'BTC-USD'
     forecast_horizon = 7
 
-    # Define ensemble models
+    # Define ensemble models (optimized epochs for faster training)
     ensemble_configs = [
-        {'lookback': 30, 'focus': 'momentum', 'epochs': 20, 'name': 'Short-term Momentum'},
-        {'lookback': 60, 'focus': 'balanced', 'epochs': 25, 'name': 'Medium-term Balanced'},
-        {'lookback': 90, 'focus': 'balanced', 'epochs': 25, 'name': 'Long-term Trend'},
-        {'lookback': 60, 'focus': 'mean_reversion', 'epochs': 20, 'name': 'Mean Reversion'},
-        {'lookback': 45, 'focus': 'momentum', 'epochs': 20, 'name': 'Mid-term Momentum'},
+        {'lookback': 30, 'focus': 'momentum', 'epochs': 15, 'name': 'Short-term Momentum'},
+        {'lookback': 60, 'focus': 'balanced', 'epochs': 15, 'name': 'Medium-term Balanced'},
+        {'lookback': 90, 'focus': 'balanced', 'epochs': 15, 'name': 'Long-term Trend'},
+        {'lookback': 60, 'focus': 'mean_reversion', 'epochs': 15, 'name': 'Mean Reversion'},
+        {'lookback': 45, 'focus': 'momentum', 'epochs': 15, 'name': 'Mid-term Momentum'},
     ]
 
     # Train ensemble

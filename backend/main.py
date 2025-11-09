@@ -63,6 +63,8 @@ from strategies.risk_adjusted_strategy import analyze_risk_adjusted_strategy
 # Custom JSON encoder for datetime serialization with timezone
 class CustomJSONResponse(JSONResponse):
     def render(self, content: Any) -> bytes:
+        import math
+
         def datetime_serializer(obj):
             if isinstance(obj, datetime):
                 # Ensure datetime is timezone-aware (default to UTC if naive)
@@ -70,6 +72,10 @@ class CustomJSONResponse(JSONResponse):
                     obj = obj.replace(tzinfo=timezone.utc)
                 # Serialize with timezone info (ISO 8601 with Z)
                 return obj.isoformat().replace('+00:00', 'Z')
+            # Handle NaN and Infinity values
+            if isinstance(obj, float):
+                if math.isnan(obj) or math.isinf(obj):
+                    return None
             raise TypeError(f"Type {type(obj)} not serializable")
 
         return json.dumps(
@@ -280,16 +286,16 @@ async def ensure_dataset_available(symbol: str, database: Database, interval: st
     return False
 
 # Wrapper functions for ProcessPoolExecutor (must be picklable)
-def _train_ensemble_worker(symbol: str, horizon: int, name: str, ensemble_path: str = "examples/crypto_ensemble_forecast.py"):
+def _train_ensemble_worker(symbol: str, horizon: int, name: str, interval: str = '1d', ensemble_path: str = "examples/crypto_ensemble_forecast.py"):
     """Worker function for training ensemble in separate process"""
     ensemble = load_ensemble_module(ensemble_path)
     configs = get_default_ensemble_configs(horizon)
-    return train_ensemble(symbol, horizon, configs, name, ensemble)
+    return train_ensemble(symbol, horizon, configs, name, ensemble, interval=interval)
 
-def _train_multiple_timeframes_worker(symbol: str, horizons: list, ensemble_path: str = "examples/crypto_ensemble_forecast.py"):
+def _train_multiple_timeframes_worker(symbol: str, horizons: list, interval: str = '1d', ensemble_path: str = "examples/crypto_ensemble_forecast.py"):
     """Worker function for training multiple timeframes in separate process"""
     ensemble = load_ensemble_module(ensemble_path)
-    return train_multiple_timeframes(symbol, ensemble, horizons)
+    return train_multiple_timeframes(symbol, ensemble, horizons, interval=interval)
 
 async def save_historical_prices(symbol: str, df, db: Database, source: str = "polygon") -> bool:
     """Save historical price data from DataFrame to database"""
@@ -614,15 +620,30 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
 
         logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Dataset confirmed available")
 
-        # Log: Training models
-        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Training ensemble models for consensus analysis")
+        # Auto-adjust horizons based on interval if not provided
+        if request.horizons is None:
+            if request.interval == '1h':
+                # For hourly data: 6h, 12h, 24h, 72h (3 days)
+                request.horizons = [6, 12, 24, 72]
+                logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Auto-adjusted horizons for hourly interval: {request.horizons}")
+            else:
+                # For daily data: 3d, 7d, 14d, 21d (default)
+                request.horizons = [3, 7, 14, 21]
+                logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Using default horizons for daily interval: {request.horizons}")
 
-        # Train 14-day ensemble - run in process pool to avoid blocking event loop
+        # Use middle horizon for initial ensemble training
+        middle_horizon = request.horizons[len(request.horizons) // 2]
+        interval_label = "HOUR" if request.interval == '1h' else "DAY"
+
+        # Log: Training models
+        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Training ensemble models for consensus analysis (interval: {request.interval}, horizon: {middle_horizon})")
+
+        # Train middle horizon ensemble - run in process pool to avoid blocking event loop
         loop = asyncio.get_event_loop()
         stats, df = await loop.run_in_executor(
             executor,
             _train_ensemble_worker,
-            request.symbol, 14, "14-DAY"
+            request.symbol, middle_horizon, f"{middle_horizon}-{interval_label}", request.interval
         )
         current_price = df['Close'].iloc[-1]
         logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Model training completed. Current price: ${current_price:.2f}")
@@ -690,7 +711,7 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
             timeframe_data = await loop.run_in_executor(
                 executor,
                 _train_multiple_timeframes_worker,
-                request.symbol, request.horizons
+                request.symbol, request.horizons, request.interval
             )
             result = analyze_multi_timeframe_strategy(timeframe_data, current_price)
             analysis = convert_strategy_result_to_model('timeframe', result, request.symbol, current_price, 0)
@@ -879,6 +900,7 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
         await database.db.consensus_results.update_one(
             {"id": consensus_id},
             {"$set": {
+                "interval": request.interval,
                 "current_price": current_price,
                 "consensus": consensus,
                 "strength": strength,
@@ -1057,6 +1079,7 @@ async def analyze_consensus(
         pending_consensus = ConsensusResult(
             id=consensus_id,
             symbol=request.symbol,
+            interval=request.interval,
             current_price=0.0,  # Will be updated when analysis runs
             consensus="PENDING",
             strength="PENDING",
@@ -1866,9 +1889,21 @@ async def extend_data_range(
     s3_source = get_massive_s3_source()
     new_start, new_end = s3_source._convert_period_to_dates(new_period)
 
+    # Ensure new_start and new_end are timezone-aware (UTC)
+    if new_start.tzinfo is None:
+        new_start = new_start.replace(tzinfo=timezone.utc)
+    if new_end.tzinfo is None:
+        new_end = new_end.replace(tzinfo=timezone.utc)
+
     # Get existing date range
     existing_start = existing_inventory.date_range_start
     existing_end = existing_inventory.date_range_end
+
+    # Ensure existing dates are timezone-aware
+    if existing_start and existing_start.tzinfo is None:
+        existing_start = existing_start.replace(tzinfo=timezone.utc)
+    if existing_end and existing_end.tzinfo is None:
+        existing_end = existing_end.replace(tzinfo=timezone.utc)
 
     if not existing_start or not existing_end:
         raise HTTPException(
@@ -1977,9 +2012,21 @@ async def schedule_delta_sync_with_analysis(
     s3_source = get_massive_s3_source()
     new_start, new_end = s3_source._convert_period_to_dates(new_period)
 
+    # Ensure new_start and new_end are timezone-aware (UTC)
+    if new_start.tzinfo is None:
+        new_start = new_start.replace(tzinfo=timezone.utc)
+    if new_end.tzinfo is None:
+        new_end = new_end.replace(tzinfo=timezone.utc)
+
     # Get existing date range
     existing_start = existing_inventory.date_range_start
     existing_end = existing_inventory.date_range_end
+
+    # Ensure existing dates are timezone-aware
+    if existing_start and existing_start.tzinfo is None:
+        existing_start = existing_start.replace(tzinfo=timezone.utc)
+    if existing_end and existing_end.tzinfo is None:
+        existing_end = existing_end.replace(tzinfo=timezone.utc)
 
     if not existing_start or not existing_end:
         raise HTTPException(
@@ -3095,9 +3142,34 @@ async def get_paper_trading_signal(symbol: str, config: PaperTradingConfig) -> O
         print(f"✅ SIGNAL CHECK: Current price for {symbol}: ${current_price:.2f}")
 
         # 2. Get latest forecast from database (generated from historical data)
-        # Look for recent consensus analysis or forecast
+        # Prefer hourly analysis when available for fresher signals
         print(f"📊 SIGNAL CHECK: Looking for recent forecast for {symbol}...")
-        latest_analysis = await db.get_latest_consensus(symbol=symbol)
+
+        # Try hourly analysis first
+        hourly_analysis = await db.get_latest_consensus(symbol=symbol, interval='1h')
+
+        # Check if hourly analysis is fresh (< 2 hours old)
+        use_hourly = False
+        if hourly_analysis:
+            analyzed_at_hourly = hourly_analysis.get('analyzed_at') or hourly_analysis.get('created_at')
+            if analyzed_at_hourly:
+                if isinstance(analyzed_at_hourly, str):
+                    analyzed_at_hourly = datetime.fromisoformat(analyzed_at_hourly.replace('Z', '+00:00'))
+                elif hasattr(analyzed_at_hourly, 'replace') and not analyzed_at_hourly.tzinfo:
+                    analyzed_at_hourly = analyzed_at_hourly.replace(tzinfo=timezone.utc)
+                hourly_age = datetime.now(timezone.utc) - analyzed_at_hourly
+                hourly_age_hours = hourly_age.total_seconds() / 3600
+                if hourly_age_hours < 2:  # Use hourly if less than 2 hours old
+                    use_hourly = True
+                    print(f"✅ SIGNAL CHECK: Using hourly analysis ({hourly_age_hours:.1f}h old)")
+
+        # Use hourly if fresh, otherwise fall back to daily
+        if use_hourly:
+            latest_analysis = hourly_analysis
+        else:
+            latest_analysis = await db.get_latest_consensus(symbol=symbol, interval='1d')
+            if latest_analysis:
+                print(f"✅ SIGNAL CHECK: Using daily analysis (no fresh hourly available)")
 
         if not latest_analysis:
             diagnostic_info['rejection_reason'] = "No forecast found in database (need to run consensus analysis)"

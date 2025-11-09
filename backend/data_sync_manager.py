@@ -164,6 +164,8 @@ class DataSyncManager:
             sync_db: Synchronous MongoDB database for progress updates
         """
         from strategies.massive_s3_data_source import get_massive_s3_source
+        from strategies.polygon_data_source import fetch_crypto_data_polygon
+        import pandas as pd
 
         # Get job from database using sync client (Motor won't work in background threads)
         job_doc = sync_db.data_sync_jobs.find_one({"job_id": job_id})
@@ -171,6 +173,111 @@ class DataSyncManager:
             return
 
         job = DataSyncJob(**job_doc)
+
+        def fetch_hybrid_data(symbol: str, period: str, interval: str, progress_callback=None):
+            """
+            Hybrid data fetching: S3 for historical bulk + REST API for recent data gap.
+            """
+            print(f"🔄 HYBRID MODE: Fetching {symbol} ({period}, {interval})")
+
+            # Step 1: Fetch bulk historical data from S3
+            print(f"📦 Fetching historical data from S3...")
+            s3_data = s3_source.fetch_data(symbol, period, interval, progress_callback)
+
+            if s3_data is None or s3_data.empty:
+                print(f"⚠️  No S3 data found, trying REST API only...")
+                return fetch_crypto_data_polygon(symbol, period, interval)
+
+            # Step 2: Check for gap between latest S3 data and today
+            latest_s3_date = s3_data.index.max()
+            # Ensure latest_s3_date is timezone-aware (S3 data might be naive)
+            if latest_s3_date.tzinfo is None:
+                latest_s3_date = latest_s3_date.tz_localize('UTC')
+
+            today = pd.Timestamp.now(tz='UTC').floor('D')  # Floor to midnight UTC
+            gap_days = (today - latest_s3_date).days
+
+            print(f"📊 Latest S3 data: {latest_s3_date.strftime('%Y-%m-%d')}")
+            print(f"📅 Today: {today.strftime('%Y-%m-%d')}")
+            print(f"⏳ Gap: {gap_days} days")
+
+            # Step 3: If gap > 1 day, fetch recent data from REST API
+            if gap_days > 1:
+                try:
+                    print(f"📡 Fetching recent {gap_days} days from REST API...")
+
+                    # Fetch from day after latest_s3_date to today
+                    gap_start = latest_s3_date + pd.Timedelta(days=1)
+                    rest_data = fetch_crypto_data_polygon(symbol, interval=interval, start_date=gap_start, end_date=today)
+
+                    if rest_data is not None and not rest_data.empty:
+                        # Merge S3 + REST API data
+                        print(f"🔀 Merging S3 data ({len(s3_data)} rows) + REST API data ({len(rest_data)} rows)")
+
+                        # Combine and remove duplicates (keep REST API data for overlaps)
+                        combined = pd.concat([s3_data, rest_data])
+                        combined = combined[~combined.index.duplicated(keep='last')]
+                        combined = combined.sort_index()
+
+                        print(f"✅ Hybrid dataset: {len(combined)} total rows ({s3_data.index.min().strftime('%Y-%m-%d')} to {combined.index.max().strftime('%Y-%m-%d')})")
+                        return combined
+                    else:
+                        print(f"⚠️  REST API returned no data, using S3 data only")
+                        return s3_data
+
+                except Exception as e:
+                    print(f"⚠️  REST API fetch failed: {e}, using S3 data only")
+                    return s3_data
+            else:
+                print(f"✅ S3 data is up-to-date (gap <= 1 day)")
+                return s3_data
+
+        def fetch_hybrid_data_range(symbol: str, start_date, end_date, interval: str, progress_callback=None):
+            """
+            Hybrid data fetching for specific date range: S3 + REST API if needed.
+            """
+            print(f"🔄 HYBRID RANGE: Fetching {symbol} ({start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}, {interval})")
+
+            # Fetch from S3 for the range
+            s3_data = s3_source.fetch_data_range(symbol, start_date, end_date, interval, progress_callback)
+
+            if s3_data is None or s3_data.empty:
+                # No S3 data, try REST API for entire range with explicit dates
+                print(f"⚠️  No S3 data for range, trying REST API...")
+                return fetch_crypto_data_polygon(symbol, interval=interval, start_date=start_date, end_date=end_date)
+
+            # Check if S3 data covers the full range
+            latest_s3_date = s3_data.index.max()
+            # Ensure latest_s3_date is timezone-aware (S3 data might be naive)
+            if latest_s3_date.tzinfo is None:
+                latest_s3_date = latest_s3_date.tz_localize('UTC')
+
+            # Convert end_date to pandas Timestamp (it's already timezone-aware)
+            end_date_ts = pd.Timestamp(end_date) if not isinstance(end_date, pd.Timestamp) else end_date
+            # Ensure end_date_ts is timezone-aware too
+            if end_date_ts.tzinfo is None:
+                end_date_ts = end_date_ts.tz_localize('UTC')
+
+            if latest_s3_date < end_date_ts:
+                # Gap exists, fill with REST API
+                gap_days = (end_date_ts - latest_s3_date).days
+                if gap_days > 1:
+                    try:
+                        print(f"📡 Filling {gap_days} day gap with REST API...")
+                        # Fetch from day after latest_s3_date to end_date
+                        gap_start = latest_s3_date + pd.Timedelta(days=1)
+                        rest_data = fetch_crypto_data_polygon(symbol, interval=interval, start_date=gap_start, end_date=end_date_ts)
+
+                        if rest_data is not None and not rest_data.empty:
+                            combined = pd.concat([s3_data, rest_data])
+                            combined = combined[~combined.index.duplicated(keep='last')]
+                            combined = combined.sort_index()
+                            print(f"✅ Hybrid range dataset: {len(combined)} rows")
+                            return combined
+                    except Exception as e:
+                        print(f"⚠️  REST API fetch failed: {e}, using S3 data only")
+
+            return s3_data
 
         try:
             # Get S3 data source
@@ -256,7 +363,7 @@ class DataSyncManager:
 
                         delta_data = await loop.run_in_executor(
                             executor,
-                            lambda s=start_date, e=end_date: s3_source.fetch_data_range(
+                            lambda s=start_date, e=end_date: fetch_hybrid_data_range(
                                 job.symbol, s, e, job.interval, aggregated_progress_callback
                             )
                         )
@@ -275,11 +382,11 @@ class DataSyncManager:
                 else:
                     data = None
             else:
-                # Normal job: fetch entire period
+                # Normal job: fetch entire period using hybrid mode (S3 + REST API)
                 with ThreadPoolExecutor(max_workers=1) as executor:
                     data = await loop.run_in_executor(
                         executor,
-                        lambda: s3_source.fetch_data(job.symbol, job.period, job.interval, sync_progress_callback)
+                        lambda: fetch_hybrid_data(job.symbol, job.period, job.interval, sync_progress_callback)
                     )
 
             # Save to cache (merge if delta job, replace if normal job)
@@ -287,6 +394,9 @@ class DataSyncManager:
                 if is_delta:
                     print(f"🔀 Merging delta data with existing cache for {job.symbol}")
                     self.cache.merge_and_set(data, job.symbol, job.period, job.interval)
+                    # Reload the full merged dataset from cache for inventory update
+                    data = self.cache.get(job.symbol, job.period, job.interval)
+                    print(f"📊 Reloaded merged dataset: {len(data) if data is not None else 0} rows")
                 else:
                     self.cache.set(data, job.symbol, job.period, job.interval)
 
@@ -358,7 +468,20 @@ class DataSyncManager:
 
     def _update_inventory_sync(self, sync_db, symbol: str, period: str, interval: str, data, old_period: str = None):
         """Update data inventory after successful download (synchronous version for background threads)"""
-        if data is None or data.empty:
+        # If no new data but this is a delta job, try to use existing cache data
+        if (data is None or data.empty) and old_period:
+            print(f"ℹ️  No new data found for delta sync, checking existing cache...")
+            # Try to load existing cache data using the OLD period
+            existing_data = self.cache.get(symbol, old_period, interval)
+            if existing_data is not None and not existing_data.empty:
+                print(f"✓ Found existing cache with {len(existing_data)} rows, updating inventory with new period")
+                # Update the cache with the new period
+                self.cache.set(existing_data, symbol, period, interval)
+                data = existing_data
+            else:
+                print(f"⚠️  No existing cache data found, skipping inventory update")
+                return
+        elif data is None or data.empty:
             return
 
         inventory = DataInventory(
