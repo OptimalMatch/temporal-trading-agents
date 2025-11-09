@@ -220,9 +220,9 @@ async def ensure_dataset_available(symbol: str, database: Database, interval: st
     """
     from strategies.data_cache import get_cache
 
-    # Determine required period based on asset type
+    # Use 5 years of historical data for all assets (crypto and stocks)
     is_crypto = '-USD' in symbol or '-EUR' in symbol or '-GBP' in symbol
-    required_period = '2y' if is_crypto else '5y'
+    required_period = '5y'
 
     print(f"📊 Checking dataset availability for {symbol} (required period: {required_period})")
 
@@ -3099,7 +3099,7 @@ def run_backtest_in_thread(run_id: str, config_dict: dict):
 
         # Load historical price data from cache
         is_crypto = '-' in config.symbol
-        period = '2y' if is_crypto else '5y'
+        period = '5y'  # Use 5y for all assets
 
         # Check inventory for 5y data availability
         inventory = sync_db.data_inventory.find_one({
@@ -3222,7 +3222,7 @@ def run_optimization_in_thread(optimization_id: str, request_dict: dict, databas
         # Load historical price data from cache
         config = request.base_config
         is_crypto = '-' in config.symbol
-        period = '2y' if is_crypto else '5y'
+        period = '5y'  # Use 5y for all assets
 
         # Check inventory for 5y data availability
         inventory = sync_db.data_inventory.find_one({
@@ -3332,7 +3332,7 @@ async def run_backtest_background(run_id: str, config: BacktestConfig):
         # Load historical price data from cache (where data sync stores it)
         # Determine period based on asset type
         is_crypto = '-' in config.symbol
-        period = '2y' if is_crypto else '5y'
+        period = '5y'  # Use 5y for all assets
 
         # Check inventory to see if we have 5y data available
         inventory = await db.db.data_inventory.find_one({
