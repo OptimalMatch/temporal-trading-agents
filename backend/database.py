@@ -961,3 +961,132 @@ class Database:
         except Exception as e:
             print(f"Error getting remote forecasts: {e}")
             return []
+
+    # ==================== HuggingFace Configuration Methods ====================
+
+    async def create_hf_config(self, config) -> str:
+        """Create a HuggingFace configuration"""
+        try:
+            config_dict = config.dict()
+            # Create unique index on symbol+interval
+            await self.db.hf_configs.create_index(
+                [("symbol", 1), ("interval", 1)],
+                unique=True
+            )
+            await self.db.hf_configs.insert_one(config_dict)
+            return config.id
+        except Exception as e:
+            print(f"Error creating HF config: {e}")
+            raise
+
+    async def get_hf_config(self, config_id: str) -> Optional[Dict]:
+        """Get a HuggingFace configuration by ID"""
+        try:
+            config = await self.db.hf_configs.find_one({"id": config_id}, {"_id": 0})
+            return config
+        except Exception as e:
+            print(f"Error getting HF config: {e}")
+            return None
+
+    async def get_hf_config_by_symbol_interval(
+        self,
+        symbol: str,
+        interval: str
+    ) -> Optional[Dict]:
+        """Get a HuggingFace configuration by symbol and interval"""
+        try:
+            config = await self.db.hf_configs.find_one(
+                {"symbol": symbol, "interval": interval},
+                {"_id": 0}
+            )
+            return config
+        except Exception as e:
+            print(f"Error getting HF config by symbol/interval: {e}")
+            return None
+
+    async def get_all_hf_configs(
+        self,
+        enabled_only: bool = False
+    ) -> List[Dict]:
+        """Get all HuggingFace configurations"""
+        try:
+            query = {}
+            if enabled_only:
+                query["enabled"] = True
+
+            cursor = self.db.hf_configs.find(query, {"_id": 0}).sort("created_at", -1)
+            configs = await cursor.to_list(length=None)
+            return configs
+        except Exception as e:
+            print(f"Error getting HF configs: {e}")
+            return []
+
+    async def update_hf_config(
+        self,
+        config_id: str,
+        update_data: Dict
+    ) -> bool:
+        """Update a HuggingFace configuration"""
+        try:
+            from datetime import datetime, timezone
+            update_data["updated_at"] = datetime.now(timezone.utc)
+
+            result = await self.db.hf_configs.update_one(
+                {"id": config_id},
+                {"$set": update_data}
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            print(f"Error updating HF config: {e}")
+            return False
+
+    async def delete_hf_config(self, config_id: str) -> bool:
+        """Delete a HuggingFace configuration"""
+        try:
+            result = await self.db.hf_configs.delete_one({"id": config_id})
+            return result.deleted_count > 0
+        except Exception as e:
+            print(f"Error deleting HF config: {e}")
+            return False
+
+    async def update_hf_config_export_timestamp(
+        self,
+        config_id: str
+    ) -> bool:
+        """Update the last_export timestamp for a config"""
+        try:
+            from datetime import datetime, timezone
+            result = await self.db.hf_configs.update_one(
+                {"id": config_id},
+                {
+                    "$set": {
+                        "last_export": datetime.now(timezone.utc),
+                        "updated_at": datetime.now(timezone.utc)
+                    }
+                }
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            print(f"Error updating HF config export timestamp: {e}")
+            return False
+
+    async def update_hf_config_import_timestamp(
+        self,
+        config_id: str
+    ) -> bool:
+        """Update the last_import timestamp for a config"""
+        try:
+            from datetime import datetime, timezone
+            result = await self.db.hf_configs.update_one(
+                {"id": config_id},
+                {
+                    "$set": {
+                        "last_import": datetime.now(timezone.utc),
+                        "updated_at": datetime.now(timezone.utc)
+                    }
+                }
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            print(f"Error updating HF config import timestamp: {e}")
+            return False

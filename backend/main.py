@@ -4596,6 +4596,305 @@ async def delete_experiment(experiment_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to delete experiment: {str(e)}")
 
 
+# ============================================================================
+# HuggingFace Configuration Management
+# ============================================================================
+
+@app.post("/api/v1/huggingface/configs", status_code=201)
+async def create_hf_config(
+    config: HuggingFaceConfigCreate,
+    db: Database = Depends(get_db)
+):
+    """
+    Create a new HuggingFace configuration for a symbol+interval.
+    """
+    try:
+        # Check if config already exists for this symbol+interval
+        existing = await db.get_hf_config_by_symbol_interval(config.symbol, config.interval)
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail=f"HuggingFace config already exists for {config.symbol} ({config.interval})"
+            )
+
+        # Create the config
+        config_id = await db.create_hf_config(config.model_dump())
+
+        # Retrieve and return the created config
+        created_config = await db.get_hf_config(config_id)
+        return created_config
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create HuggingFace config: {str(e)}")
+
+
+@app.get("/api/v1/huggingface/configs")
+async def get_all_hf_configs(
+    enabled_only: bool = False,
+    db: Database = Depends(get_db)
+):
+    """
+    Get all HuggingFace configurations.
+    """
+    try:
+        configs = await db.get_all_hf_configs(enabled_only=enabled_only)
+        return {"configs": configs}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve HuggingFace configs: {str(e)}")
+
+
+@app.get("/api/v1/huggingface/configs/{config_id}")
+async def get_hf_config(
+    config_id: str,
+    db: Database = Depends(get_db)
+):
+    """
+    Get a specific HuggingFace configuration by ID.
+    """
+    try:
+        config = await db.get_hf_config(config_id)
+        if not config:
+            raise HTTPException(status_code=404, detail=f"HuggingFace config {config_id} not found")
+
+        return config
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve HuggingFace config: {str(e)}")
+
+
+@app.get("/api/v1/huggingface/configs/by-symbol/{symbol}/{interval}")
+async def get_hf_config_by_symbol_interval(
+    symbol: str,
+    interval: str,
+    db: Database = Depends(get_db)
+):
+    """
+    Get HuggingFace configuration for a specific symbol+interval.
+    """
+    try:
+        config = await db.get_hf_config_by_symbol_interval(symbol, interval)
+        if not config:
+            raise HTTPException(
+                status_code=404,
+                detail=f"HuggingFace config not found for {symbol} ({interval})"
+            )
+
+        return config
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve HuggingFace config: {str(e)}")
+
+
+@app.patch("/api/v1/huggingface/configs/{config_id}")
+async def update_hf_config(
+    config_id: str,
+    update: HuggingFaceConfigUpdate,
+    db: Database = Depends(get_db)
+):
+    """
+    Update a HuggingFace configuration.
+    """
+    try:
+        # Check if config exists
+        existing = await db.get_hf_config(config_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail=f"HuggingFace config {config_id} not found")
+
+        # Update only provided fields
+        update_data = {k: v for k, v in update.model_dump().items() if v is not None}
+
+        if not update_data:
+            raise HTTPException(status_code=400, detail="No fields to update")
+
+        success = await db.update_hf_config(config_id, update_data)
+
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to update HuggingFace config")
+
+        # Return updated config
+        updated_config = await db.get_hf_config(config_id)
+        return updated_config
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update HuggingFace config: {str(e)}")
+
+
+@app.delete("/api/v1/huggingface/configs/{config_id}")
+async def delete_hf_config(
+    config_id: str,
+    db: Database = Depends(get_db)
+):
+    """
+    Delete a HuggingFace configuration.
+    """
+    try:
+        # Check if config exists
+        existing = await db.get_hf_config(config_id)
+        if not existing:
+            raise HTTPException(status_code=404, detail=f"HuggingFace config {config_id} not found")
+
+        success = await db.delete_hf_config(config_id)
+
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to delete HuggingFace config")
+
+        return {"message": f"HuggingFace config {config_id} deleted"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete HuggingFace config: {str(e)}")
+
+
+# ============================================================================
+# Model Export/Import
+# ============================================================================
+
+@app.post("/api/v1/huggingface/export")
+async def export_model_to_huggingface(
+    request: ModelExportRequest,
+    db: Database = Depends(get_db)
+):
+    """
+    Export a trained model to HuggingFace Hub.
+
+    If repo_id is not provided in the request, it will be retrieved from
+    the stored HuggingFace config for this symbol+interval.
+    """
+    try:
+        from strategies.model_cache import get_model_cache
+
+        cache = get_model_cache()
+
+        # Get HF config for this symbol+interval
+        hf_config = await db.get_hf_config_by_symbol_interval(request.symbol, request.interval)
+
+        # Determine repo_id and token
+        repo_id = request.repo_id or (hf_config.get("repo_id") if hf_config else None)
+        token = hf_config.get("token") if hf_config else None
+        private = hf_config.get("private", False) if hf_config else False
+
+        if not repo_id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No HuggingFace repo_id configured for {request.symbol} ({request.interval}). "
+                       "Either provide repo_id in request or create a HuggingFace config first."
+            )
+
+        # Check if model exists in cache
+        if not cache.exists(
+            request.symbol,
+            request.interval,
+            request.lookback,
+            request.focus,
+            request.forecast_horizon
+        ):
+            raise HTTPException(
+                status_code=404,
+                detail=f"Model not found in cache. Train the model first."
+            )
+
+        # Export to HuggingFace
+        url = cache.export_to_huggingface(
+            symbol=request.symbol,
+            interval=request.interval,
+            lookback=request.lookback,
+            focus=request.focus,
+            forecast_horizon=request.forecast_horizon,
+            repo_id=repo_id,
+            token=token,
+            private=private,
+            commit_message=request.commit_message
+        )
+
+        # Update last_export timestamp if we have a config
+        if hf_config:
+            await db.update_hf_config_export_timestamp(hf_config["id"])
+
+        return {
+            "message": "Model exported successfully",
+            "url": url,
+            "repo_id": repo_id
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to export model: {str(e)}")
+
+
+@app.post("/api/v1/huggingface/import")
+async def import_model_from_huggingface(
+    request: ModelImportRequest,
+    db: Database = Depends(get_db)
+):
+    """
+    Import a pre-trained model from HuggingFace Hub.
+    """
+    try:
+        from strategies.model_cache import get_model_cache
+
+        cache = get_model_cache()
+
+        # Get HF config for this symbol+interval (for token)
+        hf_config = await db.get_hf_config_by_symbol_interval(request.symbol, request.interval)
+        token = hf_config.get("token") if hf_config else None
+
+        # Import from HuggingFace
+        model_path, scaler_path, metadata = cache.import_from_huggingface(
+            repo_id=request.repo_id,
+            symbol=request.symbol,
+            interval=request.interval,
+            lookback=request.lookback,
+            focus=request.focus,
+            forecast_horizon=request.forecast_horizon,
+            token=token,
+            force=request.force
+        )
+
+        # Update last_import timestamp if we have a config
+        if hf_config:
+            await db.update_hf_config_import_timestamp(hf_config["id"])
+
+        return {
+            "message": "Model imported successfully",
+            "model_path": str(model_path),
+            "scaler_path": str(scaler_path),
+            "metadata": metadata
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to import model: {str(e)}")
+
+
+@app.get("/api/v1/huggingface/cache/stats")
+async def get_cache_stats():
+    """
+    Get statistics about the model cache.
+    """
+    try:
+        from strategies.model_cache import get_model_cache
+
+        cache = get_model_cache()
+        stats = cache.get_cache_stats()
+
+        return stats
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get cache stats: {str(e)}")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

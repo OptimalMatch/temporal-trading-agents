@@ -907,3 +907,75 @@ class RemoteForecast(BaseModel):
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.isoformat().replace('+00:00', 'Z')
+
+
+# ==================== HuggingFace Integration Models ====================
+
+class HuggingFaceConfig(BaseModel):
+    """HuggingFace repository configuration for a symbol+interval"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    symbol: str = Field(..., description="Trading symbol (e.g., BTC-USD)")
+    interval: str = Field(..., description="Data interval (e.g., 1d, 1h)")
+    repo_id: str = Field(..., description="HuggingFace repository ID (e.g., username/repo-name)")
+    token: Optional[str] = Field(None, description="HuggingFace API token (encrypted)")
+    private: bool = Field(default=False, description="Whether the repository is private")
+    auto_export: bool = Field(default=False, description="Automatically export models after training")
+    auto_import: bool = Field(default=False, description="Automatically import models before analysis")
+    enabled: bool = Field(default=True, description="Whether this config is active")
+    last_export: Optional[datetime] = Field(None, description="Last time a model was exported")
+    last_import: Optional[datetime] = Field(None, description="Last time a model was imported")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_serializer('last_export', 'last_import', 'created_at', 'updated_at')
+    def serialize_datetime(self, dt: Optional[datetime], _info):
+        """Serialize datetime with timezone"""
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat().replace('+00:00', 'Z')
+
+
+class HuggingFaceConfigCreate(BaseModel):
+    """Request to create HuggingFace configuration"""
+    symbol: str
+    interval: str
+    repo_id: str
+    token: Optional[str] = None
+    private: bool = False
+    auto_export: bool = False
+    auto_import: bool = False
+
+
+class HuggingFaceConfigUpdate(BaseModel):
+    """Request to update HuggingFace configuration"""
+    repo_id: Optional[str] = None
+    token: Optional[str] = None
+    private: Optional[bool] = None
+    auto_export: Optional[bool] = None
+    auto_import: Optional[bool] = None
+    enabled: Optional[bool] = None
+
+
+class ModelExportRequest(BaseModel):
+    """Request to export a model to HuggingFace"""
+    symbol: str
+    interval: str
+    lookback: int
+    focus: str  # momentum, balanced, mean_reversion
+    forecast_horizon: int
+    repo_id: Optional[str] = None  # Override config repo_id
+    commit_message: Optional[str] = None
+
+
+class ModelImportRequest(BaseModel):
+    """Request to import a model from HuggingFace"""
+    repo_id: str
+    symbol: str
+    interval: str
+    lookback: int
+    focus: str
+    forecast_horizon: int
+    force: bool = False  # Force re-download even if cached
