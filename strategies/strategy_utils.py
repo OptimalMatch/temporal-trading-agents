@@ -99,10 +99,19 @@ def train_ensemble(symbol: str, forecast_horizon: int, configs: List[Dict],
 
     ensemble_models = []
     for config in configs:
+        # Adjust lookback if we don't have enough data
+        # With 2y data (~729 samples) and 70/15/15 split, validation set is ~102 samples
+        # For 21-day forecast: 102 - 21 = 81 max safe lookback
+        # Cap at 60 to be safe when using shorter data periods
+        lookback = config['lookback']
+        if period in ['2y', '1y', '6mo'] and lookback > 60:
+            lookback = 60
+            print(f"⚠️  Reduced {config['name']} lookback from {config['lookback']} to {lookback} days (limited data)")
+
         model_info = ensemble_module.train_ensemble_model(
             symbol=symbol,
             period=period,
-            lookback=config['lookback'],
+            lookback=lookback,
             forecast_horizon=forecast_horizon,
             epochs=config['epochs'],
             focus=config['focus'],
