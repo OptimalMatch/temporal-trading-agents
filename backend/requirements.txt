@@ -39,3 +39,7 @@ torchaudio==2.2.0
 
 # Temporal forecasting (v0.3.3 includes mixed precision training for 1.5-2x speedup)
 temporal-forecasting==0.3.3
+
+# HuggingFace Hub integration for model sharing
+transformers==4.46.3
+huggingface-hub==0.26.5
