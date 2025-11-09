@@ -299,7 +299,7 @@ async def ensure_dataset_available(symbol: str, database: Database, interval: st
 # Wrapper functions for ProcessPoolExecutor (must be picklable)
 def _train_ensemble_worker(symbol: str, horizon: int, name: str, interval: str = '1d',
                           ensemble_path: str = "examples/crypto_ensemble_forecast.py",
-                          use_cache: bool = True, max_cache_age_hours: float = 6.0,
+                          use_cache: bool = True, max_cache_age_hours: Optional[float] = None,
                           fine_tune_epochs: int = 3):
     """Worker function for training ensemble in separate process"""
     ensemble = load_ensemble_module(ensemble_path)

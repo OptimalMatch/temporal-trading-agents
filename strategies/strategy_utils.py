@@ -29,7 +29,7 @@ def load_ensemble_module(module_path: str = "../examples/crypto_ensemble_forecas
 
 def train_ensemble(symbol: str, forecast_horizon: int, configs: List[Dict],
                    name: str, ensemble_module, interval: str = '1d',
-                   use_cache: bool = True, max_cache_age_hours: float = 6.0,
+                   use_cache: bool = True, max_cache_age_hours: Optional[float] = None,
                    fine_tune_epochs: int = 3) -> Tuple[Dict, pd.DataFrame]:
     """
     Train an ensemble of models for a specific forecast horizon.
@@ -42,12 +42,19 @@ def train_ensemble(symbol: str, forecast_horizon: int, configs: List[Dict],
         ensemble_module: The loaded ensemble module
         interval: Data interval ('1d' for daily, '1h' for hourly)
         use_cache: Whether to use model caching (default: True)
-        max_cache_age_hours: Maximum cache age before retraining (default: 6.0)
+        max_cache_age_hours: Maximum cache age before retraining (default: auto-detect based on interval)
         fine_tune_epochs: Number of epochs for fine-tuning cached models (default: 3)
 
     Returns:
         Tuple of (ensemble_stats, latest_dataframe)
     """
+    # Auto-detect appropriate cache age based on data interval
+    if max_cache_age_hours is None:
+        if interval == '1h':
+            max_cache_age_hours = 6.0  # Hourly data: retrain after 6 hours of new data
+        else:  # '1d' or other daily-like intervals
+            max_cache_age_hours = 48.0  # Daily data: retrain after 2 days (only 2 new candles)
+
     interval_label = "hours" if interval == '1h' else "days"
     print(f"\n{'='*70}")
     print(f"TRAINING {name} ENSEMBLE ({forecast_horizon}-{interval_label[:-1]} forecast at {interval} interval)")
