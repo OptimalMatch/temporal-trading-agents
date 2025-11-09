@@ -157,13 +157,13 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
     val_dataset = TimeSeriesDataset(val_data, lookback, forecast_horizon)
 
     # Adaptive batch size based on interval and dataset size
-    # Daily data: fewer samples (~1774 for 5y) → smaller batch size (256)
-    # Hourly data: more samples (~43800 for 5y) → larger batch size (1024)
-    # Reduced from 512/1280 to accommodate multiple parallel training processes
+    # Daily data: fewer samples (~1774 for 5y) → smaller batch size (128)
+    # Hourly data: more samples (~43800 for 5y) → larger batch size (768)
+    # Very conservative to handle 4+ parallel processes during multi-strategy analysis
     if interval == '1d':
-        batch_size = 256  # Conservative for daily data with parallel training
+        batch_size = 128  # Very conservative for daily with 4+ parallel processes
     else:
-        batch_size = 1024  # Conservative for hourly data with parallel training
+        batch_size = 768  # Conservative for hourly with parallel training
 
     # Ensure batch size doesn't exceed dataset size
     max_batch_size = min(batch_size, len(train_dataset) // 2)  # At least 2 batches
@@ -267,6 +267,10 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
 
     best_val_loss = min(history['val_losses'])
     print(f"✓ Best validation loss: {best_val_loss:.6f} ({training_type})")
+
+    # Clear GPU cache to free memory for next model (helps with parallel training)
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     # Save to cache if enabled
     if use_cache:
