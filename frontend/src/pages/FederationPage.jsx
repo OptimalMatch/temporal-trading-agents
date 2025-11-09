@@ -204,11 +204,11 @@ function FederationPage() {
                 value={formData.base_url}
                 onChange={(e) => setFormData({ ...formData, base_url: e.target.value })}
                 className="input"
-                placeholder="http://instance2.example.com:10750"
+                placeholder="http://hostname:10750"
                 required
               />
               <p className="text-sm text-gray-500 mt-1">
-                Full URL including protocol and port
+                e.g., http://pop-os-1:10750 or http://192.168.1.100:10750
               </p>
             </div>
 

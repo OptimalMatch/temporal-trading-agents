@@ -1553,10 +1553,17 @@ async def create_remote_instance(
 ):
     """Add a new remote instance connection"""
     try:
+        # Normalize base_url - ensure it has a protocol
+        base_url = instance_create.base_url.strip()
+        if not base_url.startswith(('http://', 'https://')):
+            base_url = f'http://{base_url}'
+        # Remove trailing slash
+        base_url = base_url.rstrip('/')
+
         # Create RemoteInstance model
         instance = RemoteInstance(
             name=instance_create.name,
-            base_url=instance_create.base_url.rstrip('/'),  # Remove trailing slash
+            base_url=base_url,
             api_key=instance_create.api_key,
             enabled=instance_create.enabled,
             status=RemoteInstanceStatus.INACTIVE
@@ -1606,7 +1613,12 @@ async def update_remote_instance(
         # Update
         update_data = instance_update.dict(exclude_unset=True)
         if update_data.get('base_url'):
-            update_data['base_url'] = update_data['base_url'].rstrip('/')
+            # Normalize base_url - ensure it has a protocol
+            base_url = update_data['base_url'].strip()
+            if not base_url.startswith(('http://', 'https://')):
+                base_url = f'http://{base_url}'
+            # Remove trailing slash
+            update_data['base_url'] = base_url.rstrip('/')
 
         success = await database.update_remote_instance(instance_id, update_data)
 
