@@ -28,7 +28,9 @@ def load_ensemble_module(module_path: str = "../examples/crypto_ensemble_forecas
 
 
 def train_ensemble(symbol: str, forecast_horizon: int, configs: List[Dict],
-                   name: str, ensemble_module, interval: str = '1d') -> Tuple[Dict, pd.DataFrame]:
+                   name: str, ensemble_module, interval: str = '1d',
+                   use_cache: bool = True, max_cache_age_hours: float = 6.0,
+                   fine_tune_epochs: int = 3) -> Tuple[Dict, pd.DataFrame]:
     """
     Train an ensemble of models for a specific forecast horizon.
 
@@ -39,6 +41,9 @@ def train_ensemble(symbol: str, forecast_horizon: int, configs: List[Dict],
         name: Display name for this ensemble
         ensemble_module: The loaded ensemble module
         interval: Data interval ('1d' for daily, '1h' for hourly)
+        use_cache: Whether to use model caching (default: True)
+        max_cache_age_hours: Maximum cache age before retraining (default: 6.0)
+        fine_tune_epochs: Number of epochs for fine-tuning cached models (default: 3)
 
     Returns:
         Tuple of (ensemble_stats, latest_dataframe)
@@ -47,6 +52,11 @@ def train_ensemble(symbol: str, forecast_horizon: int, configs: List[Dict],
     print(f"\n{'='*70}")
     print(f"TRAINING {name} ENSEMBLE ({forecast_horizon}-{interval_label[:-1]} forecast at {interval} interval)")
     print(f"{'='*70}")
+
+    if use_cache:
+        print(f"💾 Model caching enabled (max age: {max_cache_age_hours}h, fine-tune: {fine_tune_epochs} epochs)")
+    else:
+        print(f"🔄 Model caching disabled - training from scratch")
 
     # Determine period based on asset type
     # Stocks have 5 years of historical data, crypto has 2 years
@@ -64,7 +74,10 @@ def train_ensemble(symbol: str, forecast_horizon: int, configs: List[Dict],
             epochs=config['epochs'],
             focus=config['focus'],
             model_name=config['name'],
-            interval=interval
+            interval=interval,
+            use_cache=use_cache,
+            max_cache_age_hours=max_cache_age_hours,
+            fine_tune_epochs=fine_tune_epochs
         )
         ensemble_models.append(model_info)
 

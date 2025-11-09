@@ -106,8 +106,27 @@ def add_technical_indicators(df, focus='balanced'):
     return df, feature_columns
 
 
-def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, focus, model_name, interval='1d'):
-    """Train a single model for the ensemble."""
+def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, focus, model_name, interval='1d',
+                        use_cache=True, max_cache_age_hours=6.0, fine_tune_epochs=3):
+    """
+    Train a single model for the ensemble with optional caching and fine-tuning.
+
+    Args:
+        symbol: Trading symbol
+        period: Historical data period
+        lookback: Lookback window size
+        forecast_horizon: Forecast horizon
+        epochs: Number of training epochs for fresh training
+        focus: Model focus type
+        model_name: Display name
+        interval: Data interval
+        use_cache: Whether to use model caching (default: True)
+        max_cache_age_hours: Maximum cache age before retraining (default: 6.0)
+        fine_tune_epochs: Number of epochs for fine-tuning cached models (default: 3)
+    """
+    from strategies.model_cache import get_model_cache
+    from datetime import datetime
+
     interval_label = "hours" if interval == '1h' else "days"
     print(f"\n{'='*70}")
     print(f"Training {model_name}")
@@ -117,6 +136,9 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
     # Fetch data
     df = fetch_crypto_data(symbol, period=period, interval=interval)
     print(f"✓ Fetched {len(df)} data points ({interval} interval)")
+
+    # Get latest data timestamp for cache staleness check
+    latest_data_timestamp = df.index[-1].to_pydatetime() if hasattr(df.index[-1], 'to_pydatetime') else datetime.fromisoformat(str(df.index[-1]))
 
     # Add indicators
     df, feature_columns = add_technical_indicators(df, focus=focus)
@@ -152,7 +174,7 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
         persistent_workers=True
     )
 
-    # Create model - optimized for RTX 4090 (24GB VRAM)
+    # Create model template - optimized for RTX 4090 (24GB VRAM)
     model = Temporal(
         input_dim=data.shape[1],
         d_model=512,  # Increased from 256 for better model capacity
@@ -164,7 +186,35 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
         dropout=0.1
     )
 
-    # Train
+    # Check cache if enabled
+    model_cache = get_model_cache()
+    cached_result = None
+    use_cached = False
+
+    if use_cache:
+        is_stale = model_cache.is_stale(
+            symbol, interval, lookback, focus, forecast_horizon,
+            max_age_hours=max_cache_age_hours,
+            latest_data_timestamp=latest_data_timestamp
+        )
+
+        if not is_stale:
+            # Try to load cached model
+            cached_result = model_cache.load(model, symbol, interval, lookback, focus, forecast_horizon)
+
+            if cached_result is not None:
+                model, cached_scaler, metadata = cached_result
+                use_cached = True
+
+                # Check if feature columns match
+                if metadata['feature_columns'] == feature_columns:
+                    scaler = cached_scaler
+                    print(f"🔄 Using cached model (age: {(datetime.now() - metadata['training_timestamp']).total_seconds() / 3600:.1f}h)")
+                else:
+                    print(f"⚠️  Feature mismatch - retraining from scratch")
+                    use_cached = False
+
+    # Train or fine-tune
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
     trainer = TemporalTrainer(
         model=model,
@@ -175,15 +225,51 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
         use_amp=True  # Enable mixed precision training for 1.5-2x speedup
     )
 
-    history = trainer.fit(
-        train_loader=train_loader,
-        val_loader=val_loader,
-        num_epochs=epochs,
-        early_stopping_patience=5,  # Reduced from 8 for faster convergence
-        save_path=None  # Don't save individual models
-    )
+    if use_cached:
+        # Fine-tune with reduced epochs and lower learning rate
+        print(f"🔧 Fine-tuning cached model ({fine_tune_epochs} epochs)...")
+        optimizer.param_groups[0]['lr'] = 1e-5  # Lower learning rate for fine-tuning
 
-    print(f"✓ Best validation loss: {min(history['val_losses']):.6f}")
+        history = trainer.fit(
+            train_loader=train_loader,
+            val_loader=val_loader,
+            num_epochs=fine_tune_epochs,
+            early_stopping_patience=2,
+            save_path=None
+        )
+        training_type = "fine-tuned"
+        total_epochs = metadata.get('training_epochs', 0) + fine_tune_epochs
+    else:
+        # Full training from scratch
+        print(f"🏋️  Training from scratch ({epochs} epochs)...")
+        history = trainer.fit(
+            train_loader=train_loader,
+            val_loader=val_loader,
+            num_epochs=epochs,
+            early_stopping_patience=5,
+            save_path=None
+        )
+        training_type = "fresh"
+        total_epochs = epochs
+
+    best_val_loss = min(history['val_losses'])
+    print(f"✓ Best validation loss: {best_val_loss:.6f} ({training_type})")
+
+    # Save to cache if enabled
+    if use_cache:
+        model_cache.save(
+            model=model,
+            scaler=scaler,
+            symbol=symbol,
+            interval=interval,
+            lookback=lookback,
+            focus=focus,
+            forecast_horizon=forecast_horizon,
+            feature_columns=feature_columns,
+            data_end_timestamp=latest_data_timestamp,
+            training_epochs=total_epochs,
+            best_val_loss=best_val_loss
+        )
 
     return {
         'model': model,
@@ -193,7 +279,9 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
         'lookback': lookback,
         'focus': focus,
         'name': model_name,
-        'df_original': df
+        'df_original': df,
+        'cached': use_cached,
+        'training_type': training_type
     }
 
 

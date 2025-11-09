@@ -297,11 +297,16 @@ async def ensure_dataset_available(symbol: str, database: Database, interval: st
     return False
 
 # Wrapper functions for ProcessPoolExecutor (must be picklable)
-def _train_ensemble_worker(symbol: str, horizon: int, name: str, interval: str = '1d', ensemble_path: str = "examples/crypto_ensemble_forecast.py"):
+def _train_ensemble_worker(symbol: str, horizon: int, name: str, interval: str = '1d',
+                          ensemble_path: str = "examples/crypto_ensemble_forecast.py",
+                          use_cache: bool = True, max_cache_age_hours: float = 6.0,
+                          fine_tune_epochs: int = 3):
     """Worker function for training ensemble in separate process"""
     ensemble = load_ensemble_module(ensemble_path)
     configs = get_default_ensemble_configs(horizon)
-    return train_ensemble(symbol, horizon, configs, name, ensemble, interval=interval)
+    return train_ensemble(symbol, horizon, configs, name, ensemble, interval=interval,
+                         use_cache=use_cache, max_cache_age_hours=max_cache_age_hours,
+                         fine_tune_epochs=fine_tune_epochs)
 
 def _train_multiple_timeframes_worker(symbol: str, horizons: list, interval: str = '1d', ensemble_path: str = "examples/crypto_ensemble_forecast.py"):
     """Worker function for training multiple timeframes in separate process"""
