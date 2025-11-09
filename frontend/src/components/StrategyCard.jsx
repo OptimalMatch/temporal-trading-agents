@@ -1,10 +1,11 @@
-import { TrendingUp, TrendingDown, Minus, Target, Shield } from 'lucide-react';
+import { TrendingUp, TrendingDown, Minus, Target, Shield, Network } from 'lucide-react';
 
 function StrategyCard({ consensus }) {
   if (!consensus) return null;
 
   const isBullish = consensus.consensus?.includes('BUY') || consensus.consensus?.includes('BULLISH');
   const isBearish = consensus.consensus?.includes('SELL') || consensus.consensus?.includes('AVOID');
+  const isImported = consensus.source === 'imported';
 
   return (
     <div className="space-y-4">
@@ -25,8 +26,20 @@ function StrategyCard({ consensus }) {
             </div>
           )}
           <div>
-            <h3 className="text-2xl font-bold text-gray-100">{consensus.consensus}</h3>
-            <p className="text-gray-400">Strength: {consensus.strength}</p>
+            <div className="flex items-center space-x-2">
+              <h3 className="text-2xl font-bold text-gray-100">{consensus.consensus}</h3>
+              {isImported && (
+                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-900 text-blue-300 border border-blue-700">
+                  <Network className="w-3 h-3 mr-1" />
+                  Remote
+                </span>
+              )}
+            </div>
+            <p className="text-gray-400">
+              {isImported && consensus.remote_instance_name
+                ? `From: ${consensus.remote_instance_name}`
+                : `Strength: ${consensus.strength}`}
+            </p>
           </div>
         </div>
         <div className="text-right">

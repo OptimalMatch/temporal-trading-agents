@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Plus, Server, Trash2, RefreshCw, Link2, Download, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
 import api from '../services/api';
 import { format } from 'date-fns';
+import LogsModal from '../components/LogsModal';
 
 const STATUS_COLORS = {
   active: 'text-green-600 bg-green-50',
@@ -21,6 +22,7 @@ function FederationPage() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [loading, setLoading] = useState(false);
   const [selectedTab, setSelectedTab] = useState('instances'); // 'instances' or 'forecasts'
+  const [selectedForecast, setSelectedForecast] = useState(null); // For forecast details modal
 
   // Form state
   const [formData, setFormData] = useState({
@@ -361,7 +363,11 @@ function FederationPage() {
           ) : (
             <div className="grid gap-4">
               {importedForecasts.map((forecast) => (
-                <div key={forecast.id} className="card">
+                <div
+                  key={forecast.id}
+                  className="card cursor-pointer hover:border-brand-500 transition-colors"
+                  onClick={() => setSelectedForecast(forecast)}
+                >
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
                       <div className="flex items-center space-x-3">
@@ -405,6 +411,37 @@ function FederationPage() {
             </div>
           )}
         </div>
+      )}
+
+      {/* Forecast Details Modal */}
+      {selectedForecast && (
+        <LogsModal
+          analysis={{
+            symbol: selectedForecast.symbol,
+            strategy_type: `Imported from ${selectedForecast.remote_instance_name}`,
+            created_at: selectedForecast.remote_created_at,
+            current_price: selectedForecast.current_price,
+            forecast_data: selectedForecast.forecast_data,
+            signal: {
+              signal: selectedForecast.consensus,
+              position_size_pct: 0
+            },
+            status: 'imported',
+            execution_time_ms: null,
+            logs: [
+              `Forecast imported from remote instance: ${selectedForecast.remote_instance_name}`,
+              `Original forecast ID: ${selectedForecast.original_forecast_id}`,
+              `Imported at: ${new Date(selectedForecast.imported_at).toLocaleString()}`,
+              `Interval: ${selectedForecast.interval}`,
+              `Consensus: ${selectedForecast.consensus}`,
+              `Confidence: ${selectedForecast.confidence}%`,
+              `Signal breakdown: ${selectedForecast.signals.bullish_count} bullish, ${selectedForecast.signals.bearish_count} bearish`,
+              `Forecast horizon: ${selectedForecast.forecast_data.horizon_days} days`,
+              `Current price: $${selectedForecast.current_price.toFixed(2)}`,
+            ]
+          }}
+          onClose={() => setSelectedForecast(null)}
+        />
       )}
     </div>
   );

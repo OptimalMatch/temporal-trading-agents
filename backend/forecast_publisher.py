@@ -246,11 +246,23 @@ def create_export_payload(consensus_result: dict) -> dict:
             "horizon_days": forecast_data.get('forecast_horizon', 14),
             "consensus": consensus_result.get('consensus', 'UNKNOWN'),
             "confidence": consensus_result.get('confidence', 0),
+            # Price forecast arrays
             "median": forecast_data.get('ensemble_median', []),
+            "ensemble_median": forecast_data.get('ensemble_median', []),
             "q25": forecast_stats.get('q25', []),
+            "ensemble_q25": forecast_stats.get('q25', []),
             "q75": forecast_stats.get('q75', []),
+            "ensemble_q75": forecast_stats.get('q75', []),
             "min": forecast_stats.get('min', []),
-            "max": forecast_stats.get('max', [])
+            "ensemble_min": forecast_stats.get('min', []),
+            "max": forecast_stats.get('max', []),
+            "ensemble_max": forecast_stats.get('max', []),
+            # Historical data for visualization
+            "historical_prices": forecast_data.get('historical_prices', []),
+            "historical_days": forecast_data.get('historical_days', 0),
+            "forecast_days": forecast_data.get('forecast_days', []),
+            "individual_models": forecast_data.get('individual_models', []),
+            "current_price": forecast_data.get('current_price')
         },
         "signals": {
             "bullish_count": consensus_result.get('bullish_count', 0),

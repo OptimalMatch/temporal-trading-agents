@@ -91,8 +91,8 @@ function Dashboard() {
     try {
       setLoading(true);
 
-      // First, get the most recent consensus from any symbol
-      const allConsensus = await api.getAllConsensus(1);
+      // First, get the most recent consensus from any symbol (including imported)
+      const allConsensus = await api.getAllConsensus(1, true);
       const latestConsensus = allConsensus.results?.[0];
 
       // Determine which symbol to show analytics for
