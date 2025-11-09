@@ -45,7 +45,7 @@ from backend.models import (
     RemoteInstance, RemoteInstanceCreate, RemoteInstanceUpdate, RemoteInstanceStatus,
     RemoteForecast,
     HuggingFaceConfig, HuggingFaceConfigCreate, HuggingFaceConfigUpdate,
-    ModelExportRequest, ModelImportRequest
+    ModelExportRequest, ModelImportRequest, EnsembleExportRequest
 )
 from backend.database import Database
 from backend.websocket_manager import manager as ws_manager
@@ -4908,6 +4908,109 @@ async def get_cache_stats():
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get cache stats: {str(e)}")
+
+
+@app.post("/api/v1/huggingface/export-ensemble")
+async def export_ensemble_to_huggingface(
+    request: EnsembleExportRequest,
+    db: Database = Depends(get_database)
+):
+    """
+    Export all ensemble models from a consensus analysis to HuggingFace Hub.
+    """
+    try:
+        from strategies.model_cache import get_model_cache
+
+        cache = get_model_cache()
+
+        # Get consensus result from database
+        consensus = await db.get_consensus_result(request.consensus_id)
+        if not consensus:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Consensus analysis {request.consensus_id} not found"
+            )
+
+        symbol = consensus["symbol"]
+        interval = consensus.get("interval", "1h")
+
+        # Get HF config for token and repo_id
+        hf_config = await db.get_hf_config_by_symbol_interval(symbol, interval)
+
+        # Determine repo_id and token
+        repo_id = request.repo_id or (hf_config.get("repo_id") if hf_config else None)
+        token = hf_config.get("token") if hf_config else None
+        private = hf_config.get("private", False) if hf_config else False
+
+        if not repo_id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No HuggingFace repo_id configured for {symbol} ({interval}). "
+                       "Either provide repo_id in request or create a HuggingFace config first."
+            )
+
+        # Export all models from the consensus
+        exported_models = []
+        failed_models = []
+
+        for model_info in consensus.get("model_info", []):
+            try:
+                # Check if model exists in cache
+                if not cache.exists(
+                    symbol,
+                    interval,
+                    model_info["lookback"],
+                    model_info["focus"],
+                    model_info["forecast_horizon"]
+                ):
+                    failed_models.append({
+                        "lookback": model_info["lookback"],
+                        "focus": model_info["focus"],
+                        "error": "Model not found in cache"
+                    })
+                    continue
+
+                # Export to HuggingFace
+                url = cache.export_to_huggingface(
+                    symbol=symbol,
+                    interval=interval,
+                    lookback=model_info["lookback"],
+                    focus=model_info["focus"],
+                    forecast_horizon=model_info["forecast_horizon"],
+                    repo_id=repo_id,
+                    token=token,
+                    private=private,
+                    commit_message=request.commit_message or f"Export ensemble model: {model_info['focus']} (lookback={model_info['lookback']})"
+                )
+
+                exported_models.append({
+                    "lookback": model_info["lookback"],
+                    "focus": model_info["focus"],
+                    "url": url
+                })
+
+            except Exception as e:
+                failed_models.append({
+                    "lookback": model_info["lookback"],
+                    "focus": model_info["focus"],
+                    "error": str(e)
+                })
+
+        # Update last_export timestamp if we have a config
+        if hf_config and exported_models:
+            await db.update_hf_config_export_timestamp(hf_config["id"])
+
+        return {
+            "message": f"Exported {len(exported_models)} of {len(consensus.get('model_info', []))} models",
+            "exported": exported_models,
+            "failed": failed_models,
+            "repo_id": repo_id
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to export ensemble: {str(e)}")
 
 
 if __name__ == "__main__":
