@@ -274,6 +274,9 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
 
     # Save to cache if enabled
     if use_cache:
+        # Get dataset start timestamp
+        data_start_timestamp = df.index[0].to_pydatetime() if hasattr(df.index[0], 'to_pydatetime') else datetime.fromisoformat(str(df.index[0]))
+
         model_cache.save(
             model=model,
             scaler=scaler,
@@ -285,7 +288,9 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
             feature_columns=feature_columns,
             data_end_timestamp=latest_data_timestamp,
             training_epochs=total_epochs,
-            best_val_loss=best_val_loss
+            best_val_loss=best_val_loss,
+            data_start_timestamp=data_start_timestamp,
+            training_samples=len(train_dataset)
         )
 
     return {

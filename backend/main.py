@@ -4989,9 +4989,19 @@ async def export_ensemble_to_huggingface(
         exported_models = []
         failed_models = []
 
+        # Build ensemble metadata for model cards
+        all_members = [
+            {
+                "focus": cfg["focus"],
+                "lookback": cfg["lookback"],
+                "path": f"../{cfg['focus']}_lookback{cfg['lookback']}"
+            }
+            for cfg in model_configs
+        ]
+
         print(f"🔧 ENSEMBLE EXPORT: Starting export for {symbol} ({interval}) to {repo_id}")
 
-        for model_info in model_configs:
+        for member_index, model_info in enumerate(model_configs, 1):
             try:
                 lookback = model_info["lookback"]
                 focus = model_info["focus"]
@@ -5017,6 +5027,16 @@ async def export_ensemble_to_huggingface(
 
                 print(f"✅ Model found in cache: {focus} (lookback={lookback}), exporting...")
 
+                # Create subdirectory path for this model variant
+                subdir_name = f"{focus}_lookback{lookback}"
+
+                # Build ensemble info for this model
+                ensemble_info = {
+                    "total_members": len(model_configs),
+                    "member_index": member_index,
+                    "all_members": all_members
+                }
+
                 # Export to HuggingFace
                 url = cache.export_to_huggingface(
                     symbol=symbol,
@@ -5027,7 +5047,9 @@ async def export_ensemble_to_huggingface(
                     repo_id=repo_id,
                     token=token,
                     private=private,
-                    commit_message=request.commit_message or f"Export ensemble model: {focus} (lookback={lookback})"
+                    commit_message=request.commit_message or f"Export ensemble model: {focus} (lookback={lookback})",
+                    path_in_repo=subdir_name,
+                    ensemble_info=ensemble_info
                 )
 
                 print(f"✅ Successfully exported {focus} to {url}")
@@ -5048,6 +5070,24 @@ async def export_ensemble_to_huggingface(
         # Update last_export timestamp if we have a config
         if hf_config and exported_models:
             await db.update_hf_config_export_timestamp(hf_config["id"])
+
+        # Upload ensemble overview README to repository root
+        if exported_models:
+            print(f"📝 ENSEMBLE EXPORT: Creating overview README at repository root...")
+            try:
+                cache.export_ensemble_overview_to_huggingface(
+                    symbol=symbol,
+                    interval=interval,
+                    forecast_horizon=forecast_horizon,
+                    repo_id=repo_id,
+                    all_members=all_members,
+                    token=token,
+                    consensus_id=request.consensus_id
+                )
+                print(f"✅ ENSEMBLE EXPORT: Overview README uploaded successfully")
+            except Exception as e:
+                print(f"⚠️  ENSEMBLE EXPORT: Failed to upload overview README: {str(e)}")
+                # Don't fail the entire export if just the overview fails
 
         print(f"📊 ENSEMBLE EXPORT: Complete - {len(exported_models)} succeeded, {len(failed_models)} failed out of {len(model_configs)} total")
 

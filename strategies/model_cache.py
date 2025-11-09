@@ -11,7 +11,7 @@ import pickle
 import hashlib
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 import json
 import tempfile
 import shutil
@@ -165,7 +165,8 @@ class ModelCache:
     def save(self, model, scaler, symbol: str, interval: str, lookback: int,
              focus: str, forecast_horizon: int, feature_columns: list,
              data_end_timestamp: datetime, training_epochs: int,
-             best_val_loss: float) -> str:
+             best_val_loss: float, data_start_timestamp: Optional[datetime] = None,
+             training_samples: Optional[int] = None) -> str:
         """
         Save a trained model and its metadata to cache.
 
@@ -181,6 +182,8 @@ class ModelCache:
             data_end_timestamp: Timestamp of last data point used in training
             training_epochs: Number of epochs trained
             best_val_loss: Best validation loss achieved
+            data_start_timestamp: Timestamp of first data point used in training (optional)
+            training_samples: Number of training samples (optional)
 
         Returns:
             Cache key for the saved model
@@ -215,6 +218,12 @@ class ModelCache:
                 'num_decoder_layers': model.num_decoder_layers if hasattr(model, 'num_decoder_layers') else None,
             }
         }
+
+        # Add optional dataset metadata
+        if data_start_timestamp is not None:
+            metadata['data_start_timestamp'] = data_start_timestamp.isoformat()
+        if training_samples is not None:
+            metadata['training_samples'] = training_samples
 
         metadata_path = self._get_metadata_path(cache_key)
         with open(metadata_path, 'w') as f:
@@ -298,7 +307,9 @@ class ModelCache:
         repo_id: str,
         token: Optional[str] = None,
         private: bool = False,
-        commit_message: Optional[str] = None
+        commit_message: Optional[str] = None,
+        path_in_repo: Optional[str] = None,
+        ensemble_info: Optional[Dict[str, Any]] = None
     ) -> str:
         """
         Export a cached model to HuggingFace Hub.
@@ -313,6 +324,11 @@ class ModelCache:
             token: HuggingFace API token (or set HUGGING_FACE_HUB_TOKEN env var)
             private: Whether to create a private repository
             commit_message: Custom commit message
+            path_in_repo: Path within repository (e.g., "momentum_lookback30/")
+            ensemble_info: Optional dict with ensemble metadata:
+                - total_members: Total number of models in ensemble
+                - member_index: Index of this model (1-based)
+                - all_members: List of dicts with 'focus', 'lookback', 'path' for each member
 
         Returns:
             URL to the uploaded model on HuggingFace Hub
@@ -365,7 +381,7 @@ class ModelCache:
             # Create README
             readme_path = temp_path / "README.md"
             with open(readme_path, 'w') as f:
-                f.write(self._generate_model_card(symbol, interval, lookback, focus, forecast_horizon, metadata))
+                f.write(self._generate_model_card(symbol, interval, lookback, focus, forecast_horizon, metadata, ensemble_info))
 
             # Upload to HuggingFace Hub
             api = HfApi(token=token)
@@ -382,12 +398,18 @@ class ModelCache:
                 repo_type="model",
                 commit_message=commit_message,
                 create_pr=False,
+                path_in_repo=path_in_repo,
             )
 
-            print(f"🤗 Exported model to HuggingFace: {repo_id}")
-            print(f"   URL: https://huggingface.co/{repo_id}")
+            repo_url = f"https://huggingface.co/{repo_id}"
+            if path_in_repo:
+                repo_url += f"/tree/main/{path_in_repo}"
 
-            return f"https://huggingface.co/{repo_id}"
+            print(f"🤗 Exported model to HuggingFace: {repo_id}")
+            print(f"   Path: {path_in_repo or '(root)'}")
+            print(f"   URL: {repo_url}")
+
+            return repo_url
 
     def import_from_huggingface(
         self,
@@ -499,7 +521,8 @@ class ModelCache:
         lookback: int,
         focus: str,
         forecast_horizon: int,
-        metadata: Dict[str, Any]
+        metadata: Dict[str, Any],
+        ensemble_info: Optional[Dict[str, Any]] = None
     ) -> str:
         """Generate a model card (README) for HuggingFace."""
         training_time = metadata.get('training_timestamp', 'Unknown')
@@ -509,6 +532,59 @@ class ModelCache:
         val_loss = metadata.get('best_val_loss', 'N/A')
         epochs = metadata.get('training_epochs', 'N/A')
 
+        # Format dataset date range
+        data_start = metadata.get('data_start_timestamp', 'Unknown')
+        data_end = metadata.get('data_end_timestamp', 'Unknown')
+        if isinstance(data_start, datetime):
+            data_start = data_start.strftime('%Y-%m-%d')
+        if isinstance(data_end, datetime):
+            data_end = data_end.strftime('%Y-%m-%d')
+
+        dataset_range = f"{data_start} to {data_end}" if data_start != 'Unknown' and data_end != 'Unknown' else 'N/A'
+        training_samples = metadata.get('training_samples', 'N/A')
+
+        # Build ensemble context section if provided
+        ensemble_section = ""
+        title_suffix = f"{focus}"
+
+        if ensemble_info:
+            total = ensemble_info.get('total_members', 0)
+            index = ensemble_info.get('member_index', 0)
+            all_members = ensemble_info.get('all_members', [])
+
+            title_suffix = f"Ensemble Member {index}/{total}: {focus} (lookback={lookback})"
+
+            # Build member list
+            member_list = []
+            for i, member in enumerate(all_members, 1):
+                member_focus = member.get('focus', 'unknown')
+                member_lookback = member.get('lookback', 0)
+                member_path = member.get('path', '')
+                if i == index:
+                    member_list.append(f"{i}. **{member_focus}** (lookback={member_lookback}) - *This model*")
+                else:
+                    member_list.append(f"{i}. [{member_focus} (lookback={member_lookback})]({member_path})")
+
+            ensemble_section = f"""
+## Ensemble Context
+
+This model is **member {index} of {total}** in a consensus ensemble for {symbol} ({interval}).
+
+The ensemble uses {total} models with different lookback periods and focus strategies to generate diverse forecasts. These forecasts are then aggregated using multiple consensus strategies (gradient, confidence, timeframe, volatility, mean reversion, acceleration, swing, risk-adjusted) to produce robust trading signals.
+
+### All Ensemble Members
+
+{chr(10).join(member_list)}
+
+### How the Ensemble Works
+
+1. Each member model generates independent forecasts using its specific lookback window and focus
+2. Multiple consensus strategies analyze the ensemble's forecasts from different perspectives
+3. Each strategy produces action recommendations (BUY/SELL/HOLD) with confidence scores
+4. Final consensus aggregates all strategy recommendations into a unified trading signal
+
+"""
+
         return f"""---
 tags:
 - time-series
@@ -516,13 +592,14 @@ tags:
 - temporal
 - trading
 - {symbol.lower()}
+- ensemble
 library_name: temporal-forecasting
 ---
 
-# Temporal Trading Model: {symbol} ({focus})
+# Temporal Trading Model: {symbol} ({title_suffix})
 
-This is a pre-trained Temporal transformer model for time series forecasting of {symbol}.
-
+This is a pre-trained Temporal transformer model for time series forecasting of {symbol}.{' This model is part of a consensus ensemble.' if ensemble_info else ''}
+{ensemble_section}
 ## Model Details
 
 - **Symbol**: {symbol}
@@ -533,6 +610,12 @@ This is a pre-trained Temporal transformer model for time series forecasting of 
 - **Training Date**: {training_time}
 - **Training Epochs**: {epochs}
 - **Best Validation Loss**: {val_loss}
+
+## Training Dataset
+
+- **Date Range**: {dataset_range}
+- **Training Samples**: {training_samples}
+- **Lookback Period**: {lookback} {interval} intervals
 
 ## Model Architecture
 
@@ -577,6 +660,217 @@ GPL-3.0-or-later
 }}
 ```
 """
+
+    def _generate_ensemble_overview_card(
+        self,
+        symbol: str,
+        interval: str,
+        forecast_horizon: int,
+        repo_id: str,
+        all_members: List[Dict[str, Any]],
+        consensus_id: Optional[str] = None
+    ) -> str:
+        """Generate an ensemble overview card (root README) for HuggingFace."""
+        from datetime import datetime
+
+        # Build member list
+        member_list = []
+        for member in all_members:
+            focus = member.get('focus', 'unknown')
+            lookback = member.get('lookback', 0)
+            path = member.get('path', '').lstrip('../')  # Remove ../ prefix for display
+            member_list.append(f"- [{focus} (lookback={lookback})](./tree/main/{path})")
+
+        return f"""---
+tags:
+- time-series
+- forecasting
+- temporal
+- trading
+- ensemble
+- consensus
+- {symbol.lower()}
+library_name: temporal-forecasting
+---
+
+# {symbol} Consensus Ensemble ({interval})
+
+This repository contains a **consensus ensemble** of {len(all_members)} temporal transformer models for {symbol} price forecasting.
+
+## Overview
+
+Instead of relying on a single model, this ensemble combines multiple models with different characteristics to produce robust, diverse forecasts. Each model specializes in different market patterns:
+
+- **Momentum models**: Capture trending behavior with shorter lookback windows
+- **Balanced models**: General-purpose forecasting with medium lookback windows
+- **Mean reversion models**: Detect overbought/oversold conditions with longer windows
+
+## Ensemble Members
+
+{chr(10).join(member_list)}
+
+## How It Works
+
+### 1. Independent Forecasting
+Each model generates independent {forecast_horizon}-period forecasts using its specific lookback window and focus strategy.
+
+### 2. Consensus Analysis
+Eight different consensus strategies analyze the ensemble's forecasts:
+
+- **Gradient Strategy**: Analyzes forecast momentum and direction changes
+- **Confidence Strategy**: Weighs predictions by model confidence scores
+- **Timeframe Strategy**: Balances short-term vs long-term predictions
+- **Volatility Strategy**: Adjusts for market volatility conditions
+- **Mean Reversion Strategy**: Identifies reversal opportunities
+- **Acceleration Strategy**: Detects accelerating price movements
+- **Swing Strategy**: Targets swing trading opportunities
+- **Risk-Adjusted Strategy**: Optimizes risk-reward ratios
+
+### 3. Unified Signal
+All strategy recommendations are aggregated into a final consensus signal with:
+- **Action**: BUY, SELL, or HOLD
+- **Confidence Score**: 0.0 to 1.0
+- **Expected Return**: Basis points (bps)
+
+## Usage
+
+### Import Individual Models
+
+```python
+from strategies.model_cache import get_model_cache
+
+cache = get_model_cache()
+
+# Import a specific ensemble member
+model_path, scaler_path, metadata = cache.import_from_huggingface(
+    repo_id="{repo_id}",
+    symbol="{symbol}",
+    interval="{interval}",
+    lookback=30,  # Choose appropriate lookback
+    focus="momentum",  # Choose appropriate focus
+    forecast_horizon={forecast_horizon},
+    path_in_repo="momentum_lookback30"  # Specify subdirectory
+)
+```
+
+### Run Consensus Analysis
+
+```python
+from backend.main import run_consensus_analysis_worker
+from backend.database import Database
+
+async def run_analysis():
+    db = Database()
+    await db.connect()
+
+    result = await run_consensus_analysis_worker(
+        symbol="{symbol}",
+        horizons=[{forecast_horizon}],
+        interval="{interval}",
+        analysis_id="my-analysis",
+        db=db
+    )
+
+    print(f"Consensus: {{result['consensus']}}")
+    print(f"Action: {{result['action']}}")
+    print(f"Confidence: {{result['confidence']}}")
+```
+
+## Model Details
+
+- **Symbol**: {symbol}
+- **Interval**: {interval}
+- **Forecast Horizon**: {forecast_horizon} periods
+- **Ensemble Size**: {len(all_members)} models
+- **Architecture**: Temporal Transformer
+- **Training Framework**: PyTorch
+- **Export Date**: {datetime.now().strftime('%Y-%m-%d')}
+
+## License
+
+GPL-3.0-or-later
+
+## Citation
+
+```
+@software{{temporal_trading_ensemble,
+  title = {{{symbol} Consensus Ensemble}},
+  author = {{Unidatum Integrated Products LLC}},
+  year = {{2025}},
+  url = {{https://github.com/OptimalMatch/temporal-trading-agents}}
+}}
+```
+
+## Links
+
+- [GitHub Repository](https://github.com/OptimalMatch/temporal-trading-agents)
+- [Documentation](https://github.com/OptimalMatch/temporal-trading-agents/blob/main/README.md)
+"""
+
+    def export_ensemble_overview_to_huggingface(
+        self,
+        symbol: str,
+        interval: str,
+        forecast_horizon: int,
+        repo_id: str,
+        all_members: List[Dict[str, Any]],
+        token: Optional[str] = None,
+        consensus_id: Optional[str] = None
+    ) -> str:
+        """
+        Export an ensemble overview README to the root of a HuggingFace repository.
+
+        Args:
+            symbol: Trading symbol
+            interval: Data interval
+            forecast_horizon: Forecast horizon
+            repo_id: HuggingFace repository ID
+            all_members: List of ensemble members with focus, lookback, path
+            token: HuggingFace API token
+            consensus_id: Optional consensus analysis ID
+
+        Returns:
+            URL to the repository
+        """
+        if not HF_AVAILABLE:
+            raise ImportError(
+                "huggingface_hub not installed. "
+                "Install with: pip install huggingface-hub"
+            )
+
+        # Generate the overview content
+        overview_content = self._generate_ensemble_overview_card(
+            symbol=symbol,
+            interval=interval,
+            forecast_horizon=forecast_horizon,
+            repo_id=repo_id,
+            all_members=all_members,
+            consensus_id=consensus_id
+        )
+
+        # Create temporary file for upload
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            readme_path = temp_path / "README.md"
+
+            with open(readme_path, 'w') as f:
+                f.write(overview_content)
+
+            # Upload to HuggingFace Hub root
+            api = HfApi(token=token)
+
+            url = api.upload_file(
+                path_or_fileobj=str(readme_path),
+                path_in_repo="README.md",
+                repo_id=repo_id,
+                repo_type="model",
+                commit_message=f"Update ensemble overview for {symbol} ({interval})"
+            )
+
+            repo_url = f"https://huggingface.co/{repo_id}"
+            print(f"🤗 Uploaded ensemble overview to: {repo_url}")
+
+            return repo_url
 
     def get_cache_stats(self) -> Dict[str, Any]:
         """
