@@ -66,11 +66,29 @@ def train_ensemble(symbol: str, forecast_horizon: int, configs: List[Dict],
     else:
         print(f"🔄 Model caching disabled - training from scratch")
 
-    # Determine period based on asset type
-    # Stocks have 5 years of historical data, crypto has 2 years
+    # Detect available data period from cache - use whatever we have!
+    from strategies.data_cache import get_cache
+    cache = get_cache()
+
+    # Try to detect what data is available by checking cache
+    # Try periods in descending order: 5y, 2y, 1y, 6mo
+    available_period = None
+    for test_period in ['5y', '2y', '1y', '6mo']:
+        cached_data = cache.get(symbol, test_period, interval=interval)
+        if cached_data is not None and not cached_data.empty:
+            available_period = test_period
+            break
+
+    # Default to 5y if nothing found (will trigger data fetch)
+    period = available_period or '5y'
+
     is_crypto = '-USD' in symbol or '-EUR' in symbol or '-GBP' in symbol
-    period = '2y' if is_crypto else '5y'
-    print(f"📊 Using {period} of historical data for {'crypto' if is_crypto else 'stock'} analysis (interval: {interval})")
+    asset_type = 'crypto' if is_crypto else 'stock'
+
+    if available_period:
+        print(f"📊 Using {period} of available cached data for {asset_type} analysis (interval: {interval})")
+    else:
+        print(f"📊 Requesting {period} of historical data for {asset_type} analysis (interval: {interval})")
 
     ensemble_models = []
     for config in configs:

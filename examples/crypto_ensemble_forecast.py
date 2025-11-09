@@ -291,9 +291,27 @@ def make_ensemble_predictions(ensemble_models, symbol, forecast_horizon=7, inter
     print("GENERATING ENSEMBLE PREDICTIONS")
     print(f"{'='*70}")
 
-    # Determine period based on asset type to match training data
+    # Auto-detect available data period from cache for this specific interval
+    from strategies.data_cache import get_cache
+    cache = get_cache()
+
+    available_period = None
+    for test_period in ['5y', '2y', '1y', '6mo']:
+        cached_data = cache.get(symbol, test_period, interval=interval)
+        if cached_data is not None and not cached_data.empty:
+            available_period = test_period
+            break
+
+    # Default to 5y if nothing found (will trigger data fetch)
+    period = available_period or '5y'
+
     is_crypto = '-USD' in symbol or '-EUR' in symbol or '-GBP' in symbol
-    period = '2y' if is_crypto else '5y'
+    asset_type = 'crypto' if is_crypto else 'stock'
+
+    if available_period:
+        print(f"📊 Using {period} of available cached data for {asset_type} predictions (interval: {interval})")
+    else:
+        print(f"📊 Requesting {period} of historical data for {asset_type} predictions (interval: {interval})")
 
     all_predictions = []
     prediction_details = []
