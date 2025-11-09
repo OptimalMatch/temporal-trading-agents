@@ -39,18 +39,63 @@ def fetch_crypto_data_cached(symbol: str, period: str = '2y', interval: str = '1
 
     try:
         # Try S3 flat files first for more historical data
+        s3_data = None
         try:
             from strategies.massive_s3_data_source import fetch_crypto_data_massive_s3
-            data = fetch_crypto_data_massive_s3(symbol, period=period, interval=interval)
-            if data is not None and not data.empty:
-                print(f"✓ Using S3 flat files for {symbol}")
-            else:
-                raise ValueError("S3 returned empty data, falling back to REST API")
+            s3_data = fetch_crypto_data_massive_s3(symbol, period=period, interval=interval)
+            if s3_data is not None and not s3_data.empty:
+                print(f"✓ Got {len(s3_data)} rows from S3 flat files for {symbol}")
         except Exception as s3_error:
-            print(f"⚠️  S3 fetch failed ({s3_error}), falling back to REST API")
-            # Fallback to REST API
+            print(f"⚠️  S3 fetch failed ({s3_error}), will use REST API only")
+
+        # Check if S3 data is stale and backfill with REST API
+        from datetime import datetime, timedelta
+        import pandas as pd
+
+        rest_data = None
+        if s3_data is not None and not s3_data.empty:
+            # Check how old the last data point is
+            last_s3_time = s3_data.index[-1]
+            if not hasattr(last_s3_time, 'to_pydatetime'):
+                last_s3_time = pd.Timestamp(last_s3_time)
+
+            now = datetime.now()
+            age_hours = (now - last_s3_time.to_pydatetime().replace(tzinfo=None)).total_seconds() / 3600
+
+            # If data is more than 2 hours old, backfill with REST API
+            if age_hours > 2:
+                print(f"⏰ S3 data is {age_hours:.1f} hours old, backfilling recent data from REST API")
+                try:
+                    from strategies.polygon_data_source import fetch_crypto_data_polygon
+                    # Fetch from S3 end date to now
+                    rest_start = last_s3_time.to_pydatetime()
+                    rest_end = now
+                    rest_data = fetch_crypto_data_polygon(symbol, interval=interval,
+                                                          start_date=rest_start, end_date=rest_end)
+                    if rest_data is not None and not rest_data.empty:
+                        print(f"✓ Got {len(rest_data)} recent rows from REST API")
+                except Exception as rest_error:
+                    print(f"⚠️  REST API backfill failed: {rest_error}")
+        else:
+            # No S3 data, use REST API only
+            print(f"📡 Fetching all data from REST API")
             from strategies.polygon_data_source import fetch_crypto_data_polygon
-            data = fetch_crypto_data_polygon(symbol, period=period, interval=interval)
+            rest_data = fetch_crypto_data_polygon(symbol, period=period, interval=interval)
+
+        # Merge S3 and REST data
+        if s3_data is not None and not s3_data.empty and rest_data is not None and not rest_data.empty:
+            # Combine and deduplicate
+            data = pd.concat([s3_data, rest_data])
+            data = data[~data.index.duplicated(keep='last')]  # Keep newer data on overlap
+            data = data.sort_index()
+            print(f"✓ Merged S3 and REST data: {len(data)} total rows")
+        elif s3_data is not None and not s3_data.empty:
+            data = s3_data
+        elif rest_data is not None and not rest_data.empty:
+            data = rest_data
+        else:
+            print(f"❌ No data available from either S3 or REST API")
+            data = None
 
         # Cache the result
         if data is not None and not data.empty:
