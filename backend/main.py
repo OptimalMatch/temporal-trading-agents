@@ -1285,15 +1285,45 @@ async def get_analysis_history(
 async def get_all_consensus(
     limit: int = 100,
     skip: int = 0,
+    include_imported: bool = False,
     database: Database = Depends(get_database)
 ):
-    """Get recent consensus results across all symbols"""
+    """Get recent consensus results across all symbols, optionally including imported forecasts"""
     try:
+        # Get local consensus results
         results = await database.get_consensus_results(
             symbol=None,  # No symbol filter = all symbols
             limit=limit,
             skip=skip
         )
+
+        # Optionally include imported forecasts
+        if include_imported:
+            imported = await database.get_remote_forecasts(symbol=None, limit=limit)
+            # Transform imported forecasts to match consensus format
+            for forecast in imported:
+                forecast['source'] = 'imported'
+                # Keep created_at as the timestamp for sorting
+                created_at = forecast.get('remote_created_at', forecast.get('imported_at'))
+                # Parse string datetime if needed and ensure timezone-aware
+                if isinstance(created_at, str):
+                    from dateutil import parser
+                    created_at = parser.parse(created_at)
+                # Ensure timezone-aware
+                if created_at and created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=timezone.utc)
+                forecast['created_at'] = created_at
+                forecast['total_count'] = forecast['signals'].get('strategies_executed', 0)
+            # Mark local results and ensure all datetimes are timezone-aware
+            for result in results:
+                result['source'] = 'local'
+                if result.get('created_at') and result['created_at'].tzinfo is None:
+                    result['created_at'] = result['created_at'].replace(tzinfo=timezone.utc)
+            # Combine and sort by created_at (now all are timezone-aware datetime objects)
+            combined = results + imported
+            combined.sort(key=lambda x: x.get('created_at') or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+            return {"count": len(combined), "results": combined[:limit]}
+
         return {"count": len(results), "results": results}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to retrieve consensus history: {str(e)}")
@@ -1304,15 +1334,45 @@ async def get_consensus_history(
     symbol: str,
     limit: int = 100,
     skip: int = 0,
+    include_imported: bool = False,
     database: Database = Depends(get_database)
 ):
-    """Get historical consensus results for a symbol"""
+    """Get historical consensus results for a symbol, optionally including imported forecasts"""
     try:
+        # Get local consensus results
         results = await database.get_consensus_results(
             symbol=symbol,
             limit=limit,
             skip=skip
         )
+
+        # Optionally include imported forecasts
+        if include_imported:
+            imported = await database.get_remote_forecasts(symbol=symbol, limit=limit)
+            # Transform imported forecasts to match consensus format
+            for forecast in imported:
+                forecast['source'] = 'imported'
+                # Keep created_at as the timestamp for sorting
+                created_at = forecast.get('remote_created_at', forecast.get('imported_at'))
+                # Parse string datetime if needed and ensure timezone-aware
+                if isinstance(created_at, str):
+                    from dateutil import parser
+                    created_at = parser.parse(created_at)
+                # Ensure timezone-aware
+                if created_at and created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=timezone.utc)
+                forecast['created_at'] = created_at
+                forecast['total_count'] = forecast['signals'].get('strategies_executed', 0)
+            # Mark local results and ensure all datetimes are timezone-aware
+            for result in results:
+                result['source'] = 'local'
+                if result.get('created_at') and result['created_at'].tzinfo is None:
+                    result['created_at'] = result['created_at'].replace(tzinfo=timezone.utc)
+            # Combine and sort by created_at (now all are timezone-aware datetime objects)
+            combined = results + imported
+            combined.sort(key=lambda x: x.get('created_at') or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+            return {"symbol": symbol, "count": len(combined), "results": combined[:limit]}
+
         return {"symbol": symbol, "count": len(results), "results": results}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to retrieve history: {str(e)}")

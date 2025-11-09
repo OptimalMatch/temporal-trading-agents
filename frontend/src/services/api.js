@@ -69,12 +69,16 @@ class APIService {
     return this.request(`/history/analyses/${symbol}?${params}`);
   }
 
-  async getAllConsensus(limit = 100) {
-    return this.request(`/history/consensus?limit=${limit}`);
+  async getAllConsensus(limit = 100, includeImported = false) {
+    const params = new URLSearchParams({ limit: limit.toString() });
+    if (includeImported) params.append('include_imported', 'true');
+    return this.request(`/history/consensus?${params}`);
   }
 
-  async getConsensusHistory(symbol, limit = 100) {
-    return this.request(`/history/consensus/${symbol}?limit=${limit}`);
+  async getConsensusHistory(symbol, limit = 100, includeImported = false) {
+    const params = new URLSearchParams({ limit: limit.toString() });
+    if (includeImported) params.append('include_imported', 'true');
+    return this.request(`/history/consensus/${symbol}?${params}`);
   }
 
   // Analytics

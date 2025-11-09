@@ -65,8 +65,8 @@ function ForecastChart({ forecastData, symbol }) {
   const chartData = [];
 
   // Determine which historical data to use
-  let historicalPrices = forecastData.historical_prices;
-  let availableDays = forecastData.historical_days;
+  let historicalPrices = forecastData.historical_prices || [];
+  let availableDays = forecastData.historical_days || historicalPrices.length;
 
   // Use extended historical data if available and needed
   if (extendedHistoricalData && historicalDays > forecastData.historical_days) {
@@ -75,17 +75,19 @@ function ForecastChart({ forecastData, symbol }) {
   }
 
   // Historical data (negative days) - filter based on user selection
-  const displayDays = Math.min(historicalDays, availableDays);
-  const startIndex = availableDays - displayDays;
-  const histStart = -displayDays;
+  if (historicalPrices && historicalPrices.length > 0) {
+    const displayDays = Math.min(historicalDays, availableDays);
+    const startIndex = availableDays - displayDays;
+    const histStart = -displayDays;
 
-  historicalPrices.slice(startIndex).forEach((price, idx) => {
-    chartData.push({
-      day: histStart + idx,
-      historical: price,
-      isHistorical: true
+    historicalPrices.slice(startIndex).forEach((price, idx) => {
+      chartData.push({
+        day: histStart + idx,
+        historical: price,
+        isHistorical: true
+      });
     });
-  });
+  }
 
   // Add current price marker (day 0)
   chartData.push({
@@ -96,20 +98,31 @@ function ForecastChart({ forecastData, symbol }) {
   });
 
   // Forecast data (positive days)
-  forecastData.forecast_days.forEach((day, idx) => {
+  const ensembleMedian = forecastData.ensemble_median || forecastData.median || [];
+  const ensembleQ25 = forecastData.ensemble_q25 || forecastData.q25 || [];
+  const ensembleQ75 = forecastData.ensemble_q75 || forecastData.q75 || [];
+  const ensembleMin = forecastData.ensemble_min || forecastData.min || [];
+  const ensembleMax = forecastData.ensemble_max || forecastData.max || [];
+  const individualModels = forecastData.individual_models || [];
+
+  // Generate forecast days if not present (for imported forecasts)
+  const forecastDays = forecastData.forecast_days ||
+    Array.from({ length: ensembleMedian.length }, (_, i) => i + 1);
+
+  forecastDays.forEach((day, idx) => {
     const dataPoint = {
       day: day,
-      forecast_median: forecastData.ensemble_median[idx],
-      forecast_q25: forecastData.ensemble_q25[idx],
-      forecast_q75: forecastData.ensemble_q75[idx],
-      forecast_min: forecastData.ensemble_min[idx],
-      forecast_max: forecastData.ensemble_max[idx],
+      forecast_median: ensembleMedian[idx],
+      forecast_q25: ensembleQ25[idx],
+      forecast_q75: ensembleQ75[idx],
+      forecast_min: ensembleMin[idx],
+      forecast_max: ensembleMax[idx],
       isHistorical: false
     };
 
     // Add individual model predictions if enabled
-    if (showIndividualModels) {
-      forecastData.individual_models.forEach((model) => {
+    if (showIndividualModels && individualModels.length > 0) {
+      individualModels.forEach((model) => {
         dataPoint[`model_${model.name}`] = model.prices[idx];
       });
     }
@@ -245,12 +258,12 @@ function ForecastChart({ forecastData, symbol }) {
           />
 
           {/* Individual models (if enabled) */}
-          {showIndividualModels && forecastData.individual_models.map((model, idx) => (
+          {showIndividualModels && individualModels.map((model, idx) => (
             <Line
               key={model.name}
               type="monotone"
               dataKey={`model_${model.name}`}
-              stroke={`hsl(${(idx * 360) / forecastData.individual_models.length}, 70%, 60%)`}
+              stroke={`hsl(${(idx * 360) / individualModels.length}, 70%, 60%)`}
               strokeWidth={1}
               strokeDasharray="5 5"
               dot={false}
@@ -262,15 +275,15 @@ function ForecastChart({ forecastData, symbol }) {
       </ResponsiveContainer>
 
       {/* Model Summary */}
-      {showIndividualModels && (
+      {showIndividualModels && individualModels.length > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-2 border-t border-gray-700">
-          {forecastData.individual_models.map((model, idx) => (
+          {individualModels.map((model, idx) => (
             <div key={model.name} className="p-2 bg-gray-800 rounded border border-gray-700">
               <div className="flex items-center space-x-2">
                 <div
                   className="w-3 h-3 rounded-full"
                   style={{
-                    backgroundColor: `hsl(${(idx * 360) / forecastData.individual_models.length}, 70%, 60%)`
+                    backgroundColor: `hsl(${(idx * 360) / individualModels.length}, 70%, 60%)`
                   }}
                 ></div>
                 <div>

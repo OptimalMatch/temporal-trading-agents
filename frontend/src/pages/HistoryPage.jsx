@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Search, Filter, Calendar } from 'lucide-react';
+import { Search, Filter, Calendar, Network } from 'lucide-react';
 import api from '../services/api';
 import { format } from 'date-fns';
 import LogsModal from '../components/LogsModal';
@@ -40,9 +40,10 @@ function HistoryPage() {
         setAnalyses(data.analyses || []);
       } else {
         // If symbol is empty, fetch all consensus; otherwise fetch for specific symbol
+        // Include imported forecasts in consensus view
         const data = symbol
-          ? await api.getConsensusHistory(symbol, 50)
-          : await api.getAllConsensus(50);
+          ? await api.getConsensusHistory(symbol, 50, true)
+          : await api.getAllConsensus(50, true);
         setConsensusHistory(data.results || []);
       }
     } catch (error) {
@@ -171,8 +172,16 @@ function HistoryPage() {
                         }`}>
                           {consensus.consensus}
                         </span>
+                        {consensus.source === 'imported' && (
+                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-900 text-blue-300 border border-blue-700">
+                            <Network className="w-3 h-3 mr-1" />
+                            Remote
+                          </span>
+                        )}
                         <span className="text-sm text-gray-400">
-                          {consensus.strength}
+                          {consensus.source === 'imported' && consensus.remote_instance_name
+                            ? `From: ${consensus.remote_instance_name}`
+                            : consensus.strength}
                         </span>
                       </div>
                       <p className="text-sm text-gray-400 mt-1">
@@ -198,7 +207,34 @@ function HistoryPage() {
       {/* Logs Modal */}
       {selectedAnalysis && (
         <LogsModal
-          analysis={selectedAnalysis}
+          analysis={
+            selectedAnalysis.source === 'imported'
+              ? {
+                  symbol: selectedAnalysis.symbol,
+                  strategy_type: `Imported from ${selectedAnalysis.remote_instance_name}`,
+                  created_at: selectedAnalysis.remote_created_at || selectedAnalysis.created_at,
+                  current_price: selectedAnalysis.current_price,
+                  forecast_data: selectedAnalysis.forecast_data,
+                  signal: {
+                    signal: selectedAnalysis.consensus,
+                    position_size_pct: 0
+                  },
+                  status: 'imported',
+                  execution_time_ms: null,
+                  logs: [
+                    `Forecast imported from remote instance: ${selectedAnalysis.remote_instance_name}`,
+                    `Original forecast ID: ${selectedAnalysis.original_forecast_id || selectedAnalysis.id}`,
+                    `Imported at: ${new Date(selectedAnalysis.imported_at || selectedAnalysis.created_at).toLocaleString()}`,
+                    `Interval: ${selectedAnalysis.interval}`,
+                    `Consensus: ${selectedAnalysis.consensus}`,
+                    `Confidence: ${selectedAnalysis.confidence || 0}%`,
+                    `Signal breakdown: ${selectedAnalysis.signals?.bullish_count || selectedAnalysis.bullish_count} bullish, ${selectedAnalysis.signals?.bearish_count || selectedAnalysis.bearish_count} bearish`,
+                    `Forecast horizon: ${selectedAnalysis.forecast_data?.horizon_days || 'N/A'} days`,
+                    `Current price: $${selectedAnalysis.current_price?.toFixed(2)}`,
+                  ]
+                }
+              : selectedAnalysis
+          }
           onClose={() => setSelectedAnalysis(null)}
         />
       )}
