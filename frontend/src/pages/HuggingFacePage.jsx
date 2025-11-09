@@ -618,6 +618,13 @@ function HuggingFacePage() {
                   <option value="momentum">Momentum</option>
                   <option value="balanced">Balanced</option>
                   <option value="mean_reversion">Mean Reversion</option>
+                  <option value="risk_adjusted">Risk Adjusted</option>
+                  <option value="swing">Swing</option>
+                  <option value="acceleration">Acceleration</option>
+                  <option value="volatility">Volatility</option>
+                  <option value="timeframe">Timeframe</option>
+                  <option value="confidence">Confidence</option>
+                  <option value="gradient">Gradient</option>
                 </select>
               </div>
 
@@ -717,6 +724,13 @@ function HuggingFacePage() {
                   <option value="momentum">Momentum</option>
                   <option value="balanced">Balanced</option>
                   <option value="mean_reversion">Mean Reversion</option>
+                  <option value="risk_adjusted">Risk Adjusted</option>
+                  <option value="swing">Swing</option>
+                  <option value="acceleration">Acceleration</option>
+                  <option value="volatility">Volatility</option>
+                  <option value="timeframe">Timeframe</option>
+                  <option value="confidence">Confidence</option>
+                  <option value="gradient">Gradient</option>
                 </select>
               </div>
 
