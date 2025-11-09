@@ -295,7 +295,11 @@ function AnalyzePage() {
             <div className="space-y-6">
               <StrategyCard consensus={result} />
               {result.forecast_data && (
-                <ForecastChart forecastData={result.forecast_data} symbol={result.symbol} />
+                <ForecastChart
+                  forecastData={result.forecast_data}
+                  symbol={result.symbol}
+                  interval={result.interval || '1d'}
+                />
               )}
             </div>
           ) : (

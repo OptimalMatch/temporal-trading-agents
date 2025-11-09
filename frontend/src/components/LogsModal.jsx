@@ -32,7 +32,11 @@ function LogsModal({ analysis, onClose }) {
           {/* Forecast Chart (if available) */}
           {analysis.forecast_data && (
             <div className="border-b border-gray-700 pb-6">
-              <ForecastChart forecastData={analysis.forecast_data} symbol={analysis.symbol} />
+              <ForecastChart
+                forecastData={analysis.forecast_data}
+                symbol={analysis.symbol}
+                interval={analysis.interval || '1d'}
+              />
             </div>
           )}
 
