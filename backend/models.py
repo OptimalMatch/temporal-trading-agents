@@ -830,3 +830,80 @@ class PaperTradingSummary(BaseModel):
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.isoformat().replace('+00:00', 'Z')
+
+
+# ==================== Federation / Remote Instance Models ====================
+
+class RemoteInstanceStatus(str, Enum):
+    """Status of remote instance connection"""
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    ERROR = "error"
+
+
+class RemoteInstance(BaseModel):
+    """Configuration for a remote trading instance"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str = Field(..., description="Friendly name for the remote instance")
+    base_url: str = Field(..., description="Base URL of remote instance (e.g., http://instance2:10750)")
+    api_key: Optional[str] = Field(None, description="Optional API key for authentication")
+    enabled: bool = Field(default=True, description="Whether this instance is enabled")
+    webhook_registered: bool = Field(default=False, description="Whether our webhook is registered with remote")
+    local_webhook_url: Optional[str] = Field(None, description="Our webhook URL registered with remote")
+    status: RemoteInstanceStatus = Field(default=RemoteInstanceStatus.INACTIVE)
+    last_sync: Optional[datetime] = Field(None, description="Last time we synced with this instance")
+    last_health_check: Optional[datetime] = Field(None, description="Last health check timestamp")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_serializer('last_sync', 'last_health_check', 'created_at')
+    def serialize_datetime(self, dt: Optional[datetime], _info):
+        """Serialize datetime with timezone"""
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat().replace('+00:00', 'Z')
+
+
+class RemoteInstanceCreate(BaseModel):
+    """Request to create a remote instance connection"""
+    name: str
+    base_url: str
+    api_key: Optional[str] = None
+    enabled: bool = True
+
+
+class RemoteInstanceUpdate(BaseModel):
+    """Request to update a remote instance"""
+    name: Optional[str] = None
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    enabled: Optional[bool] = None
+
+
+class RemoteForecast(BaseModel):
+    """Forecast imported from a remote instance"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    remote_instance_id: str
+    remote_instance_name: str
+    original_forecast_id: str
+    symbol: str
+    interval: str
+    consensus: str
+    confidence: float
+    current_price: float
+    forecast_data: Dict[str, Any]
+    signals: Dict[str, Any]
+    metrics: Dict[str, Any]
+    imported_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    remote_created_at: datetime
+
+    @field_serializer('imported_at', 'remote_created_at')
+    def serialize_datetime(self, dt: datetime, _info):
+        """Serialize datetime with timezone"""
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat().replace('+00:00', 'Z')

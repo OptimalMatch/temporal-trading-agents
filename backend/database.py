@@ -869,3 +869,95 @@ class Database:
         except Exception as e:
             print(f"Error deleting experiment: {e}")
             return False
+
+    # ==================== Remote Instance Management ====================
+
+    async def create_remote_instance(self, instance) -> str:
+        """Create a new remote instance configuration"""
+        try:
+            instance_dict = instance.dict()
+            await self.db.remote_instances.insert_one(instance_dict)
+            return instance.id
+        except Exception as e:
+            print(f"Error creating remote instance: {e}")
+            raise
+
+    async def get_remote_instance(self, instance_id: str) -> Optional[Dict]:
+        """Get a remote instance by ID"""
+        try:
+            result = await self.db.remote_instances.find_one({"id": instance_id}, {"_id": 0})
+            return result
+        except Exception as e:
+            print(f"Error getting remote instance: {e}")
+            return None
+
+    async def get_remote_instances(self, enabled_only: bool = False) -> List[Dict]:
+        """Get all remote instances"""
+        try:
+            query = {"enabled": True} if enabled_only else {}
+            cursor = self.db.remote_instances.find(query, {"_id": 0}).sort("created_at", -1)
+            instances = await cursor.to_list(length=100)
+            return instances
+        except Exception as e:
+            print(f"Error getting remote instances: {e}")
+            return []
+
+    async def update_remote_instance(self, instance_id: str, update_data: Dict) -> bool:
+        """Update a remote instance"""
+        try:
+            # Remove None values
+            update_data = {k: v for k, v in update_data.items() if v is not None}
+            if not update_data:
+                return False
+
+            result = await self.db.remote_instances.update_one(
+                {"id": instance_id},
+                {"$set": update_data}
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            print(f"Error updating remote instance: {e}")
+            return False
+
+    async def delete_remote_instance(self, instance_id: str) -> bool:
+        """Delete a remote instance"""
+        try:
+            # Also delete associated remote forecasts
+            await self.db.remote_forecasts.delete_many({"remote_instance_id": instance_id})
+
+            result = await self.db.remote_instances.delete_one({"id": instance_id})
+            return result.deleted_count > 0
+        except Exception as e:
+            print(f"Error deleting remote instance: {e}")
+            return False
+
+    async def create_remote_forecast(self, forecast) -> str:
+        """Store an imported forecast from remote instance"""
+        try:
+            forecast_dict = forecast.dict()
+            await self.db.remote_forecasts.insert_one(forecast_dict)
+            return forecast.id
+        except Exception as e:
+            print(f"Error creating remote forecast: {e}")
+            raise
+
+    async def get_remote_forecasts(
+        self,
+        symbol: Optional[str] = None,
+        remote_instance_id: Optional[str] = None,
+        limit: int = 100
+    ) -> List[Dict]:
+        """Get imported forecasts from remote instances"""
+        try:
+            query = {}
+            if symbol:
+                query["symbol"] = symbol
+            if remote_instance_id:
+                query["remote_instance_id"] = remote_instance_id
+
+            cursor = self.db.remote_forecasts.find(query, {"_id": 0}).sort("imported_at", -1).limit(limit)
+            forecasts = await cursor.to_list(length=limit)
+            return forecasts
+        except Exception as e:
+            print(f"Error getting remote forecasts: {e}")
+            return []

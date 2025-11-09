@@ -1,5 +1,5 @@
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { Activity, Calendar, History, Play, TrendingUp, Database, BarChart3, Settings, Info, Zap, Clock, Target } from 'lucide-react';
+import { Activity, Calendar, History, Play, TrendingUp, Database, BarChart3, Settings, Info, Zap, Clock, Target, Network } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import Dashboard from './pages/Dashboard';
 import HistoryPage from './pages/HistoryPage';
@@ -10,6 +10,7 @@ import BacktestPage from './pages/BacktestPage';
 import OptimizationPage from './pages/OptimizationPage';
 import PaperTradingPage from './pages/PaperTradingPage';
 import ExperimentsPage from './pages/ExperimentsPage';
+import FederationPage from './pages/FederationPage';
 import AboutPage from './pages/AboutPage';
 
 function Navigation() {
@@ -34,6 +35,7 @@ function Navigation() {
     { path: '/history', label: 'History', icon: History },
     { path: '/scheduler', label: 'Scheduler', icon: Calendar },
     { path: '/data-sync', label: 'Data', icon: Database },
+    { path: '/federation', label: 'Federation', icon: Network },
     { path: '/about', label: 'About', icon: Info },
   ];
 
@@ -117,6 +119,7 @@ function App() {
             <Route path="/history" element={<HistoryPage />} />
             <Route path="/scheduler" element={<SchedulerPage />} />
             <Route path="/data-sync" element={<DataSyncPage />} />
+            <Route path="/federation" element={<FederationPage />} />
             <Route path="/about" element={<AboutPage />} />
           </Routes>
         </main>

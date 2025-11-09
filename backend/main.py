@@ -27,6 +27,7 @@ import uuid
 import asyncio
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import json
+import httpx
 
 from backend.models import (
     StrategyAnalysisRequest, ConsensusRequest, StrategyResult,
@@ -40,7 +41,9 @@ from backend.models import (
     PaperTradingSummary, PaperTradingStatus,
     OptimizableParams, ParameterGrid, OptimizationRequest, OptimizationResult,
     OptimizationRun, OptimizationStatus, OptimizationMetric,
-    Experiment
+    Experiment,
+    RemoteInstance, RemoteInstanceCreate, RemoteInstanceUpdate, RemoteInstanceStatus,
+    RemoteForecast
 )
 from backend.database import Database
 from backend.websocket_manager import manager as ws_manager
@@ -48,6 +51,7 @@ from backend.scheduler import get_scheduler
 from backend.data_sync_manager import get_sync_manager
 from backend.backtesting_engine import BacktestEngine
 from backend.analysis_queue import get_analysis_queue
+from backend.forecast_publisher import ForecastPublisher, WebhookConfig, create_export_payload
 
 # Import strategies
 from strategies.strategy_utils import load_ensemble_module, train_ensemble, get_default_ensemble_configs
@@ -117,13 +121,16 @@ executor = None
 # Thread pool executor for long-running backtests
 backtest_executor = None
 
+# Forecast publisher instance
+forecast_publisher = None
+
 
 # ==================== Lifecycle Events ====================
 
 @app.on_event("startup")
 async def startup_event():
     """Connect to database and start scheduler on startup"""
-    global scheduler, executor, backtest_executor
+    global scheduler, executor, backtest_executor, forecast_publisher
 
     await db.connect()
     print("🚀 API: Server started successfully")
@@ -148,6 +155,10 @@ async def startup_event():
     analysis_queue = get_analysis_queue()
     await analysis_queue.start_processing()
     print("🎯 API: Analysis queue initialized")
+
+    # Initialize forecast publisher with no webhooks (can be added via API)
+    forecast_publisher = ForecastPublisher()
+    print("📡 API: Forecast publisher initialized")
 
     # Restore auto-schedule jobs from database
     sync_manager = await get_sync_manager(db.client.temporal_trading)
@@ -946,6 +957,26 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
             }}
         )
 
+        # Publish forecast to webhooks
+        if forecast_publisher:
+            try:
+                logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Publishing forecast to webhooks")
+                # Fetch complete consensus result from database
+                consensus_result = await database.get_consensus_result(consensus_id)
+                if consensus_result:
+                    # Create standardized export payload
+                    export_payload = create_export_payload(consensus_result)
+                    # Publish to all registered webhooks
+                    publish_results = await forecast_publisher.publish_forecast(
+                        export_payload,
+                        event_type="forecast.created"
+                    )
+                    success_count = sum(1 for v in publish_results.values() if v)
+                    logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Published to {success_count}/{len(publish_results)} webhooks")
+            except Exception as e:
+                logs.append(f"[{datetime.now(timezone.utc).isoformat()}] WARNING: Webhook publishing failed - {str(e)}")
+                logger.warning(f"Failed to publish forecast to webhooks: {e}")
+
         # Send WebSocket update: Completed
         await ws_manager.send_progress(
             task_id=consensus_id,
@@ -1331,6 +1362,567 @@ async def get_symbol_analytics(
         return analytics
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to retrieve analytics: {str(e)}")
+
+
+# ==================== Forecast Export Endpoints ====================
+
+@app.get("/api/v1/forecasts/export/{symbol}")
+async def export_forecast(
+    symbol: str,
+    interval: str = Query(default="1d", description="Time interval (1d, 1h, etc.)"),
+    format: str = Query(default="json", description="Export format (json, csv)"),
+    database: Database = Depends(get_database)
+):
+    """
+    Export latest forecast for a symbol in standardized format.
+    This endpoint provides forecasts in a format suitable for external consumption.
+    """
+    try:
+        # Get latest consensus results for symbol
+        all_results = await database.get_consensus_results(
+            symbol=symbol,
+            limit=10  # Get a few recent results to find completed ones
+        )
+
+        if not all_results:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No forecasts found for {symbol}"
+            )
+
+        # Filter for completed results with matching interval
+        completed_results = [
+            r for r in all_results
+            if r.get('status') == AnalysisStatus.COMPLETED.value
+            and r.get('interval', '1d') == interval
+        ]
+
+        if not completed_results:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No completed forecasts found for {symbol} with interval {interval}"
+            )
+
+        consensus_result = completed_results[0]  # Most recent completed result
+
+        # Create standardized export payload
+        export_data = create_export_payload(consensus_result)
+
+        if format.lower() == "json":
+            return export_data
+        elif format.lower() == "csv":
+            # Convert to CSV format (simplified)
+            import io
+            import csv
+
+            output = io.StringIO()
+            writer = csv.writer(output)
+
+            # Write header
+            writer.writerow([
+                "symbol", "timestamp", "consensus", "confidence",
+                "current_price", "expected_return_bps", "bullish_count", "bearish_count"
+            ])
+
+            # Write data row
+            writer.writerow([
+                export_data["symbol"],
+                export_data["timestamp"],
+                export_data["forecast"]["consensus"],
+                export_data["forecast"]["confidence"],
+                export_data["metrics"]["current_price"],
+                export_data["metrics"]["expected_return_bps"],
+                export_data["signals"]["bullish_count"],
+                export_data["signals"]["bearish_count"]
+            ])
+
+            from fastapi.responses import Response
+            return Response(
+                content=output.getvalue(),
+                media_type="text/csv",
+                headers={"Content-Disposition": f"attachment; filename={symbol}_forecast.csv"}
+            )
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported format: {format}")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to export forecast: {str(e)}")
+
+
+@app.get("/api/v1/webhooks")
+async def list_webhooks():
+    """List all registered webhooks"""
+    if not forecast_publisher:
+        raise HTTPException(status_code=503, detail="Forecast publisher not initialized")
+
+    return {
+        "webhooks": [
+            {
+                "url": webhook.url,
+                "enabled": webhook.enabled,
+                "timeout": webhook.timeout,
+                "retry_count": webhook.retry_count,
+                "retry_delay": webhook.retry_delay
+            }
+            for webhook in forecast_publisher.webhooks
+        ],
+        "count": len(forecast_publisher.webhooks)
+    }
+
+
+@app.post("/api/v1/webhooks")
+async def register_webhook(webhook: WebhookConfig):
+    """Register a new webhook for forecast notifications"""
+    if not forecast_publisher:
+        raise HTTPException(status_code=503, detail="Forecast publisher not initialized")
+
+    # Check if webhook already exists
+    existing = [w for w in forecast_publisher.webhooks if w.url == webhook.url]
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Webhook already registered: {webhook.url}")
+
+    forecast_publisher.add_webhook(webhook)
+
+    return {
+        "message": "Webhook registered successfully",
+        "webhook": {
+            "url": webhook.url,
+            "enabled": webhook.enabled,
+            "timeout": webhook.timeout,
+            "retry_count": webhook.retry_count
+        }
+    }
+
+
+@app.delete("/api/v1/webhooks")
+async def unregister_webhook(url: str = Query(..., description="Webhook URL to remove")):
+    """Unregister a webhook"""
+    if not forecast_publisher:
+        raise HTTPException(status_code=503, detail="Forecast publisher not initialized")
+
+    # Check if webhook exists
+    existing = [w for w in forecast_publisher.webhooks if w.url == url]
+    if not existing:
+        raise HTTPException(status_code=404, detail=f"Webhook not found: {url}")
+
+    forecast_publisher.remove_webhook(url)
+
+    return {
+        "message": "Webhook unregistered successfully",
+        "url": url
+    }
+
+
+@app.post("/api/v1/webhooks/test")
+async def test_webhook_endpoint(url: str = Query(..., description="Webhook URL to test")):
+    """Test a webhook URL with a sample payload"""
+    if not forecast_publisher:
+        raise HTTPException(status_code=503, detail="Forecast publisher not initialized")
+
+    try:
+        result = await forecast_publisher.test_webhook(url)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Webhook test failed: {str(e)}")
+
+
+# ==================== Federation / Remote Instance Endpoints ====================
+
+@app.get("/api/v1/federation/instances")
+async def list_remote_instances(
+    enabled_only: bool = Query(default=False, description="Only return enabled instances"),
+    database: Database = Depends(get_database)
+):
+    """List all remote instance connections"""
+    try:
+        instances = await database.get_remote_instances(enabled_only=enabled_only)
+        return {
+            "instances": instances,
+            "count": len(instances)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list remote instances: {str(e)}")
+
+
+@app.post("/api/v1/federation/instances")
+async def create_remote_instance(
+    instance_create: RemoteInstanceCreate,
+    database: Database = Depends(get_database)
+):
+    """Add a new remote instance connection"""
+    try:
+        # Create RemoteInstance model
+        instance = RemoteInstance(
+            name=instance_create.name,
+            base_url=instance_create.base_url.rstrip('/'),  # Remove trailing slash
+            api_key=instance_create.api_key,
+            enabled=instance_create.enabled,
+            status=RemoteInstanceStatus.INACTIVE
+        )
+
+        # Store in database
+        instance_id = await database.create_remote_instance(instance)
+
+        return {
+            "message": "Remote instance created successfully",
+            "instance": instance.dict()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create remote instance: {str(e)}")
+
+
+@app.get("/api/v1/federation/instances/{instance_id}")
+async def get_remote_instance(
+    instance_id: str,
+    database: Database = Depends(get_database)
+):
+    """Get details of a remote instance"""
+    try:
+        instance = await database.get_remote_instance(instance_id)
+        if not instance:
+            raise HTTPException(status_code=404, detail=f"Remote instance not found: {instance_id}")
+        return instance
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get remote instance: {str(e)}")
+
+
+@app.patch("/api/v1/federation/instances/{instance_id}")
+async def update_remote_instance(
+    instance_id: str,
+    instance_update: RemoteInstanceUpdate,
+    database: Database = Depends(get_database)
+):
+    """Update a remote instance configuration"""
+    try:
+        # Check if instance exists
+        instance = await database.get_remote_instance(instance_id)
+        if not instance:
+            raise HTTPException(status_code=404, detail=f"Remote instance not found: {instance_id}")
+
+        # Update
+        update_data = instance_update.dict(exclude_unset=True)
+        if update_data.get('base_url'):
+            update_data['base_url'] = update_data['base_url'].rstrip('/')
+
+        success = await database.update_remote_instance(instance_id, update_data)
+
+        if success:
+            return {"message": "Remote instance updated successfully"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to update remote instance")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update remote instance: {str(e)}")
+
+
+@app.delete("/api/v1/federation/instances/{instance_id}")
+async def delete_remote_instance(
+    instance_id: str,
+    database: Database = Depends(get_database)
+):
+    """Delete a remote instance connection"""
+    try:
+        # Check if instance exists
+        instance = await database.get_remote_instance(instance_id)
+        if not instance:
+            raise HTTPException(status_code=404, detail=f"Remote instance not found: {instance_id}")
+
+        success = await database.delete_remote_instance(instance_id)
+
+        if success:
+            return {"message": "Remote instance deleted successfully"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to delete remote instance")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete remote instance: {str(e)}")
+
+
+@app.post("/api/v1/federation/instances/{instance_id}/register-webhook")
+async def register_webhook_with_remote(
+    instance_id: str,
+    local_webhook_url: str = Query(..., description="Our local webhook URL to register with remote"),
+    database: Database = Depends(get_database)
+):
+    """Register our webhook with a remote instance"""
+    try:
+        # Get remote instance
+        instance = await database.get_remote_instance(instance_id)
+        if not instance:
+            raise HTTPException(status_code=404, detail=f"Remote instance not found: {instance_id}")
+
+        # Build webhook registration payload
+        webhook_config = {
+            "url": local_webhook_url,
+            "enabled": True,
+            "timeout": 30,
+            "retry_count": 3
+        }
+
+        # Call remote instance's webhook registration endpoint
+        async with httpx.AsyncClient(timeout=10) as client:
+            headers = {"Content-Type": "application/json"}
+            if instance.get('api_key'):
+                headers["Authorization"] = f"Bearer {instance['api_key']}"
+
+            response = await client.post(
+                f"{instance['base_url']}/api/v1/webhooks",
+                json=webhook_config,
+                headers=headers
+            )
+
+            if response.status_code == 200 or response.status_code == 201:
+                # Update our local record
+                await database.update_remote_instance(
+                    instance_id,
+                    {
+                        "webhook_registered": True,
+                        "local_webhook_url": local_webhook_url,
+                        "status": RemoteInstanceStatus.ACTIVE.value,
+                        "last_health_check": datetime.now(timezone.utc)
+                    }
+                )
+
+                return {
+                    "message": "Webhook registered successfully with remote instance",
+                    "remote_response": response.json()
+                }
+            else:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Remote instance returned error: {response.text}"
+                )
+
+    except HTTPException:
+        raise
+    except httpx.RequestError as e:
+        # Update status to ERROR
+        await database.update_remote_instance(
+            instance_id,
+            {"status": RemoteInstanceStatus.ERROR.value}
+        )
+        raise HTTPException(status_code=503, detail=f"Failed to connect to remote instance: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to register webhook: {str(e)}")
+
+
+@app.get("/api/v1/federation/instances/{instance_id}/forecasts")
+async def fetch_remote_forecasts(
+    instance_id: str,
+    symbol: Optional[str] = Query(None, description="Filter by symbol"),
+    interval: str = Query(default="1d", description="Time interval"),
+    database: Database = Depends(get_database)
+):
+    """Fetch latest forecasts from a remote instance"""
+    try:
+        # Get remote instance
+        instance = await database.get_remote_instance(instance_id)
+        if not instance:
+            raise HTTPException(status_code=404, detail=f"Remote instance not found: {instance_id}")
+
+        # Build query parameters
+        params = {"interval": interval}
+        if symbol:
+            params["symbol"] = symbol
+
+        # Fetch forecasts from remote instance
+        async with httpx.AsyncClient(timeout=30) as client:
+            headers = {}
+            if instance.get('api_key'):
+                headers["Authorization"] = f"Bearer {instance['api_key']}"
+
+            # Construct URL - try to get list of forecasts
+            url = f"{instance['base_url']}/api/v1/history/consensus"
+            if symbol:
+                url = f"{instance['base_url']}/api/v1/history/consensus/{symbol}"
+
+            response = await client.get(url, params=params, headers=headers)
+            response.raise_for_status()
+
+            data = response.json()
+
+            # Update instance status and last sync time
+            await database.update_remote_instance(
+                instance_id,
+                {
+                    "status": RemoteInstanceStatus.ACTIVE.value,
+                    "last_sync": datetime.now(timezone.utc),
+                    "last_health_check": datetime.now(timezone.utc)
+                }
+            )
+
+            return {
+                "remote_instance": instance['name'],
+                "forecasts": data.get('results', [data]) if 'results' in data else [data],
+                "count": data.get('count', 1)
+            }
+
+    except HTTPException:
+        raise
+    except httpx.RequestError as e:
+        await database.update_remote_instance(
+            instance_id,
+            {"status": RemoteInstanceStatus.ERROR.value}
+        )
+        raise HTTPException(status_code=503, detail=f"Failed to connect to remote instance: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch remote forecasts: {str(e)}")
+
+
+@app.post("/api/v1/federation/instances/{instance_id}/import")
+async def import_remote_forecast(
+    instance_id: str,
+    symbol: str = Query(..., description="Symbol to import"),
+    interval: str = Query(default="1d", description="Time interval"),
+    database: Database = Depends(get_database)
+):
+    """Import a forecast from remote instance and store locally"""
+    try:
+        # Get remote instance
+        instance = await database.get_remote_instance(instance_id)
+        if not instance:
+            raise HTTPException(status_code=404, detail=f"Remote instance not found: {instance_id}")
+
+        # Fetch the forecast from remote
+        async with httpx.AsyncClient(timeout=30) as client:
+            headers = {}
+            if instance.get('api_key'):
+                headers["Authorization"] = f"Bearer {instance['api_key']}"
+
+            url = f"{instance['base_url']}/api/v1/forecasts/export/{symbol}"
+            params = {"interval": interval}
+
+            response = await client.get(url, params=params, headers=headers)
+            response.raise_for_status()
+
+            forecast_data = response.json()
+
+            # Create RemoteForecast object
+            from dateutil import parser
+            remote_forecast = RemoteForecast(
+                remote_instance_id=instance_id,
+                remote_instance_name=instance['name'],
+                original_forecast_id=forecast_data['id'],
+                symbol=forecast_data['symbol'],
+                interval=forecast_data['interval'],
+                consensus=forecast_data['forecast']['consensus'],
+                confidence=forecast_data['forecast']['confidence'],
+                current_price=forecast_data['metrics']['current_price'],
+                forecast_data=forecast_data['forecast'],
+                signals=forecast_data['signals'],
+                metrics=forecast_data['metrics'],
+                remote_created_at=parser.parse(forecast_data['timestamp'])
+            )
+
+            # Store in database
+            forecast_id = await database.create_remote_forecast(remote_forecast)
+
+            return {
+                "message": "Forecast imported successfully",
+                "forecast_id": forecast_id,
+                "forecast": remote_forecast.dict()
+            }
+
+    except HTTPException:
+        raise
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=503, detail=f"Failed to connect to remote instance: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to import forecast: {str(e)}")
+
+
+@app.get("/api/v1/federation/forecasts")
+async def list_imported_forecasts(
+    symbol: Optional[str] = Query(None, description="Filter by symbol"),
+    remote_instance_id: Optional[str] = Query(None, description="Filter by remote instance"),
+    limit: int = Query(default=50, description="Maximum number of forecasts to return"),
+    database: Database = Depends(get_database)
+):
+    """List all imported forecasts from remote instances"""
+    try:
+        forecasts = await database.get_remote_forecasts(
+            symbol=symbol,
+            remote_instance_id=remote_instance_id,
+            limit=limit
+        )
+
+        return {
+            "forecasts": forecasts,
+            "count": len(forecasts)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list imported forecasts: {str(e)}")
+
+
+@app.get("/api/v1/federation/instances/{instance_id}/health")
+async def check_remote_instance_health(
+    instance_id: str,
+    database: Database = Depends(get_database)
+):
+    """Check health status of a remote instance"""
+    try:
+        # Get remote instance
+        instance = await database.get_remote_instance(instance_id)
+        if not instance:
+            raise HTTPException(status_code=404, detail=f"Remote instance not found: {instance_id}")
+
+        # Try to connect to remote health endpoint
+        async with httpx.AsyncClient(timeout=10) as client:
+            headers = {}
+            if instance.get('api_key'):
+                headers["Authorization"] = f"Bearer {instance['api_key']}"
+
+            start_time = time.time()
+            response = await client.get(
+                f"{instance['base_url']}/health",
+                headers=headers
+            )
+            response_time = (time.time() - start_time) * 1000  # ms
+
+            is_healthy = response.status_code == 200
+            health_data = response.json() if is_healthy else {}
+
+            # Update instance status
+            new_status = RemoteInstanceStatus.ACTIVE if is_healthy else RemoteInstanceStatus.ERROR
+            await database.update_remote_instance(
+                instance_id,
+                {
+                    "status": new_status.value,
+                    "last_health_check": datetime.now(timezone.utc)
+                }
+            )
+
+            return {
+                "instance_id": instance_id,
+                "instance_name": instance['name'],
+                "healthy": is_healthy,
+                "status_code": response.status_code,
+                "response_time_ms": response_time,
+                "remote_data": health_data
+            }
+
+    except HTTPException:
+        raise
+    except httpx.RequestError as e:
+        # Update status to ERROR
+        await database.update_remote_instance(
+            instance_id,
+            {"status": RemoteInstanceStatus.ERROR.value}
+        )
+        return {
+            "instance_id": instance_id,
+            "instance_name": instance.get('name', 'Unknown'),
+            "healthy": False,
+            "error": str(e)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to check health: {str(e)}")
 
 
 # ==================== WebSocket Endpoints ====================
