@@ -43,7 +43,9 @@ from backend.models import (
     OptimizationRun, OptimizationStatus, OptimizationMetric,
     Experiment,
     RemoteInstance, RemoteInstanceCreate, RemoteInstanceUpdate, RemoteInstanceStatus,
-    RemoteForecast
+    RemoteForecast,
+    HuggingFaceConfig, HuggingFaceConfigCreate, HuggingFaceConfigUpdate,
+    ModelExportRequest, ModelImportRequest
 )
 from backend.database import Database
 from backend.websocket_manager import manager as ws_manager
