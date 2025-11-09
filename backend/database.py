@@ -964,17 +964,27 @@ class Database:
 
     # ==================== HuggingFace Configuration Methods ====================
 
-    async def create_hf_config(self, config) -> str:
+    async def create_hf_config(self, config: Dict) -> str:
         """Create a HuggingFace configuration"""
         try:
-            config_dict = config.dict()
+            # config is already a dict from model_dump()
+            # Generate ID if not present
+            if 'id' not in config:
+                config['id'] = str(uuid.uuid4())
+
+            # Add timestamps if not present
+            if 'created_at' not in config:
+                config['created_at'] = datetime.now(timezone.utc)
+            if 'updated_at' not in config:
+                config['updated_at'] = datetime.now(timezone.utc)
+
             # Create unique index on symbol+interval
             await self.db.hf_configs.create_index(
                 [("symbol", 1), ("interval", 1)],
                 unique=True
             )
-            await self.db.hf_configs.insert_one(config_dict)
-            return config.id
+            await self.db.hf_configs.insert_one(config)
+            return config['id']
         except Exception as e:
             print(f"Error creating HF config: {e}")
             raise
