@@ -230,14 +230,9 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
                     print(f"⚠️  Feature mismatch - retraining from scratch")
                     use_cached = False
 
-    # Compile model for PyTorch 2.x optimization (20-30% speedup on RTX 4090)
-    # Only for hourly intervals - daily models are small and autotune overhead isn't worth it
-    try:
-        if interval == '1h' and torch.cuda.is_available() and hasattr(torch, 'compile'):
-            model = torch.compile(model, mode='max-autotune')  # Aggressive optimization
-            print(f"⚡ Model compiled with PyTorch 2.x optimization (hourly interval)")
-    except Exception as e:
-        print(f"⚠️  torch.compile not available: {e}")
+    # Skip torch.compile() - autotuning overhead not worth it for either interval
+    # Batch size optimization provides sufficient speedup without compilation delay
+    # torch.compile() disabled to ensure predictable, fast training times
 
     # Train or fine-tune
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
