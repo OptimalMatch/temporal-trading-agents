@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Upload, Plus, Trash2, Edit2, Save, X, Eye, EyeOff, Cloud, Download, CheckCircle, AlertCircle, Layers } from 'lucide-react';
+import { Upload, Plus, Trash2, Edit2, Save, X, Eye, EyeOff, Cloud, Download, CheckCircle, AlertCircle, Layers, Wifi, Loader2 } from 'lucide-react';
 
 const API_BASE = '/api/v1';
 
@@ -11,6 +11,11 @@ function HuggingFacePage() {
   const [editingId, setEditingId] = useState(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [showTokenMap, setShowTokenMap] = useState({});
+
+  // Connection test states
+  const [showConnectionTest, setShowConnectionTest] = useState(false);
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [connectionTestResult, setConnectionTestResult] = useState(null);
 
   // Modal states
   const [showExportModal, setShowExportModal] = useState(false);
@@ -311,6 +316,32 @@ function HuggingFacePage() {
     }));
   };
 
+  const handleTestConnection = async () => {
+    setTestingConnection(true);
+    setConnectionTestResult(null);
+
+    try {
+      const res = await fetch(`${API_BASE}/huggingface/test-connectivity`);
+      const data = await res.json();
+      setConnectionTestResult(data);
+      setShowConnectionTest(true);
+    } catch (err) {
+      console.error('Error testing connection:', err);
+      setConnectionTestResult({
+        timestamp: new Date().toISOString(),
+        checks: [{
+          name: 'Connection Test',
+          status: 'failed',
+          error: err.message,
+          details: 'Failed to reach backend API'
+        }]
+      });
+      setShowConnectionTest(true);
+    } finally {
+      setTestingConnection(false);
+    }
+  };
+
   const formatTimestamp = (timestamp) => {
     if (!timestamp) return 'Never';
     return new Date(timestamp).toLocaleString();
@@ -337,18 +368,118 @@ function HuggingFacePage() {
           </p>
         </div>
 
-        <button
-          onClick={() => setShowAddForm(!showAddForm)}
-          className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg flex items-center gap-2 transition-colors"
-        >
-          {showAddForm ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-          {showAddForm ? 'Cancel' : 'Add Configuration'}
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={handleTestConnection}
+            disabled={testingConnection}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {testingConnection ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Testing...
+              </>
+            ) : (
+              <>
+                <Wifi className="w-4 h-4" />
+                Test Connection
+              </>
+            )}
+          </button>
+          <button
+            onClick={() => setShowAddForm(!showAddForm)}
+            className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg flex items-center gap-2 transition-colors"
+          >
+            {showAddForm ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+            {showAddForm ? 'Cancel' : 'Add Configuration'}
+          </button>
+        </div>
       </div>
 
       {error && (
         <div className="bg-red-900/20 border border-red-700 text-red-400 px-4 py-3 rounded-lg">
           Error: {error}
+        </div>
+      )}
+
+      {/* Connection Test Results */}
+      {showConnectionTest && connectionTestResult && (
+        <div className="bg-gray-800 border border-gray-700 rounded-lg p-6">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-bold text-gray-100 flex items-center gap-2">
+              <Wifi className="w-5 h-5 text-blue-400" />
+              HuggingFace Connection Test
+            </h2>
+            <button
+              onClick={() => setShowConnectionTest(false)}
+              className="text-gray-400 hover:text-gray-300"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="text-sm text-gray-400 mb-4">
+            Tested at: {new Date(connectionTestResult.timestamp).toLocaleString()}
+          </div>
+
+          <div className="space-y-3">
+            {connectionTestResult.checks.map((check, index) => (
+              <div
+                key={index}
+                className={`p-4 rounded-lg border ${
+                  check.status === 'success'
+                    ? 'bg-green-900/20 border-green-700'
+                    : check.status === 'warning'
+                    ? 'bg-yellow-900/20 border-yellow-700'
+                    : 'bg-red-900/20 border-red-700'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  {check.status === 'success' ? (
+                    <CheckCircle className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+                  )}
+                  <div className="flex-1">
+                    <div className="font-medium text-gray-100 mb-1">{check.name}</div>
+                    <div className="text-sm text-gray-300">{check.details}</div>
+                    {check.error && (
+                      <div className="text-sm text-red-400 mt-2">
+                        <span className="font-medium">Error:</span> {check.error}
+                      </div>
+                    )}
+                    {check.hint && (
+                      <div className="text-sm text-yellow-400 mt-2">
+                        <span className="font-medium">💡 Hint:</span> {check.hint}
+                      </div>
+                    )}
+                    {check.user && (
+                      <div className="text-sm text-blue-400 mt-2">
+                        <span className="font-medium">Logged in as:</span> {check.user}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Overall Status Summary */}
+          <div className="mt-4 pt-4 border-t border-gray-700">
+            {connectionTestResult.checks.every(c => c.status === 'success') ? (
+              <div className="flex items-center gap-2 text-green-400">
+                <CheckCircle className="w-5 h-5" />
+                <span className="font-medium">All checks passed! You can export models to HuggingFace Hub.</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-red-400">
+                <AlertCircle className="w-5 h-5" />
+                <span className="font-medium">
+                  Some checks failed. Please resolve the issues above before exporting.
+                </span>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
