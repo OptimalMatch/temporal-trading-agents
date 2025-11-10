@@ -29,6 +29,7 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import json
 import httpx
 
+from backend.gpu_profiles import get_max_workers, get_gpu_profile, print_profile_info
 from backend.models import (
     StrategyAnalysisRequest, ConsensusRequest, StrategyResult,
     ConsensusAnalysis, HealthCheck, StrategyType, StrategyAnalysis,
@@ -151,9 +152,13 @@ async def startup_event():
     print("🚀 API: Server started successfully")
 
     # Initialize process pool executor for CPU-intensive tasks
-    # Using max 4 workers to avoid overloading the system
-    executor = ProcessPoolExecutor(max_workers=4)
-    print("⚡ API: ProcessPoolExecutor initialized with 4 workers")
+    # Worker count determined by GPU profile (GPU_PROFILE env var)
+    # Optimized for balance between parallelism and batch size
+    max_workers = get_max_workers()
+    gpu_profile = get_gpu_profile()
+    executor = ProcessPoolExecutor(max_workers=max_workers)
+    print(f"⚡ API: ProcessPoolExecutor initialized with {max_workers} workers")
+    print(f"🎮 GPU: Using profile '{gpu_profile['name']}' ({gpu_profile['vram_gb']}GB VRAM)")
 
     # Initialize thread pool executor for backtests
     # Using max 2 workers to limit concurrent backtests
