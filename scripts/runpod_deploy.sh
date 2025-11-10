@@ -353,7 +353,12 @@ fi
 echo -e "${GREEN}Configuring nginx...${NC}"
 FRONTEND_PORT=${FRONTEND_PORT:-80}
 
-sudo tee /etc/nginx/sites-available/temporal-trading > /dev/null << 'NGINX_EOF'
+# Check if nginx.conf includes sites-enabled (standard) or is custom (RunPod)
+if grep -q "sites-enabled" /etc/nginx/nginx.conf 2>/dev/null; then
+    # Standard nginx setup - use sites-available/sites-enabled
+    echo -e "${YELLOW}   Using standard nginx configuration (sites-enabled)${NC}"
+
+    sudo tee /etc/nginx/sites-available/temporal-trading > /dev/null << 'NGINX_EOF'
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
@@ -402,9 +407,74 @@ server {
 }
 NGINX_EOF
 
-# Enable site
-sudo ln -sf /etc/nginx/sites-available/temporal-trading /etc/nginx/sites-enabled/
-sudo rm -f /etc/nginx/sites-enabled/default
+    # Enable site
+    sudo ln -sf /etc/nginx/sites-available/temporal-trading /etc/nginx/sites-enabled/
+    sudo rm -f /etc/nginx/sites-enabled/default
+else
+    # RunPod custom nginx - add directly to nginx.conf
+    echo -e "${YELLOW}   RunPod custom nginx detected, adding to nginx.conf${NC}"
+
+    # Backup nginx.conf
+    sudo cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.backup
+
+    # Check if our config already exists
+    if ! grep -q "Temporal Trading Agents" /etc/nginx/nginx.conf; then
+        # Add our server block before the closing brace of http block
+        sudo sed -i '/^}$/i \
+\
+    # Temporal Trading Agents\
+    server {\
+        listen 80 default_server;\
+        listen [::]:80 default_server;\
+\
+        root /var/www/html/temporal-trading;\
+        index index.html;\
+\
+        server_name _;\
+\
+        # Frontend\
+        location / {\
+            try_files $uri $uri/ /index.html;\
+        }\
+\
+        # Backend API proxy\
+        location /api/ {\
+            proxy_pass http://localhost:8000/;\
+            proxy_http_version 1.1;\
+            proxy_set_header Upgrade $http_upgrade;\
+            proxy_set_header Connection '"'"'upgrade'"'"';\
+            proxy_set_header Host $host;\
+            proxy_cache_bypass $http_upgrade;\
+            proxy_set_header X-Real-IP $remote_addr;\
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\
+            proxy_set_header X-Forwarded-Proto $scheme;\
+        }\
+\
+        # WebSocket support\
+        location /ws {\
+            proxy_pass http://localhost:8000/ws;\
+            proxy_http_version 1.1;\
+            proxy_set_header Upgrade $http_upgrade;\
+            proxy_set_header Connection "Upgrade";\
+            proxy_set_header Host $host;\
+        }\
+\
+        # Health check\
+        location /health {\
+            proxy_pass http://localhost:8000/health;\
+        }\
+\
+        # API docs\
+        location /docs {\
+            proxy_pass http://localhost:8000/docs;\
+        }\
+    }
+' /etc/nginx/nginx.conf
+        echo -e "${GREEN}   ✅ Added temporal-trading server block to nginx.conf${NC}"
+    else
+        echo -e "${YELLOW}   Temporal Trading config already exists in nginx.conf${NC}"
+    fi
+fi
 
 # Test and start nginx
 if sudo nginx -t 2>/dev/null; then
@@ -419,7 +489,12 @@ if sudo nginx -t 2>/dev/null; then
     fi
     echo -e "${GREEN}✅ nginx configured and running${NC}"
 else
-    echo -e "${YELLOW}⚠️  nginx configuration test failed, check /etc/nginx/sites-available/temporal-trading${NC}"
+    echo -e "${RED}❌ nginx configuration test failed${NC}"
+    echo -e "${YELLOW}   Restoring backup...${NC}"
+    if [ -f /etc/nginx/nginx.conf.backup ]; then
+        sudo cp /etc/nginx/nginx.conf.backup /etc/nginx/nginx.conf
+    fi
+    echo -e "${YELLOW}   Check logs: sudo tail /var/log/nginx/error.log${NC}"
 fi
 
 echo ""
