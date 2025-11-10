@@ -3,21 +3,20 @@ import sys
 import os
 import json
 from datetime import datetime
+from motor.motor_asyncio import AsyncIOMotorClient
 
-# Set the MongoDB URL
-os.environ['MONGODB_URL'] = os.getenv('MONGODB_URL', 'mongodb://localhost:27017')
+async def import_all(backup_dir, mongodb_url):
+    """Import MongoDB data from JSON backup files."""
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from backend.database import Database
-
-async def import_all(backup_dir):
-    db = Database()
-    await db.connect()
+    # Connect to MongoDB
+    client = AsyncIOMotorClient(mongodb_url)
+    db = client.temporal_trading
 
     backup_dir = os.path.expanduser(backup_dir)
 
     if not os.path.exists(backup_dir):
         print(f"❌ Backup directory not found: {backup_dir}")
+        client.close()
         return
 
     # Restore consensus results
@@ -35,14 +34,14 @@ async def import_all(backup_dir):
                     except:
                         pass  # Keep as string if not a valid datetime
 
-            # Remove _id so MongoDB can generate new ones (or convert to ObjectId if needed)
+            # Remove _id so MongoDB can generate new ones
             if '_id' in doc:
                 del doc['_id']
 
         if results:
             # Clear existing data (optional - comment out if you want to preserve existing data)
-            # await db.db.consensus_results.delete_many({})
-            await db.db.consensus_results.insert_many(results)
+            # await db.consensus_results.delete_many({})
+            await db.consensus_results.insert_many(results)
             print(f"  ✓ Restored {len(results)} consensus results")
         else:
             print(f"  ⚠ No consensus results to restore")
@@ -67,8 +66,8 @@ async def import_all(backup_dir):
                 del doc['_id']
 
         if analyses:
-            # await db.db.strategy_analyses.delete_many({})
-            await db.db.strategy_analyses.insert_many(analyses)
+            # await db.strategy_analyses.delete_many({})
+            await db.strategy_analyses.insert_many(analyses)
             print(f"  ✓ Restored {len(analyses)} strategy analyses")
         else:
             print(f"  ⚠ No strategy analyses to restore")
@@ -93,22 +92,26 @@ async def import_all(backup_dir):
                 del doc['_id']
 
         if configs:
-            # await db.db.huggingface_configs.delete_many({})
-            await db.db.huggingface_configs.insert_many(configs)
+            # await db.huggingface_configs.delete_many({})
+            await db.huggingface_configs.insert_many(configs)
             print(f"  ✓ Restored {len(configs)} HuggingFace configs")
         else:
             print(f"  ⚠ No HuggingFace configs to restore")
     else:
         print(f"  ⚠ HuggingFace configs file not found: {configs_file}")
 
-    await db.disconnect()
+    client.close()
     print("\n  ✅ MongoDB data restored successfully!")
 
 if __name__ == "__main__":
+    # Get MongoDB URL from environment or use default
+    mongodb_url = os.getenv('MONGODB_URL', 'mongodb://localhost:27017')
+
+    # Get backup directory from command line or use default
     if len(sys.argv) < 2:
         backup_dir = os.path.expanduser('~/restore/mongodb-json')
         print(f"Using default backup directory: {backup_dir}")
     else:
         backup_dir = sys.argv[1]
 
-    asyncio.run(import_all(backup_dir))
+    asyncio.run(import_all(backup_dir, mongodb_url))

@@ -106,8 +106,18 @@ if [ -d "$RESTORE_DIR/mongodb-json" ]; then
         source venv/bin/activate
     fi
 
-    # Check if MongoDB is accessible
-    MONGODB_URL="${MONGODB_URL:-mongodb://localhost:27017}"
+    # Auto-detect MongoDB URL
+    if [ -z "$MONGODB_URL" ]; then
+        # Check if MongoDB is running in Docker on custom port
+        if command -v docker &> /dev/null && docker ps --format '{{.Ports}}' | grep -q '10751->27017'; then
+            MONGODB_URL="mongodb://localhost:10751"
+            echo "  ℹ Detected MongoDB in Docker on port 10751"
+        else
+            MONGODB_URL="mongodb://localhost:27017"
+        fi
+    fi
+
+    export MONGODB_URL
     echo "  Using MongoDB URL: $MONGODB_URL"
 
     # Run the restore script
