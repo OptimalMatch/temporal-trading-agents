@@ -104,7 +104,17 @@ pip install --upgrade pip setuptools wheel
 # Install dependencies
 echo -e "\n${GREEN}📦 Installing dependencies...${NC}"
 if [ -f "backend/requirements.txt" ]; then
-    pip install -r backend/requirements.txt
+    # Check if PyTorch is already installed (common on RunPod)
+    if python3 -c "import torch" 2>/dev/null; then
+        echo -e "${YELLOW}   PyTorch already installed, skipping torch/torchvision/torchaudio${NC}"
+        # Install everything except PyTorch packages
+        grep -v "^torch" backend/requirements.txt > /tmp/requirements_no_torch.txt
+        pip install -r /tmp/requirements_no_torch.txt
+        rm /tmp/requirements_no_torch.txt
+    else
+        # Install everything including PyTorch
+        pip install -r backend/requirements.txt
+    fi
     echo -e "${GREEN}✅ Backend dependencies installed${NC}\n"
 else
     echo -e "${RED}❌ backend/requirements.txt not found!${NC}\n"
