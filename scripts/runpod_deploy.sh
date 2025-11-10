@@ -319,8 +319,26 @@ if [ -d "frontend" ]; then
 
         # Build frontend
         cd frontend
+        BUILD_SUCCESS=false
+
+        # Try normal build first
         if npm install && npm run build; then
-            cd ..
+            BUILD_SUCCESS=true
+        else
+            # Build failed, try with cache clean
+            echo -e "${YELLOW}⚠️  Initial build failed, cleaning npm cache and retrying...${NC}"
+            rm -rf node_modules package-lock.json
+            npm cache clean --force
+
+            if npm install && npm run build; then
+                BUILD_SUCCESS=true
+                echo -e "${GREEN}✅ Build succeeded after cache clean${NC}"
+            fi
+        fi
+
+        cd ..
+
+        if [ "$BUILD_SUCCESS" = true ]; then
             # Copy build output to nginx
             sudo rm -rf /var/www/html/temporal-trading
             sudo mkdir -p /var/www/html/temporal-trading
@@ -329,11 +347,8 @@ if [ -d "frontend" ]; then
             sudo cp -r frontend/* /var/www/html/temporal-trading/
             echo -e "${GREEN}✅ Frontend built and deployed${NC}"
         else
-            cd ..
-            echo -e "${YELLOW}⚠️  Frontend build failed, will continue with backend setup${NC}"
-            echo -e "${YELLOW}   You can manually fix and rebuild later with:${NC}"
-            echo -e "${YELLOW}   cd frontend && rm -rf node_modules package-lock.json${NC}"
-            echo -e "${YELLOW}   npm cache clean --force && npm install && npm run build${NC}"
+            echo -e "${RED}❌ Frontend build failed even after cache clean${NC}"
+            echo -e "${YELLOW}   You can manually investigate and rebuild later${NC}"
             # Create placeholder directory for nginx
             sudo mkdir -p /var/www/html/temporal-trading
             echo "<h1>Frontend build pending</h1>" | sudo tee /var/www/html/temporal-trading/index.html > /dev/null
