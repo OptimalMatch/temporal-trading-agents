@@ -113,7 +113,13 @@ app = FastAPI(
     title="Temporal Trading Agents API",
     description="REST API for running forecast-based trading strategies",
     version="1.0.0",
-    default_response_class=CustomJSONResponse
+    default_response_class=CustomJSONResponse,
+    # Support for reverse proxies (nginx, RunPod proxy, etc.)
+    root_path=os.getenv("ROOT_PATH", ""),
+    servers=[
+        {"url": "/", "description": "Current server"},
+        {"url": "/api", "description": "Behind reverse proxy"}
+    ]
 )
 
 # CORS middleware
