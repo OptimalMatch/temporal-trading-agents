@@ -297,18 +297,25 @@ if [ -d "frontend" ]; then
 
         # Build frontend
         cd frontend
-        npm install
-        npm run build
-        cd ..
-
-        # Copy build output to nginx
-        sudo rm -rf /var/www/html/temporal-trading
-        sudo mkdir -p /var/www/html/temporal-trading
-        sudo cp -r frontend/dist/* /var/www/html/temporal-trading/ 2>/dev/null || \
-        sudo cp -r frontend/build/* /var/www/html/temporal-trading/ 2>/dev/null || \
-        sudo cp -r frontend/* /var/www/html/temporal-trading/
-
-        echo -e "${GREEN}✅ Frontend built and deployed${NC}"
+        if npm install && npm run build; then
+            cd ..
+            # Copy build output to nginx
+            sudo rm -rf /var/www/html/temporal-trading
+            sudo mkdir -p /var/www/html/temporal-trading
+            sudo cp -r frontend/dist/* /var/www/html/temporal-trading/ 2>/dev/null || \
+            sudo cp -r frontend/build/* /var/www/html/temporal-trading/ 2>/dev/null || \
+            sudo cp -r frontend/* /var/www/html/temporal-trading/
+            echo -e "${GREEN}✅ Frontend built and deployed${NC}"
+        else
+            cd ..
+            echo -e "${YELLOW}⚠️  Frontend build failed, will continue with backend setup${NC}"
+            echo -e "${YELLOW}   You can manually fix and rebuild later with:${NC}"
+            echo -e "${YELLOW}   cd frontend && rm -rf node_modules package-lock.json${NC}"
+            echo -e "${YELLOW}   npm cache clean --force && npm install && npm run build${NC}"
+            # Create placeholder directory for nginx
+            sudo mkdir -p /var/www/html/temporal-trading
+            echo "<h1>Frontend build pending</h1>" | sudo tee /var/www/html/temporal-trading/index.html > /dev/null
+        fi
     else
         # Just copy static files
         sudo rm -rf /var/www/html/temporal-trading
