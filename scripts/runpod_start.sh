@@ -19,22 +19,35 @@ case $ACTION in
     start)
         echo "🚀 Starting all services..."
 
-        # Start MongoDB
+        # Start MongoDB (handle both systemd and non-systemd)
         if command -v mongod &> /dev/null; then
-            if sudo systemctl is-active --quiet mongod; then
+            if pgrep -x mongod > /dev/null; then
                 echo "   MongoDB already running"
             else
-                sudo systemctl start mongod
+                if command -v systemctl &> /dev/null && systemctl is-system-running &> /dev/null; then
+                    sudo systemctl start mongod
+                else
+                    # Docker/RunPod environment
+                    sudo mkdir -p /data/db
+                    sudo chown -R mongodb:mongodb /data/db 2>/dev/null || true
+                    sudo -u mongodb mongod --fork --logpath /var/log/mongodb/mongod.log --dbpath /data/db 2>/dev/null || true
+                    sleep 1
+                fi
                 echo "   ✅ MongoDB started"
             fi
         fi
 
-        # Start nginx
+        # Start nginx (handle both systemd and non-systemd)
         if command -v nginx &> /dev/null; then
-            if sudo systemctl is-active --quiet nginx; then
+            if pgrep -x nginx > /dev/null; then
                 echo "   nginx already running"
             else
-                sudo systemctl start nginx
+                if command -v systemctl &> /dev/null && systemctl is-system-running &> /dev/null; then
+                    sudo systemctl start nginx
+                else
+                    # Docker/RunPod environment
+                    sudo nginx
+                fi
                 echo "   ✅ nginx started"
             fi
         fi
@@ -74,14 +87,22 @@ case $ACTION in
         pkill -f "uvicorn backend.main:app" || true
         echo "   ✅ Backend stopped"
 
-        # Stop nginx
+        # Stop nginx (handle both systemd and non-systemd)
         if command -v nginx &> /dev/null; then
-            sudo systemctl stop nginx || true
+            if command -v systemctl &> /dev/null && systemctl is-system-running &> /dev/null; then
+                sudo systemctl stop nginx || true
+            else
+                sudo pkill nginx || true
+            fi
             echo "   ✅ nginx stopped"
         fi
 
         # Stop MongoDB (optional - usually keep running)
-        # sudo systemctl stop mongod || true
+        # if command -v systemctl &> /dev/null && systemctl is-system-running &> /dev/null; then
+        #     sudo systemctl stop mongod || true
+        # else
+        #     sudo pkill mongod || true
+        # fi
         # echo "   ✅ MongoDB stopped"
 
         echo "✅ Services stopped (MongoDB kept running)"
@@ -98,9 +119,9 @@ case $ACTION in
         echo "📊 Service Status:"
         echo ""
 
-        # Check MongoDB
+        # Check MongoDB (handle both systemd and non-systemd)
         if command -v mongod &> /dev/null; then
-            if sudo systemctl is-active --quiet mongod; then
+            if pgrep -x mongod > /dev/null; then
                 echo "   ✅ MongoDB: Running"
             else
                 echo "   ❌ MongoDB: Not running"
@@ -109,9 +130,9 @@ case $ACTION in
             echo "   ⚠️  MongoDB: Not installed"
         fi
 
-        # Check nginx
+        # Check nginx (handle both systemd and non-systemd)
         if command -v nginx &> /dev/null; then
-            if sudo systemctl is-active --quiet nginx; then
+            if pgrep -x nginx > /dev/null; then
                 echo "   ✅ nginx: Running"
             else
                 echo "   ❌ nginx: Not running"
