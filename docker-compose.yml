@@ -41,11 +41,14 @@ services:
       - MASSIVE_API_KEY=${MASSIVE_API_KEY}
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
       - MODEL_CACHE_DIR=/app/model_cache
+      - TRITON_CACHE_DIR=/app/torch_compile_cache/triton
+      - TORCHINDUCTOR_CACHE_DIR=/app/torch_compile_cache/inductor
     ports:
       - "10750:8000"
     volumes:
       - market_data_cache:/tmp/crypto_data_cache
       - model_cache:/app/model_cache
+      - torch_compile_cache:/app/torch_compile_cache
     depends_on:
       mongodb:
         condition: service_healthy
@@ -117,4 +120,6 @@ volumes:
   market_data_cache:
     driver: local
   model_cache:
+    driver: local
+  torch_compile_cache:
     driver: local
