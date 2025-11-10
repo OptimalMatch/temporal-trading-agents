@@ -441,9 +441,15 @@ else
 ' /etc/nginx/nginx.conf
     fi
 
-    # Check if our config already exists
-    if ! grep -q "Temporal Trading Agents" /etc/nginx/nginx.conf; then
-        # Add our server block before the closing brace of http block
+    # Remove existing Temporal Trading config if present (to ensure latest version)
+    if grep -q "Temporal Trading Agents" /etc/nginx/nginx.conf; then
+        echo -e "${YELLOW}   Removing old Temporal Trading config...${NC}"
+        # Remove from "# Temporal Trading Agents" to the closing brace of that server block
+        sudo sed -i '/# Temporal Trading Agents/,/^    }$/d' /etc/nginx/nginx.conf
+    fi
+
+    # Add our server block before the closing brace of http block
+    echo -e "${YELLOW}   Adding Temporal Trading server block...${NC}"
         sudo sed -i '/^}$/i \
 \
     # Temporal Trading Agents\
@@ -494,10 +500,7 @@ else
         }\
     }
 ' /etc/nginx/nginx.conf
-        echo -e "${GREEN}   ✅ Added temporal-trading server block to nginx.conf${NC}"
-    else
-        echo -e "${YELLOW}   Temporal Trading config already exists in nginx.conf${NC}"
-    fi
+    echo -e "${GREEN}   ✅ Added temporal-trading server block to nginx.conf${NC}"
 fi
 
 # Test and start nginx
