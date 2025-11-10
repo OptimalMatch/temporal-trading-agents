@@ -421,25 +421,25 @@ def get_default_ensemble_configs(horizon: int) -> List[Dict]:
     """
     if horizon <= 7:
         return [
-            {'lookback': 30, 'focus': 'momentum', 'epochs': 15, 'name': 'Short-term Momentum'},
-            {'lookback': 60, 'focus': 'balanced', 'epochs': 15, 'name': 'Medium-term Balanced'},
-            {'lookback': 90, 'focus': 'balanced', 'epochs': 15, 'name': 'Long-term Trend'},
-            {'lookback': 60, 'focus': 'mean_reversion', 'epochs': 15, 'name': 'Mean Reversion'},
-            {'lookback': 45, 'focus': 'momentum', 'epochs': 15, 'name': 'Mid-term Momentum'},
+            {'lookback': 30, 'focus': 'momentum', 'epochs': 10, 'name': 'Short-term Momentum'},
+            {'lookback': 60, 'focus': 'balanced', 'epochs': 10, 'name': 'Medium-term Balanced'},
+            {'lookback': 90, 'focus': 'balanced', 'epochs': 10, 'name': 'Long-term Trend'},
+            {'lookback': 60, 'focus': 'mean_reversion', 'epochs': 10, 'name': 'Mean Reversion'},
+            {'lookback': 45, 'focus': 'momentum', 'epochs': 10, 'name': 'Mid-term Momentum'},
         ]
     elif horizon <= 14:
         return [
-            {'lookback': 30, 'focus': 'momentum', 'epochs': 15, 'name': 'Short-term Momentum'},
-            {'lookback': 45, 'focus': 'balanced', 'epochs': 15, 'name': 'Medium-term Balanced'},
-            {'lookback': 60, 'focus': 'balanced', 'epochs': 15, 'name': 'Long-term Trend'},
-            {'lookback': 45, 'focus': 'mean_reversion', 'epochs': 15, 'name': 'Mean Reversion'},
-            {'lookback': 30, 'focus': 'momentum', 'epochs': 15, 'name': 'Mid-term Momentum'},
+            {'lookback': 30, 'focus': 'momentum', 'epochs': 10, 'name': 'Short-term Momentum'},
+            {'lookback': 45, 'focus': 'balanced', 'epochs': 10, 'name': 'Medium-term Balanced'},
+            {'lookback': 60, 'focus': 'balanced', 'epochs': 10, 'name': 'Long-term Trend'},
+            {'lookback': 45, 'focus': 'mean_reversion', 'epochs': 10, 'name': 'Mean Reversion'},
+            {'lookback': 30, 'focus': 'momentum', 'epochs': 10, 'name': 'Mid-term Momentum'},
         ]
     else:  # 21-30 days
         return [
-            {'lookback': 45, 'focus': 'momentum', 'epochs': 15, 'name': 'Short-term Momentum'},
-            {'lookback': 60, 'focus': 'balanced', 'epochs': 15, 'name': 'Medium-term Balanced'},
-            {'lookback': 90, 'focus': 'balanced', 'epochs': 15, 'name': 'Long-term Trend'},
-            {'lookback': 60, 'focus': 'mean_reversion', 'epochs': 15, 'name': 'Mean Reversion'},
-            {'lookback': 45, 'focus': 'momentum', 'epochs': 15, 'name': 'Mid-term Momentum'},
+            {'lookback': 45, 'focus': 'momentum', 'epochs': 10, 'name': 'Short-term Momentum'},
+            {'lookback': 60, 'focus': 'balanced', 'epochs': 10, 'name': 'Medium-term Balanced'},
+            {'lookback': 90, 'focus': 'balanced', 'epochs': 10, 'name': 'Long-term Trend'},
+            {'lookback': 60, 'focus': 'mean_reversion', 'epochs': 10, 'name': 'Mean Reversion'},
+            {'lookback': 45, 'focus': 'momentum', 'epochs': 10, 'name': 'Mid-term Momentum'},
         ]
