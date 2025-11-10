@@ -137,18 +137,39 @@ if [ -z "$MONGODB_URL" ]; then
         sudo apt-get install -y mongodb-org
     fi
 
-    # Start MongoDB
-    sudo systemctl start mongod
-    sudo systemctl enable mongod
-
-    # Verify MongoDB is running
-    sleep 2
-    if sudo systemctl is-active --quiet mongod; then
-        echo -e "${GREEN}✅ MongoDB installed and running${NC}"
-    else
-        echo -e "${YELLOW}⚠️  MongoDB service not running, attempting to start...${NC}"
-        sudo systemctl restart mongod
+    # Start MongoDB (handle both systemd and non-systemd environments)
+    if command -v systemctl &> /dev/null && systemctl is-system-running &> /dev/null; then
+        # SystemD available (traditional Linux)
+        sudo systemctl start mongod
+        sudo systemctl enable mongod
         sleep 2
+        if sudo systemctl is-active --quiet mongod; then
+            echo -e "${GREEN}✅ MongoDB installed and running${NC}"
+        else
+            echo -e "${YELLOW}⚠️  MongoDB service not running, attempting to start...${NC}"
+            sudo systemctl restart mongod
+            sleep 2
+        fi
+    else
+        # No systemd (Docker container / RunPod)
+        echo -e "${YELLOW}   systemd not available, starting MongoDB manually...${NC}"
+
+        # Create MongoDB data directory
+        sudo mkdir -p /data/db
+        sudo chown -R mongodb:mongodb /data/db
+
+        # Start MongoDB in background
+        sudo -u mongodb mongod --fork --logpath /var/log/mongodb/mongod.log --dbpath /data/db
+
+        sleep 2
+
+        # Check if MongoDB is running
+        if pgrep -x mongod > /dev/null; then
+            echo -e "${GREEN}✅ MongoDB started in background${NC}"
+        else
+            echo -e "${RED}❌ Failed to start MongoDB${NC}"
+            echo -e "${RED}   Check logs: tail /var/log/mongodb/mongod.log${NC}"
+        fi
     fi
 
     export MONGODB_URL="mongodb://localhost:27017"
@@ -356,10 +377,17 @@ NGINX_EOF
 sudo ln -sf /etc/nginx/sites-available/temporal-trading /etc/nginx/sites-enabled/
 sudo rm -f /etc/nginx/sites-enabled/default
 
-# Test nginx config
+# Test and start nginx
 if sudo nginx -t 2>/dev/null; then
-    sudo systemctl restart nginx
-    sudo systemctl enable nginx
+    # Start nginx (handle both systemd and non-systemd)
+    if command -v systemctl &> /dev/null && systemctl is-system-running &> /dev/null; then
+        sudo systemctl restart nginx
+        sudo systemctl enable nginx
+    else
+        # Kill existing nginx and start fresh
+        sudo pkill nginx || true
+        sudo nginx
+    fi
     echo -e "${GREEN}✅ nginx configured and running${NC}"
 else
     echo -e "${YELLOW}⚠️  nginx configuration test failed, check /etc/nginx/sites-available/temporal-trading${NC}"
@@ -367,10 +395,13 @@ fi
 
 echo ""
 
-# Create systemd service for auto-start
-echo -e "${GREEN}🚀 Creating systemd service for backend...${NC}"
+# Create systemd service or startup script
 INSTALL_DIR=$(pwd)
-cat > /tmp/temporal-trading.service << EOF
+
+if command -v systemctl &> /dev/null && systemctl is-system-running &> /dev/null; then
+    # SystemD available - create service
+    echo -e "${GREEN}🚀 Creating systemd service for backend...${NC}"
+    cat > /tmp/temporal-trading.service << EOF
 [Unit]
 Description=Temporal Trading Agents Backend
 After=network.target
@@ -391,9 +422,14 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
-sudo mv /tmp/temporal-trading.service /etc/systemd/system/
-sudo systemctl daemon-reload
-echo -e "${GREEN}✅ Systemd service created${NC}\n"
+    sudo mv /tmp/temporal-trading.service /etc/systemd/system/
+    sudo systemctl daemon-reload
+    echo -e "${GREEN}✅ Systemd service created${NC}\n"
+else
+    # No systemd - will use runpod_start.sh script
+    echo -e "${YELLOW}⚠️  systemd not available (Docker environment)${NC}"
+    echo -e "${YELLOW}   Use ./scripts/runpod_start.sh to manage services${NC}\n"
+fi
 
 # Get instance IP
 INSTANCE_IP=$(hostname -I | awk '{print $1}')
@@ -409,61 +445,73 @@ echo -e "  ✅ Backend API (FastAPI + PyTorch)"
 echo -e "  ✅ Frontend Dashboard (nginx)"
 echo -e ""
 
-echo -e "You can now:"
-echo -e "  ${GREEN}1. Start the backend:${NC}"
-echo -e "     sudo systemctl start temporal-trading"
-echo -e ""
-echo -e "  ${GREEN}2. Enable auto-start on boot:${NC}"
-echo -e "     sudo systemctl enable temporal-trading"
-echo -e ""
-echo -e "  ${GREEN}3. Check status:${NC}"
-echo -e "     sudo systemctl status temporal-trading"
-echo -e "     sudo systemctl status mongod"
-echo -e "     sudo systemctl status nginx"
-echo -e ""
-echo -e "  ${GREEN}4. View logs:${NC}"
-echo -e "     sudo journalctl -u temporal-trading -f"
-echo -e ""
-echo -e "  ${GREEN}5. Quick management:${NC}"
-echo -e "     ./scripts/runpod_start.sh start|stop|status|logs"
-echo -e ""
+# Show appropriate management commands based on environment
+if command -v systemctl &> /dev/null && systemctl is-system-running &> /dev/null; then
+    # SystemD environment
+    echo -e "You can now:"
+    echo -e "  ${GREEN}1. Start the backend:${NC}"
+    echo -e "     sudo systemctl start temporal-trading"
+    echo -e ""
+    echo -e "  ${GREEN}2. Enable auto-start on boot:${NC}"
+    echo -e "     sudo systemctl enable temporal-trading"
+    echo -e ""
+    echo -e "  ${GREEN}3. Check status:${NC}"
+    echo -e "     sudo systemctl status temporal-trading"
+    echo -e ""
+    echo -e "  ${GREEN}4. View logs:${NC}"
+    echo -e "     sudo journalctl -u temporal-trading -f"
+    echo -e ""
+else
+    # Docker/RunPod environment
+    echo -e "You can now:"
+    echo -e "  ${GREEN}1. Start all services:${NC}"
+    echo -e "     ./scripts/runpod_start.sh start"
+    echo -e ""
+    echo -e "  ${GREEN}2. Check status:${NC}"
+    echo -e "     ./scripts/runpod_start.sh status"
+    echo -e ""
+    echo -e "  ${GREEN}3. View logs:${NC}"
+    echo -e "     ./scripts/runpod_start.sh logs"
+    echo -e ""
+    echo -e "  ${GREEN}4. Stop services:${NC}"
+    echo -e "     ./scripts/runpod_start.sh stop"
+    echo -e ""
+fi
 
 read -p "Start the backend now? (y/n): " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo -e "\n${GREEN}🚀 Starting all services...${NC}"
 
-    # Ensure MongoDB is running
-    sudo systemctl start mongod
+    if command -v systemctl &> /dev/null && systemctl is-system-running &> /dev/null; then
+        # SystemD environment
+        sudo systemctl start mongod
+        sudo systemctl start nginx
+        sudo systemctl start temporal-trading
+        sleep 3
 
-    # Ensure nginx is running
-    sudo systemctl start nginx
+        echo -e "\n${GREEN}✅ Services Status:${NC}"
 
-    # Start backend
-    sudo systemctl start temporal-trading
-    sleep 3
+        if sudo systemctl is-active --quiet mongod; then
+            echo -e "   ✅ MongoDB: ${GREEN}Running${NC}"
+        else
+            echo -e "   ❌ MongoDB: ${RED}Not running${NC}"
+        fi
 
-    echo -e "\n${GREEN}✅ Services Status:${NC}"
+        if sudo systemctl is-active --quiet nginx; then
+            echo -e "   ✅ nginx: ${GREEN}Running${NC}"
+        else
+            echo -e "   ❌ nginx: ${RED}Not running${NC}"
+        fi
 
-    # Check MongoDB
-    if sudo systemctl is-active --quiet mongod; then
-        echo -e "   ✅ MongoDB: ${GREEN}Running${NC}"
+        if sudo systemctl is-active --quiet temporal-trading; then
+            echo -e "   ✅ Backend: ${GREEN}Running${NC}"
+        else
+            echo -e "   ❌ Backend: ${RED}Not running${NC}"
+        fi
     else
-        echo -e "   ❌ MongoDB: ${RED}Not running${NC}"
-    fi
-
-    # Check nginx
-    if sudo systemctl is-active --quiet nginx; then
-        echo -e "   ✅ nginx: ${GREEN}Running${NC}"
-    else
-        echo -e "   ❌ nginx: ${RED}Not running${NC}"
-    fi
-
-    # Check backend
-    if sudo systemctl is-active --quiet temporal-trading; then
-        echo -e "   ✅ Backend: ${GREEN}Running${NC}"
-    else
-        echo -e "   ❌ Backend: ${RED}Not running${NC}"
+        # Docker/RunPod environment - use runpod_start.sh
+        ./scripts/runpod_start.sh start
     fi
 
     echo -e "\n${BLUE}========================================${NC}"
@@ -476,12 +524,21 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo -e "${GREEN}MongoDB:${NC}      mongodb://localhost:27017"
     echo -e "${BLUE}========================================${NC}\n"
 
-    echo -e "View logs: ${BLUE}sudo journalctl -u temporal-trading -f${NC}\n"
+    if command -v systemctl &> /dev/null && systemctl is-system-running &> /dev/null; then
+        echo -e "View logs: ${BLUE}sudo journalctl -u temporal-trading -f${NC}\n"
+    else
+        echo -e "View logs: ${BLUE}./scripts/runpod_start.sh logs${NC}\n"
+    fi
 else
-    echo -e "\n${YELLOW}Services not started. Start them manually when ready:${NC}"
-    echo -e "  sudo systemctl start mongod"
-    echo -e "  sudo systemctl start nginx"
-    echo -e "  sudo systemctl start temporal-trading\n"
+    if command -v systemctl &> /dev/null && systemctl is-system-running &> /dev/null; then
+        echo -e "\n${YELLOW}Services not started. Start them manually when ready:${NC}"
+        echo -e "  sudo systemctl start mongod"
+        echo -e "  sudo systemctl start nginx"
+        echo -e "  sudo systemctl start temporal-trading\n"
+    else
+        echo -e "\n${YELLOW}Services not started. Start them manually when ready:${NC}"
+        echo -e "  ./scripts/runpod_start.sh start\n"
+    fi
 fi
 
 echo -e "${BLUE}========================================${NC}"
