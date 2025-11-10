@@ -43,6 +43,7 @@ services:
       - MODEL_CACHE_DIR=/app/model_cache
       - TRITON_CACHE_DIR=/app/torch_compile_cache/triton
       - TORCHINDUCTOR_CACHE_DIR=/app/torch_compile_cache/inductor
+      - GPU_PROFILE=${GPU_PROFILE:-rtx_4090}
     ports:
       - "10750:8000"
     volumes:

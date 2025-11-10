@@ -27,6 +27,19 @@ from temporal.data_sources import (
     split_train_val_test
 )
 
+# GPU profile configuration for optimized batch sizes
+try:
+    from backend.gpu_profiles import get_batch_size, get_gpu_profile, print_profile_info
+except ImportError:
+    # Fallback if running standalone without backend module
+    def get_batch_size(interval: str, profile_name=None):
+        """Fallback batch size configuration"""
+        return 512 if interval == '1d' else 768
+    def get_gpu_profile(profile_name=None):
+        return {"name": "RTX 4090 (fallback)", "max_workers": 2}
+    def print_profile_info(profile_name=None):
+        pass
+
 
 def add_technical_indicators(df, focus='balanced'):
     """
@@ -156,16 +169,11 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
     train_dataset = TimeSeriesDataset(train_data, lookback, forecast_horizon)
     val_dataset = TimeSeriesDataset(val_data, lookback, forecast_horizon)
 
-    # Adaptive batch size based on interval and dataset size
-    # OPTIMIZED: Balancing speed with parallel training (RTX 4090 24GB VRAM)
-    # Daily data: fewer samples (~729 for 2y) → larger batch size (512)
-    # Hourly data: MASSIVE samples (2.6M+!) → larger batch size (768)
-    # Note: ProcessPoolExecutor runs 2 models in parallel, each using ~12GB VRAM
+    # Adaptive batch size based on interval and GPU profile
+    # Uses GPU profile configuration (GPU_PROFILE env var, default: rtx_4090)
+    # Profiles define optimal batch sizes for different GPU VRAM capacities
     # Larger batches = fewer iterations per epoch = faster training
-    if interval == '1d':
-        batch_size = 512  # Daily intervals - 4x increase for speed
-    else:
-        batch_size = 768  # Hourly intervals - 3x increase, 2 parallel models
+    batch_size = get_batch_size(interval)
 
     # Ensure batch size doesn't exceed dataset size
     max_batch_size = min(batch_size, len(train_dataset) // 2)  # At least 2 batches
