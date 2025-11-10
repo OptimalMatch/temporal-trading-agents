@@ -417,6 +417,31 @@ else
     # Backup nginx.conf
     sudo cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.backup
 
+    # Add MIME types to http block if not present
+    if ! grep -q "text/javascript" /etc/nginx/nginx.conf; then
+        echo -e "${YELLOW}   Adding MIME types to nginx.conf${NC}"
+        sudo sed -i '/^http {/a \
+    # MIME types\
+    types {\
+        text/html                             html htm shtml;\
+        text/css                              css;\
+        text/javascript                       js mjs;\
+        application/javascript                js;\
+        application/json                      json;\
+        image/gif                             gif;\
+        image/jpeg                            jpeg jpg;\
+        image/png                             png;\
+        image/svg+xml                         svg svgz;\
+        image/x-icon                          ico;\
+        application/font-woff                 woff;\
+        application/font-woff2                woff2;\
+        font/ttf                              ttf;\
+        font/otf                              otf;\
+    }\
+    default_type application/octet-stream;
+' /etc/nginx/nginx.conf
+    fi
+
     # Check if our config already exists
     if ! grep -q "Temporal Trading Agents" /etc/nginx/nginx.conf; then
         # Add our server block before the closing brace of http block
