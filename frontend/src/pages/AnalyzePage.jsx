@@ -216,14 +216,14 @@ function AnalyzePage() {
             </div>
           )}
 
-          {/* Horizons (for consensus only) */}
-          {selectedStrategy === 'all' && (
+          {/* Horizons (for consensus only, daily intervals only) */}
+          {selectedStrategy === 'all' && interval === '1d' && (
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">
-                Forecast Horizons ({interval === '1h' ? 'hours' : 'days'})
+                Forecast Horizons (days)
               </label>
               <div className="flex flex-wrap gap-2">
-                {(interval === '1h' ? [3, 6, 12, 24, 48, 72] : [3, 7, 14, 21, 30]).map(periods => (
+                {[3, 7, 14, 21, 30].map(periods => (
                   <button
                     key={periods}
                     onClick={() => {
@@ -239,12 +239,23 @@ function AnalyzePage() {
                         : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                     }`}
                   >
-                    {periods}{interval === '1h' ? 'h' : 'd'}
+                    {periods}d
                   </button>
                 ))}
               </div>
               <p className="text-sm text-gray-400 mt-2">
-                Selected: {horizons.join(', ')} {interval === '1h' ? 'hours' : 'days'}
+                Selected: {horizons.join(', ')} days
+              </p>
+            </div>
+          )}
+
+          {/* Hourly interval explanation */}
+          {selectedStrategy === 'all' && interval === '1h' && (
+            <div className="p-4 bg-blue-900 border border-blue-700 rounded-lg">
+              <p className="text-sm font-medium text-blue-300 mb-1">ℹ️ Multi-Timeframe Analysis</p>
+              <p className="text-sm text-gray-300">
+                Multi-timeframe analysis is not available for hourly intervals. The consensus will use a single
+                12-hour forecast horizon. Ensemble model disagreement serves as a proxy for multi-timeframe uncertainty.
               </p>
             </div>
           )}

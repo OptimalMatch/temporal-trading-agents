@@ -64,3 +64,6 @@ Thumbs.db
 *.log
 backtest_results/
 paper_trading/
+
+# Frontend build artifacts
+index.html
