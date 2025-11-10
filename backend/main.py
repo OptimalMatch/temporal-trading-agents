@@ -151,9 +151,10 @@ async def startup_event():
     print("🚀 API: Server started successfully")
 
     # Initialize process pool executor for CPU-intensive tasks
-    # Using max 4 workers to avoid overloading the system
-    executor = ProcessPoolExecutor(max_workers=4)
-    print("⚡ API: ProcessPoolExecutor initialized with 4 workers")
+    # Using max 2 workers to allow larger batch sizes (768) without OOM
+    # Trades parallelism for faster per-model training via larger batches
+    executor = ProcessPoolExecutor(max_workers=2)
+    print("⚡ API: ProcessPoolExecutor initialized with 2 workers")
 
     # Initialize thread pool executor for backtests
     # Using max 2 workers to limit concurrent backtests
