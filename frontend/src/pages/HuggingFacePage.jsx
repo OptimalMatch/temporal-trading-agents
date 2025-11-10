@@ -316,12 +316,15 @@ function HuggingFacePage() {
     }));
   };
 
-  const handleTestConnection = async () => {
+  const handleTestConnection = async (token = null) => {
     setTestingConnection(true);
     setConnectionTestResult(null);
 
     try {
-      const res = await fetch(`${API_BASE}/huggingface/test-connectivity`);
+      const url = token
+        ? `${API_BASE}/huggingface/test-connectivity?token=${encodeURIComponent(token)}`
+        : `${API_BASE}/huggingface/test-connectivity`;
+      const res = await fetch(url);
       const data = await res.json();
       setConnectionTestResult(data);
       setShowConnectionTest(true);
@@ -340,6 +343,14 @@ function HuggingFacePage() {
     } finally {
       setTestingConnection(false);
     }
+  };
+
+  const handleTestConfigConnection = async (config) => {
+    if (!config.token) {
+      alert('This configuration has no token to test. Add a token first.');
+      return;
+    }
+    await handleTestConnection(config.token);
   };
 
   const formatTimestamp = (timestamp) => {
@@ -673,6 +684,14 @@ function HuggingFacePage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleTestConfigConnection(config)}
+                          className={`p-1 ${config.token ? 'text-yellow-400 hover:text-yellow-300' : 'text-gray-600 cursor-not-allowed'}`}
+                          title={config.token ? "Test Connection with this config's token" : "No token configured"}
+                          disabled={!config.token}
+                        >
+                          <Wifi className="w-4 h-4" />
+                        </button>
                         <button
                           onClick={() => openExportModal(config)}
                           className="p-1 text-green-400 hover:text-green-300"

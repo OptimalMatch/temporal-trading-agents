@@ -4940,7 +4940,7 @@ async def get_cache_stats():
 
 
 @app.get("/api/v1/huggingface/test-connectivity")
-async def test_huggingface_connectivity():
+async def test_huggingface_connectivity(token: str = None):
     """
     Test connectivity to HuggingFace Hub to diagnose network issues.
 
@@ -4948,6 +4948,9 @@ async def test_huggingface_connectivity():
     1. DNS resolution for huggingface.co
     2. HTTPS connectivity to HuggingFace API
     3. API authentication (if token provided)
+
+    Args:
+        token: Optional HuggingFace API token to test (query parameter)
     """
     import socket
     import requests
@@ -4997,10 +5000,10 @@ async def test_huggingface_connectivity():
         api_url = "https://huggingface.co/api/whoami-v2"
         headers = {}
 
-        # Try with token if available from environment
-        token = os.getenv("HUGGING_FACE_HUB_TOKEN")
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
+        # Use provided token, or fall back to environment variable
+        test_token = token or os.getenv("HUGGING_FACE_HUB_TOKEN")
+        if test_token:
+            headers["Authorization"] = f"Bearer {test_token}"
 
         response = requests.get(api_url, headers=headers, timeout=10)
 
