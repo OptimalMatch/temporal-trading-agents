@@ -157,14 +157,15 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
     val_dataset = TimeSeriesDataset(val_data, lookback, forecast_horizon)
 
     # Adaptive batch size based on interval and dataset size
-    # OPTIMIZED: Maximizing GPU utilization (RTX 4090 24GB VRAM)
+    # OPTIMIZED: Balancing speed with parallel training (RTX 4090 24GB VRAM)
     # Daily data: fewer samples (~729 for 2y) → larger batch size (512)
-    # Hourly data: MASSIVE samples (2.6M+!) → large batch size (1536) - using ~18GB VRAM
+    # Hourly data: MASSIVE samples (2.6M+!) → moderate batch size (512)
+    # Note: ProcessPoolExecutor runs 3-4 models in parallel, each using ~6GB VRAM
     # Larger batches = fewer iterations per epoch = 3-4x faster training
     if interval == '1d':
         batch_size = 512  # Daily intervals - 4x increase for speed
     else:
-        batch_size = 1536  # Hourly intervals - 6x increase, ~75% VRAM utilization
+        batch_size = 512  # Hourly intervals - 2x increase, allows parallel training
 
     # Ensure batch size doesn't exceed dataset size
     max_batch_size = min(batch_size, len(train_dataset) // 2)  # At least 2 batches
