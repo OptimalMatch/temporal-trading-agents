@@ -426,7 +426,6 @@ else
         text/html                             html htm shtml;\
         text/css                              css;\
         text/javascript                       js mjs;\
-        application/javascript                js;\
         application/json                      json;\
         image/gif                             gif;\
         image/jpeg                            jpeg jpg;\
