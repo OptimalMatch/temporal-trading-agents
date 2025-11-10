@@ -1,8 +1,8 @@
 #!/bin/bash
 #############################################################################
-# RunPod Quick Start Script
+# RunPod All-in-One Management Script
 #############################################################################
-# Use this to quickly start/stop/restart the backend after initial deployment
+# Manages MongoDB, Backend, and Frontend (nginx) services
 #
 # Usage:
 #   ./scripts/runpod_start.sh [start|stop|restart|status|logs]
@@ -12,10 +12,35 @@ set -e
 
 ACTION=${1:-start}
 
+# Get instance IP
+INSTANCE_IP=$(hostname -I | awk '{print $1}')
+
 case $ACTION in
     start)
-        echo "🚀 Starting Temporal Trading backend..."
-        source venv/bin/activate
+        echo "🚀 Starting all services..."
+
+        # Start MongoDB
+        if command -v mongod &> /dev/null; then
+            if sudo systemctl is-active --quiet mongod; then
+                echo "   MongoDB already running"
+            else
+                sudo systemctl start mongod
+                echo "   ✅ MongoDB started"
+            fi
+        fi
+
+        # Start nginx
+        if command -v nginx &> /dev/null; then
+            if sudo systemctl is-active --quiet nginx; then
+                echo "   nginx already running"
+            else
+                sudo systemctl start nginx
+                echo "   ✅ nginx started"
+            fi
+        fi
+
+        # Start backend
+        source venv/bin/activate 2>/dev/null || true
         export $(grep -v '^#' .env | xargs) 2>/dev/null || true
 
         # Kill any existing instances
@@ -28,36 +53,80 @@ case $ACTION in
         PID=$(pgrep -f "uvicorn backend.main:app" || echo "")
 
         if [ -z "$PID" ]; then
-            echo "❌ Failed to start backend"
-            echo "Check logs: tail -f /tmp/temporal-trading.log"
+            echo "   ❌ Failed to start backend"
+            echo "   Check logs: tail -f /tmp/temporal-trading.log"
             exit 1
         else
-            echo "✅ Backend started (PID: $PID)"
-            echo "📊 Health check: http://localhost:${PORT:-8000}/health"
-            echo "📝 Logs: tail -f /tmp/temporal-trading.log"
+            echo "   ✅ Backend started (PID: $PID)"
         fi
+
+        echo ""
+        echo "✅ All services started!"
+        echo "   Frontend: http://${INSTANCE_IP}/"
+        echo "   API Docs: http://${INSTANCE_IP}/docs"
+        echo "   Logs: tail -f /tmp/temporal-trading.log"
         ;;
 
     stop)
-        echo "🛑 Stopping Temporal Trading backend..."
+        echo "🛑 Stopping all services..."
+
+        # Stop backend
         pkill -f "uvicorn backend.main:app" || true
-        echo "✅ Backend stopped"
+        echo "   ✅ Backend stopped"
+
+        # Stop nginx
+        if command -v nginx &> /dev/null; then
+            sudo systemctl stop nginx || true
+            echo "   ✅ nginx stopped"
+        fi
+
+        # Stop MongoDB (optional - usually keep running)
+        # sudo systemctl stop mongod || true
+        # echo "   ✅ MongoDB stopped"
+
+        echo "✅ Services stopped (MongoDB kept running)"
         ;;
 
     restart)
-        echo "🔄 Restarting Temporal Trading backend..."
+        echo "🔄 Restarting all services..."
         $0 stop
         sleep 2
         $0 start
         ;;
 
     status)
+        echo "📊 Service Status:"
+        echo ""
+
+        # Check MongoDB
+        if command -v mongod &> /dev/null; then
+            if sudo systemctl is-active --quiet mongod; then
+                echo "   ✅ MongoDB: Running"
+            else
+                echo "   ❌ MongoDB: Not running"
+            fi
+        else
+            echo "   ⚠️  MongoDB: Not installed"
+        fi
+
+        # Check nginx
+        if command -v nginx &> /dev/null; then
+            if sudo systemctl is-active --quiet nginx; then
+                echo "   ✅ nginx: Running"
+            else
+                echo "   ❌ nginx: Not running"
+            fi
+        else
+            echo "   ⚠️  nginx: Not installed"
+        fi
+
+        # Check backend
         PID=$(pgrep -f "uvicorn backend.main:app" || echo "")
         if [ -z "$PID" ]; then
-            echo "❌ Backend not running"
+            echo "   ❌ Backend: Not running"
             exit 1
         else
-            echo "✅ Backend running (PID: $PID)"
+            echo "   ✅ Backend: Running (PID: $PID)"
 
             # Check GPU usage
             if command -v nvidia-smi &> /dev/null; then
@@ -105,18 +174,23 @@ case $ACTION in
     *)
         echo "Usage: $0 [start|stop|restart|status|logs]"
         echo ""
-        echo "Commands:"
-        echo "  start          - Start backend in background"
-        echo "  stop           - Stop backend"
-        echo "  restart        - Restart backend"
-        echo "  status         - Show backend status"
-        echo "  logs           - Show and follow logs"
+        echo "All-in-One Service Management:"
+        echo "  start          - Start all services (MongoDB, nginx, backend)"
+        echo "  stop           - Stop all services (keeps MongoDB running)"
+        echo "  restart        - Restart all services"
+        echo "  status         - Show status of all services + GPU"
+        echo "  logs           - Show and follow backend logs"
         echo ""
         echo "Systemd commands (if installed):"
-        echo "  systemd-start  - Start via systemd"
-        echo "  systemd-stop   - Stop via systemd"
-        echo "  systemd-status - Check systemd status"
-        echo "  systemd-logs   - Follow systemd logs"
+        echo "  systemd-start  - Start backend via systemd"
+        echo "  systemd-stop   - Stop backend via systemd"
+        echo "  systemd-status - Check backend systemd status"
+        echo "  systemd-logs   - Follow backend systemd logs"
+        echo ""
+        echo "Services managed:"
+        echo "  - MongoDB (database)"
+        echo "  - nginx (frontend + proxy)"
+        echo "  - Backend API (FastAPI + PyTorch)"
         exit 1
         ;;
 esac

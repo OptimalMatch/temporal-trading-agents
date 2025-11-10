@@ -111,44 +111,38 @@ else
     exit 1
 fi
 
-# Setup MongoDB
-echo -e "${GREEN}💾 Configuring MongoDB...${NC}"
+# Setup MongoDB (All-in-One: Install locally by default)
+echo -e "${GREEN}💾 Installing MongoDB...${NC}"
 if [ -z "$MONGODB_URL" ]; then
-    echo -e "${YELLOW}⚠️  No MONGODB_URL set. You have two options:${NC}"
-    echo -e "${YELLOW}   1. Use MongoDB Atlas (recommended for RunPod)${NC}"
-    echo -e "${YELLOW}   2. Install MongoDB locally on this instance${NC}\n"
+    echo -e "${GREEN}Installing MongoDB 7.0 locally...${NC}"
 
-    read -p "Use MongoDB Atlas? (y/n): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        echo -e "\n${BLUE}MongoDB Atlas Setup:${NC}"
-        echo -e "1. Go to https://cloud.mongodb.com"
-        echo -e "2. Create a free cluster"
-        echo -e "3. Get your connection string"
-        echo -e "4. Set it as: export MONGODB_URL='mongodb+srv://...'\n"
-        read -p "Enter MongoDB Atlas URL (or press Enter to skip): " ATLAS_URL
-        if [ ! -z "$ATLAS_URL" ]; then
-            export MONGODB_URL="$ATLAS_URL"
-            echo -e "${GREEN}✅ MongoDB URL configured${NC}\n"
-        else
-            echo -e "${YELLOW}⚠️  Skipping MongoDB setup. You'll need to configure it manually.${NC}\n"
-            export MONGODB_URL="mongodb://localhost:27017"
-        fi
+    # Check if MongoDB is already installed
+    if command -v mongod &> /dev/null; then
+        echo -e "${YELLOW}   MongoDB already installed, skipping...${NC}"
     else
-        echo -e "\n${GREEN}Installing MongoDB locally...${NC}"
         # Install MongoDB
-        wget -qO - https://www.mongodb.org/static/pgp/server-7.0.asc | sudo apt-key add -
+        wget -qO - https://www.mongodb.org/static/pgp/server-7.0.asc | sudo apt-key add - 2>/dev/null
         echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
-        sudo apt-get update
+        sudo apt-get update -qq
         sudo apt-get install -y mongodb-org
-
-        # Start MongoDB
-        sudo systemctl start mongod
-        sudo systemctl enable mongod
-
-        export MONGODB_URL="mongodb://localhost:27017"
-        echo -e "${GREEN}✅ MongoDB installed and running${NC}\n"
     fi
+
+    # Start MongoDB
+    sudo systemctl start mongod
+    sudo systemctl enable mongod
+
+    # Verify MongoDB is running
+    sleep 2
+    if sudo systemctl is-active --quiet mongod; then
+        echo -e "${GREEN}✅ MongoDB installed and running${NC}"
+    else
+        echo -e "${YELLOW}⚠️  MongoDB service not running, attempting to start...${NC}"
+        sudo systemctl restart mongod
+        sleep 2
+    fi
+
+    export MONGODB_URL="mongodb://localhost:27017"
+    echo -e "${GREEN}   URL: ${MONGODB_URL}${NC}\n"
 else
     echo -e "${GREEN}✅ Using configured MongoDB: ${MONGODB_URL}${NC}\n"
 fi
@@ -242,8 +236,129 @@ if [ -f ".env" ]; then
     export $(grep -v '^#' .env | xargs)
 fi
 
+# Install and configure Frontend
+echo -e "\n${GREEN}🎨 Installing Frontend...${NC}"
+
+# Install nginx if not present
+if ! command -v nginx &> /dev/null; then
+    echo -e "${GREEN}Installing nginx...${NC}"
+    sudo apt-get update -qq
+    sudo apt-get install -y nginx
+    echo -e "${GREEN}✅ nginx installed${NC}"
+else
+    echo -e "${YELLOW}   nginx already installed${NC}"
+fi
+
+# Build frontend (if needed) or copy files
+if [ -d "frontend" ]; then
+    echo -e "${GREEN}Deploying frontend...${NC}"
+
+    # Check if frontend needs to be built
+    if [ -f "frontend/package.json" ]; then
+        echo -e "${GREEN}Building frontend...${NC}"
+
+        # Install Node.js if not present
+        if ! command -v node &> /dev/null; then
+            echo -e "${GREEN}Installing Node.js...${NC}"
+            curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+            sudo apt-get install -y nodejs
+        fi
+
+        # Build frontend
+        cd frontend
+        npm install
+        npm run build
+        cd ..
+
+        # Copy build output to nginx
+        sudo rm -rf /var/www/html/temporal-trading
+        sudo mkdir -p /var/www/html/temporal-trading
+        sudo cp -r frontend/dist/* /var/www/html/temporal-trading/ 2>/dev/null || \
+        sudo cp -r frontend/build/* /var/www/html/temporal-trading/ 2>/dev/null || \
+        sudo cp -r frontend/* /var/www/html/temporal-trading/
+
+        echo -e "${GREEN}✅ Frontend built and deployed${NC}"
+    else
+        # Just copy static files
+        sudo rm -rf /var/www/html/temporal-trading
+        sudo mkdir -p /var/www/html/temporal-trading
+        sudo cp -r frontend/* /var/www/html/temporal-trading/
+        echo -e "${GREEN}✅ Frontend deployed${NC}"
+    fi
+else
+    echo -e "${YELLOW}⚠️  frontend/ directory not found, skipping frontend deployment${NC}"
+fi
+
+# Configure nginx
+echo -e "${GREEN}Configuring nginx...${NC}"
+FRONTEND_PORT=${FRONTEND_PORT:-80}
+
+sudo tee /etc/nginx/sites-available/temporal-trading > /dev/null << 'NGINX_EOF'
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+
+    root /var/www/html/temporal-trading;
+    index index.html;
+
+    server_name _;
+
+    # Frontend
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Backend API proxy
+    location /api/ {
+        proxy_pass http://localhost:8000/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # WebSocket support for backend
+    location /ws {
+        proxy_pass http://localhost:8000/ws;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "Upgrade";
+        proxy_set_header Host $host;
+    }
+
+    # Health check
+    location /health {
+        proxy_pass http://localhost:8000/health;
+    }
+
+    # API docs
+    location /docs {
+        proxy_pass http://localhost:8000/docs;
+    }
+}
+NGINX_EOF
+
+# Enable site
+sudo ln -sf /etc/nginx/sites-available/temporal-trading /etc/nginx/sites-enabled/
+sudo rm -f /etc/nginx/sites-enabled/default
+
+# Test nginx config
+if sudo nginx -t 2>/dev/null; then
+    sudo systemctl restart nginx
+    sudo systemctl enable nginx
+    echo -e "${GREEN}✅ nginx configured and running${NC}"
+else
+    echo -e "${YELLOW}⚠️  nginx configuration test failed, check /etc/nginx/sites-available/temporal-trading${NC}"
+fi
+
+echo ""
+
 # Create systemd service for auto-start
-echo -e "${GREEN}🚀 Creating systemd service...${NC}"
+echo -e "${GREEN}🚀 Creating systemd service for backend...${NC}"
 INSTALL_DIR=$(pwd)
 cat > /tmp/temporal-trading.service << EOF
 [Unit]
@@ -270,10 +385,19 @@ sudo mv /tmp/temporal-trading.service /etc/systemd/system/
 sudo systemctl daemon-reload
 echo -e "${GREEN}✅ Systemd service created${NC}\n"
 
+# Get instance IP
+INSTANCE_IP=$(hostname -I | awk '{print $1}')
+
 # Ask if user wants to start now
 echo -e "\n${BLUE}========================================${NC}"
-echo -e "${BLUE}Deployment Complete!${NC}"
+echo -e "${BLUE}All-in-One Deployment Complete!${NC}"
 echo -e "${BLUE}========================================${NC}\n"
+
+echo -e "${GREEN}Services Installed:${NC}"
+echo -e "  ✅ MongoDB 7.0"
+echo -e "  ✅ Backend API (FastAPI + PyTorch)"
+echo -e "  ✅ Frontend Dashboard (nginx)"
+echo -e ""
 
 echo -e "You can now:"
 echo -e "  ${GREEN}1. Start the backend:${NC}"
@@ -284,31 +408,78 @@ echo -e "     sudo systemctl enable temporal-trading"
 echo -e ""
 echo -e "  ${GREEN}3. Check status:${NC}"
 echo -e "     sudo systemctl status temporal-trading"
+echo -e "     sudo systemctl status mongod"
+echo -e "     sudo systemctl status nginx"
 echo -e ""
 echo -e "  ${GREEN}4. View logs:${NC}"
 echo -e "     sudo journalctl -u temporal-trading -f"
 echo -e ""
-echo -e "  ${GREEN}5. Run manually (for testing):${NC}"
-echo -e "     source venv/bin/activate"
-echo -e "     uvicorn backend.main:app --host 0.0.0.0 --port ${PORT}"
+echo -e "  ${GREEN}5. Quick management:${NC}"
+echo -e "     ./scripts/runpod_start.sh start|stop|status|logs"
 echo -e ""
 
 read -p "Start the backend now? (y/n): " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-    echo -e "\n${GREEN}🚀 Starting backend...${NC}"
+    echo -e "\n${GREEN}🚀 Starting all services...${NC}"
+
+    # Ensure MongoDB is running
+    sudo systemctl start mongod
+
+    # Ensure nginx is running
+    sudo systemctl start nginx
+
+    # Start backend
     sudo systemctl start temporal-trading
     sleep 3
-    sudo systemctl status temporal-trading --no-pager
 
-    echo -e "\n${GREEN}✅ Backend started!${NC}"
-    echo -e "   Access at: ${GREEN}http://$(hostname -I | awk '{print $1}'):${PORT}${NC}"
-    echo -e "   Health check: ${GREEN}http://$(hostname -I | awk '{print $1}'):${PORT}/health${NC}\n"
+    echo -e "\n${GREEN}✅ Services Status:${NC}"
+
+    # Check MongoDB
+    if sudo systemctl is-active --quiet mongod; then
+        echo -e "   ✅ MongoDB: ${GREEN}Running${NC}"
+    else
+        echo -e "   ❌ MongoDB: ${RED}Not running${NC}"
+    fi
+
+    # Check nginx
+    if sudo systemctl is-active --quiet nginx; then
+        echo -e "   ✅ nginx: ${GREEN}Running${NC}"
+    else
+        echo -e "   ❌ nginx: ${RED}Not running${NC}"
+    fi
+
+    # Check backend
+    if sudo systemctl is-active --quiet temporal-trading; then
+        echo -e "   ✅ Backend: ${GREEN}Running${NC}"
+    else
+        echo -e "   ❌ Backend: ${RED}Not running${NC}"
+    fi
+
+    echo -e "\n${BLUE}========================================${NC}"
+    echo -e "${BLUE}Access Your Application${NC}"
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "${GREEN}Frontend:${NC}     http://${INSTANCE_IP}/"
+    echo -e "${GREEN}Backend API:${NC}  http://${INSTANCE_IP}/api/"
+    echo -e "${GREEN}API Docs:${NC}     http://${INSTANCE_IP}/docs"
+    echo -e "${GREEN}Health:${NC}       http://${INSTANCE_IP}/health"
+    echo -e "${GREEN}MongoDB:${NC}      mongodb://localhost:27017"
+    echo -e "${BLUE}========================================${NC}\n"
+
     echo -e "View logs: ${BLUE}sudo journalctl -u temporal-trading -f${NC}\n"
 else
-    echo -e "\n${YELLOW}Backend not started. Start it manually when ready.${NC}\n"
+    echo -e "\n${YELLOW}Services not started. Start them manually when ready:${NC}"
+    echo -e "  sudo systemctl start mongod"
+    echo -e "  sudo systemctl start nginx"
+    echo -e "  sudo systemctl start temporal-trading\n"
 fi
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${GREEN}✅ Deployment Complete!${NC}"
-echo -e "${BLUE}========================================${NC}\n"
+echo -e "${GREEN}✅ All-in-One Deployment Complete!${NC}"
+echo -e "${BLUE}========================================${NC}"
+echo -e ""
+echo -e "Next steps:"
+echo -e "  1. Edit .env to add your API keys"
+echo -e "  2. Access frontend at http://${INSTANCE_IP}/"
+echo -e "  3. Start analyzing crypto markets!"
+echo -e ""

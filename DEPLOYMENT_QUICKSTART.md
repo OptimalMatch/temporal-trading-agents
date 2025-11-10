@@ -23,7 +23,7 @@ docker logs temporal-trading-backend | grep GPU
 
 **See**: [docker-compose.yml](docker-compose.yml) for configuration
 
-## RunPod Deployment (Direct)
+## RunPod Deployment (All-in-One)
 
 For RunPod instances with CUDA/PyTorch pre-installed:
 
@@ -33,14 +33,15 @@ For RunPod instances with CUDA/PyTorch pre-installed:
 git clone https://github.com/<your-username>/temporal-trading-agents.git
 cd temporal-trading-agents
 
-# One-command automated deployment
+# One-command automated all-in-one deployment
 ./scripts/runpod_deploy.sh
 
-# Follow interactive prompts to:
-# - Auto-detect GPU and select profile
-# - Setup MongoDB (Atlas or local)
-# - Configure API keys
-# - Start backend
+# Automatically installs and configures:
+# ✅ MongoDB 7.0 (local database)
+# ✅ Backend API (FastAPI + PyTorch)
+# ✅ Frontend Dashboard (nginx)
+# ✅ Auto-detects GPU and selects optimal profile
+# ✅ Creates systemd services for auto-start
 ```
 
 **See**: [docs/RUNPOD_DEPLOYMENT.md](docs/RUNPOD_DEPLOYMENT.md) for details
@@ -111,13 +112,21 @@ echo "GPU_PROFILE=rtx_5090" >> .env
 ./scripts/runpod_start.sh restart
 ```
 
-## Accessing the API
+## Accessing the Services
 
-Once deployed:
+### Local (Docker)
+- **Backend API**: `http://localhost:10750/`
+- **API Docs**: `http://localhost:10750/docs`
+- **Health Check**: `http://localhost:10750/health`
+- **Frontend**: `http://localhost:10752/`
 
-- **Health Check**: `http://<host>:8000/health` (or `:10750` for Docker)
-- **API Docs**: `http://<host>:8000/docs`
-- **Frontend**: `http://<host>:10752` (Docker only)
+### RunPod (All-in-One)
+- **Frontend**: `http://<instance-ip>/` (port 80)
+- **API** (proxied): `http://<instance-ip>/api/`
+- **API Docs**: `http://<instance-ip>/docs`
+- **Health Check**: `http://<instance-ip>/health`
+
+Everything runs on port 80 with nginx routing.
 
 ## Testing GPU Profile
 
