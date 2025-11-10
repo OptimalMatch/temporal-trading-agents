@@ -768,6 +768,7 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
             logs.append(f"[{datetime.now(timezone.utc).isoformat()}] WARNING: Confidence-Weighted failed - {str(e)}")
 
         # Strategy 3: Multi-Timeframe (25% -> 37%)
+        # Only run for daily intervals - hourly doesn't need multi-timeframe alignment
         logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Running Multi-Timeframe strategy (3/8)")
         await ws_manager.send_progress(
             task_id=consensus_id,
@@ -777,23 +778,36 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
             progress=25,
             message="Running Multi-Timeframe strategy..."
         )
-        try:
-            # Run in process pool to avoid blocking
-            timeframe_data = await loop.run_in_executor(
-                executor,
-                _train_multiple_timeframes_worker,
-                request.symbol, request.horizons, request.interval
-            )
-            result = analyze_multi_timeframe_strategy(timeframe_data, current_price)
-            analysis = convert_strategy_result_to_model('timeframe', result, request.symbol, current_price, 0)
-            analysis_id = await database.create_strategy_analysis(analysis)
-            strategy_ids.append(analysis_id)
+
+        if request.interval == '1h':
+            # Skip multi-timeframe for hourly - use ensemble disagreement as proxy
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Multi-Timeframe skipped for hourly interval (use ensemble disagreement instead)")
+            result = {
+                'signal': 'SKIPPED',
+                'position_size_pct': 0,
+                'reason': 'Multi-timeframe analysis only available for daily intervals',
+                'note': 'For hourly intervals, ensemble model disagreement serves as multi-timeframe proxy'
+            }
             results['Multi-Timeframe'] = result
-            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Multi-Timeframe completed: {result.get('signal')}")
-        except Exception as e:
-            print(f"Timeframe strategy failed: {e}")
-            results['Multi-Timeframe'] = {'signal': 'ERROR', 'position_size_pct': 0}
-            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] WARNING: Multi-Timeframe failed - {str(e)}")
+        else:
+            # Run multi-timeframe for daily intervals
+            try:
+                # Run in process pool to avoid blocking
+                timeframe_data = await loop.run_in_executor(
+                    executor,
+                    _train_multiple_timeframes_worker,
+                    request.symbol, request.horizons, request.interval
+                )
+                result = analyze_multi_timeframe_strategy(timeframe_data, current_price)
+                analysis = convert_strategy_result_to_model('timeframe', result, request.symbol, current_price, 0)
+                analysis_id = await database.create_strategy_analysis(analysis)
+                strategy_ids.append(analysis_id)
+                results['Multi-Timeframe'] = result
+                logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Multi-Timeframe completed: {result.get('signal')}")
+            except Exception as e:
+                print(f"Timeframe strategy failed: {e}")
+                results['Multi-Timeframe'] = {'signal': 'ERROR', 'position_size_pct': 0}
+                logs.append(f"[{datetime.now(timezone.utc).isoformat()}] WARNING: Multi-Timeframe failed - {str(e)}")
 
         # Strategy 4: Volatility Sizing (37% -> 50%)
         logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Running Volatility Sizing strategy (4/8)")
@@ -916,7 +930,8 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
 
         for name, data in results.items():
             signal = data.get('signal', 'ERROR')
-            if signal == 'ERROR':
+            # Skip ERROR and SKIPPED strategies from consensus
+            if signal in ['ERROR', 'SKIPPED']:
                 continue
             if any(keyword in signal for keyword in bullish_keywords) and 'POOR' not in signal and 'FALSE' not in signal:
                 bullish_strategies.append(name)
@@ -925,8 +940,8 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
             else:
                 neutral_strategies.append(name)
 
-        # Calculate consensus
-        total = len([name for name, data in results.items() if data.get('signal') != 'ERROR'])
+        # Calculate consensus (exclude ERROR and SKIPPED strategies)
+        total = len([name for name, data in results.items() if data.get('signal') not in ['ERROR', 'SKIPPED']])
         bullish_count = len(bullish_strategies)
         bearish_count = len(bearish_strategies)
 
