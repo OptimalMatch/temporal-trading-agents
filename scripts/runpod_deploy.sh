@@ -216,13 +216,19 @@ echo -e "${BLUE}========================================${NC}\n"
 echo -e "${GREEN}🧪 Testing GPU profile...${NC}"
 python3 scripts/test_gpu_profile.py --recommend
 
+# Load existing .env file if it exists
+if [ -f ".env" ]; then
+    echo -e "\n${GREEN}📋 Loading existing .env file...${NC}"
+    export $(grep -v '^#' .env | xargs) 2>/dev/null || true
+fi
+
 # Check if API keys are set
 echo -e "\n${YELLOW}📋 Checking API keys...${NC}"
 MISSING_KEYS=()
-if [ -z "$POLYGON_API_KEY" ]; then
+if [ -z "$POLYGON_API_KEY" ] || [ "$POLYGON_API_KEY" = "your_polygon_key_here" ]; then
     MISSING_KEYS+=("POLYGON_API_KEY")
 fi
-if [ -z "$MASSIVE_ACCESS_KEY_ID" ]; then
+if [ -z "$MASSIVE_ACCESS_KEY_ID" ] || [ "$MASSIVE_ACCESS_KEY_ID" = "your_massive_key_here" ]; then
     MISSING_KEYS+=("MASSIVE_ACCESS_KEY_ID (optional)")
 fi
 
@@ -234,7 +240,7 @@ if [ ${#MISSING_KEYS[@]} -gt 0 ]; then
     echo -e "\n${YELLOW}You can set them now or later in .env file${NC}\n"
 fi
 
-# Create .env file if it doesn't exist
+# Create .env file if it doesn't exist, or update key settings
 if [ ! -f ".env" ]; then
     echo -e "${GREEN}📝 Creating .env file...${NC}"
     cat > .env << EOF
@@ -262,14 +268,25 @@ TORCHINDUCTOR_CACHE_DIR=/workspace/torch_compile_cache/inductor
 
 # Backend
 PYTHONUNBUFFERED=1
+PORT=8000
 EOF
     echo -e "${GREEN}✅ .env file created${NC}"
     echo -e "${YELLOW}⚠️  Edit .env file to add your API keys${NC}\n"
-fi
-
-# Load .env file
-if [ -f ".env" ]; then
-    export $(grep -v '^#' .env | xargs)
+else
+    echo -e "${GREEN}✅ Using existing .env file${NC}"
+    # Update GPU profile and MongoDB URL if needed
+    if grep -q "^GPU_PROFILE=" .env; then
+        sed -i "s|^GPU_PROFILE=.*|GPU_PROFILE=${GPU_PROFILE}|" .env
+    else
+        echo "GPU_PROFILE=${GPU_PROFILE}" >> .env
+    fi
+    if grep -q "^MONGODB_URL=" .env; then
+        sed -i "s|^MONGODB_URL=.*|MONGODB_URL=${MONGODB_URL}|" .env
+    else
+        echo "MONGODB_URL=${MONGODB_URL}" >> .env
+    fi
+    # Reload .env file after updates
+    export $(grep -v '^#' .env | xargs) 2>/dev/null || true
 fi
 
 # Install and configure Frontend
