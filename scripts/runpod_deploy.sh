@@ -373,9 +373,9 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
-    # Backend API proxy
+    # Backend API proxy (preserve /api/ prefix)
     location /api/ {
-        proxy_pass http://localhost:8000/;
+        proxy_pass http://localhost:8000/api/;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -467,9 +467,9 @@ else
             try_files $uri $uri/ /index.html;\
         }\
 \
-        # Backend API proxy\
+        # Backend API proxy (preserve /api/ prefix)\
         location /api/ {\
-            proxy_pass http://localhost:8000/;\
+            proxy_pass http://localhost:8000/api/;\
             proxy_http_version 1.1;\
             proxy_set_header Upgrade $http_upgrade;\
             proxy_set_header Connection "upgrade";\
