@@ -418,7 +418,7 @@ else
     sudo cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.backup
 
     # Add MIME types to http block if not present
-    if ! grep -q "text/javascript" /etc/nginx/nginx.conf; then
+    if ! grep -q "text/javascript.*js mjs" /etc/nginx/nginx.conf; then
         echo -e "${YELLOW}   Adding MIME types to nginx.conf${NC}"
         sudo sed -i '/^http {/a \
     # MIME types\
@@ -466,7 +466,7 @@ else
             proxy_pass http://localhost:8000/;\
             proxy_http_version 1.1;\
             proxy_set_header Upgrade $http_upgrade;\
-            proxy_set_header Connection '"'"'upgrade'"'"';\
+            proxy_set_header Connection "upgrade";\
             proxy_set_header Host $host;\
             proxy_cache_bypass $http_upgrade;\
             proxy_set_header X-Real-IP $remote_addr;\
