@@ -58,14 +58,14 @@ GPU_PROFILES: Dict[str, Dict[str, Any]] = {
     "h200": {
         "name": "NVIDIA H200 SXM",
         "vram_gb": 141,
-        "batch_size_1d": 4096,  # Daily intervals - massive batch size
-        "batch_size_1h": 8192,  # Hourly intervals - extreme batch size
-        "max_workers": 4,       # 4 parallel models (conservative, can try 5)
-        "memory_per_model_1d": 20,  # ~20GB per model for daily
-        "memory_per_model_1h": 35,  # ~35GB per model for hourly
-        "notes": "Extreme performance profile for H200 with 141GB VRAM. "
-                 "Can handle 4-5 parallel models with massive batch sizes. "
-                 "Fastest training speeds available - 20-30x vs CPU.",
+        "batch_size_1d": 2560,  # Daily intervals - 1.25x A100 80GB (conservative)
+        "batch_size_1h": 5120,  # Hourly intervals - 1.25x A100 80GB (conservative)
+        "max_workers": 3,       # 3 parallel models to avoid OOM
+        "memory_per_model_1d": 25,  # ~25GB per model for daily
+        "memory_per_model_1h": 45,  # ~45GB per model for hourly
+        "notes": "High performance profile for H200 with 141GB VRAM. "
+                 "Conservative batch sizes to allow 3 parallel models. "
+                 "Very fast training - 15-20x vs CPU.",
     },
 }
 
