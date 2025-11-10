@@ -47,7 +47,9 @@ if command -v nvidia-smi &> /dev/null; then
 
     # Auto-detect profile if not set
     if [ -z "$GPU_PROFILE" ]; then
-        if [[ "$GPU_NAME" =~ "4090" ]]; then
+        if [[ "$GPU_NAME" =~ "H200" ]]; then
+            export GPU_PROFILE="h200"
+        elif [[ "$GPU_NAME" =~ "4090" ]]; then
             export GPU_PROFILE="rtx_4090"
         elif [[ "$GPU_NAME" =~ "5090" ]]; then
             export GPU_PROFILE="rtx_5090"
@@ -57,7 +59,9 @@ if command -v nvidia-smi &> /dev/null; then
             export GPU_PROFILE="a100_40gb"
         else
             # Default based on VRAM
-            if [ $((GPU_MEMORY / 1024)) -gt 70 ]; then
+            if [ $((GPU_MEMORY / 1024)) -gt 130 ]; then
+                export GPU_PROFILE="h200"
+            elif [ $((GPU_MEMORY / 1024)) -gt 70 ]; then
                 export GPU_PROFILE="a100_80gb"
             elif [ $((GPU_MEMORY / 1024)) -gt 35 ]; then
                 export GPU_PROFILE="a100_40gb"

@@ -42,7 +42,9 @@ def recommend_profile():
     print(f"{'='*70}")
 
     # Match GPU name or VRAM
-    if "4090" in gpu_name or "rtx 4090" in gpu_name:
+    if "h200" in gpu_name:
+        recommended = "h200"
+    elif "4090" in gpu_name or "rtx 4090" in gpu_name:
         recommended = "rtx_4090"
     elif "5090" in gpu_name or "rtx 5090" in gpu_name:
         recommended = "rtx_5090"
@@ -51,6 +53,8 @@ def recommend_profile():
             recommended = "a100_80gb"
         else:
             recommended = "a100_40gb"
+    elif total_vram >= 130:  # H200 has 141GB
+        recommended = "h200"
     elif total_vram >= 70:
         recommended = "a100_80gb"
     elif total_vram >= 35:
