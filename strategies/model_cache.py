@@ -385,6 +385,19 @@ class ModelCache:
 
             # Upload to HuggingFace Hub
             try:
+                # Test connectivity before attempting upload
+                import socket
+                try:
+                    socket.gethostbyname("huggingface.co")
+                    print(f"🌐 Network check: Successfully resolved huggingface.co")
+                except Exception as dns_error:
+                    print(f"⚠️  Network check: Failed to resolve huggingface.co - {str(dns_error)}")
+                    raise RuntimeError(
+                        f"Network connectivity issue: Cannot resolve huggingface.co. "
+                        f"RunPod instance may not have internet access or DNS is misconfigured. "
+                        f"Error: {str(dns_error)}"
+                    ) from dns_error
+
                 api = HfApi(token=token)
 
                 if not commit_message:
