@@ -154,21 +154,26 @@ if [ -z "$MONGODB_URL" ]; then
         # No systemd (Docker container / RunPod)
         echo -e "${YELLOW}   systemd not available, starting MongoDB manually...${NC}"
 
-        # Create MongoDB data directory
-        sudo mkdir -p /data/db
-        sudo chown -R mongodb:mongodb /data/db
-
-        # Start MongoDB in background
-        sudo -u mongodb mongod --fork --logpath /var/log/mongodb/mongod.log --dbpath /data/db
-
-        sleep 2
-
-        # Check if MongoDB is running
+        # Check if MongoDB is already running
         if pgrep -x mongod > /dev/null; then
-            echo -e "${GREEN}✅ MongoDB started in background${NC}"
+            echo -e "${GREEN}✅ MongoDB already running${NC}"
         else
-            echo -e "${RED}❌ Failed to start MongoDB${NC}"
-            echo -e "${RED}   Check logs: tail /var/log/mongodb/mongod.log${NC}"
+            # Create MongoDB data directory
+            sudo mkdir -p /data/db
+            sudo chown -R mongodb:mongodb /data/db
+
+            # Start MongoDB in background
+            sudo -u mongodb mongod --fork --logpath /var/log/mongodb/mongod.log --dbpath /data/db
+
+            sleep 2
+
+            # Check if MongoDB is running
+            if pgrep -x mongod > /dev/null; then
+                echo -e "${GREEN}✅ MongoDB started in background${NC}"
+            else
+                echo -e "${RED}❌ Failed to start MongoDB${NC}"
+                echo -e "${RED}   Check logs: tail /var/log/mongodb/mongod.log${NC}"
+            fi
         fi
     fi
 
