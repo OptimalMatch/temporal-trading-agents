@@ -9,6 +9,9 @@ import pandas as pd
 import traceback
 import logging
 
+# Configure PyTorch memory management to reduce fragmentation
+os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'expandable_segments:True')
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -4921,6 +4924,119 @@ async def get_cache_stats():
         raise HTTPException(status_code=500, detail=f"Failed to get cache stats: {str(e)}")
 
 
+@app.get("/api/v1/huggingface/test-connectivity")
+async def test_huggingface_connectivity():
+    """
+    Test connectivity to HuggingFace Hub to diagnose network issues.
+
+    This endpoint checks:
+    1. DNS resolution for huggingface.co
+    2. HTTPS connectivity to HuggingFace API
+    3. API authentication (if token provided)
+    """
+    import socket
+    import requests
+    from datetime import datetime
+
+    results = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "checks": []
+    }
+
+    # Check 1: DNS resolution
+    try:
+        ip_address = socket.gethostbyname("huggingface.co")
+        results["checks"].append({
+            "name": "DNS Resolution",
+            "status": "success",
+            "details": f"huggingface.co resolves to {ip_address}"
+        })
+    except Exception as e:
+        results["checks"].append({
+            "name": "DNS Resolution",
+            "status": "failed",
+            "error": str(e),
+            "details": "Cannot resolve huggingface.co. Check DNS settings or network connectivity."
+        })
+        return results
+
+    # Check 2: HTTPS connectivity
+    try:
+        response = requests.get("https://huggingface.co", timeout=10)
+        results["checks"].append({
+            "name": "HTTPS Connectivity",
+            "status": "success",
+            "details": f"Successfully connected (HTTP {response.status_code})"
+        })
+    except Exception as e:
+        results["checks"].append({
+            "name": "HTTPS Connectivity",
+            "status": "failed",
+            "error": str(e),
+            "details": "Cannot connect to huggingface.co. Check firewall or proxy settings."
+        })
+        return results
+
+    # Check 3: HuggingFace API connectivity
+    try:
+        api_url = "https://huggingface.co/api/whoami-v2"
+        headers = {}
+
+        # Try with token if available from environment
+        token = os.getenv("HUGGING_FACE_HUB_TOKEN")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
+        response = requests.get(api_url, headers=headers, timeout=10)
+
+        if response.status_code == 200:
+            user_info = response.json()
+            results["checks"].append({
+                "name": "HuggingFace API (Authenticated)",
+                "status": "success",
+                "details": f"Authenticated as: {user_info.get('name', 'unknown')}",
+                "user": user_info.get("name"),
+                "organizations": user_info.get("orgs", [])
+            })
+        elif response.status_code == 401:
+            results["checks"].append({
+                "name": "HuggingFace API",
+                "status": "warning",
+                "details": "API accessible but token is invalid or missing",
+                "hint": "Set HUGGING_FACE_HUB_TOKEN environment variable with a valid token"
+            })
+        else:
+            results["checks"].append({
+                "name": "HuggingFace API",
+                "status": "warning",
+                "details": f"API responded with HTTP {response.status_code}",
+                "response": response.text[:200]
+            })
+    except Exception as e:
+        results["checks"].append({
+            "name": "HuggingFace API",
+            "status": "failed",
+            "error": str(e),
+            "details": "Cannot access HuggingFace API endpoint"
+        })
+
+    # Overall status
+    failed_checks = [c for c in results["checks"] if c["status"] == "failed"]
+    warning_checks = [c for c in results["checks"] if c["status"] == "warning"]
+
+    if failed_checks:
+        results["overall_status"] = "failed"
+        results["message"] = f"{len(failed_checks)} check(s) failed. Network connectivity issues detected."
+    elif warning_checks:
+        results["overall_status"] = "warning"
+        results["message"] = f"{len(warning_checks)} check(s) have warnings. Authentication may be needed."
+    else:
+        results["overall_status"] = "success"
+        results["message"] = "All checks passed. HuggingFace Hub is accessible."
+
+    return results
+
+
 @app.post("/api/v1/huggingface/export-ensemble")
 async def export_ensemble_to_huggingface(
     request: EnsembleExportRequest,
@@ -5071,11 +5187,15 @@ async def export_ensemble_to_huggingface(
                 })
 
             except Exception as e:
-                print(f"❌ Error exporting {model_info.get('focus')}: {str(e)}")
+                error_details = f"{type(e).__name__}: {str(e)}"
+                print(f"❌ Error exporting {model_info.get('focus')}: {error_details}")
+                # Print full traceback for debugging
+                import traceback
+                traceback.print_exc()
                 failed_models.append({
                     "lookback": model_info.get("lookback"),
                     "focus": model_info.get("focus"),
-                    "error": str(e)
+                    "error": error_details
                 })
 
         # Update last_export timestamp if we have a config

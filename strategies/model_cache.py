@@ -384,32 +384,80 @@ class ModelCache:
                 f.write(self._generate_model_card(symbol, interval, lookback, focus, forecast_horizon, metadata, ensemble_info))
 
             # Upload to HuggingFace Hub
-            api = HfApi(token=token)
+            try:
+                # Test connectivity before attempting upload
+                import socket
+                try:
+                    socket.gethostbyname("huggingface.co")
+                    print(f"🌐 Network check: Successfully resolved huggingface.co")
+                except Exception as dns_error:
+                    print(f"⚠️  Network check: Failed to resolve huggingface.co - {str(dns_error)}")
+                    raise RuntimeError(
+                        f"Network connectivity issue: Cannot resolve huggingface.co. "
+                        f"RunPod instance may not have internet access or DNS is misconfigured. "
+                        f"Error: {str(dns_error)}"
+                    ) from dns_error
 
-            if not commit_message:
-                commit_message = (
-                    f"Upload {symbol} {focus} model "
-                    f"(interval={interval}, lookback={lookback}, horizon={forecast_horizon})"
+                api = HfApi(token=token)
+
+                if not commit_message:
+                    commit_message = (
+                        f"Upload {symbol} {focus} model "
+                        f"(interval={interval}, lookback={lookback}, horizon={forecast_horizon})"
+                    )
+
+                # Check if repo exists, create if needed
+                try:
+                    api.repo_info(repo_id=repo_id, repo_type="model", token=token)
+                except Exception:
+                    # Repo doesn't exist, create it
+                    api.create_repo(
+                        repo_id=repo_id,
+                        repo_type="model",
+                        private=private,
+                        exist_ok=True,
+                        token=token
+                    )
+
+                url = api.upload_folder(
+                    folder_path=str(temp_path),
+                    repo_id=repo_id,
+                    repo_type="model",
+                    commit_message=commit_message,
+                    create_pr=False,
+                    path_in_repo=path_in_repo,
                 )
 
-            url = api.upload_folder(
-                folder_path=str(temp_path),
-                repo_id=repo_id,
-                repo_type="model",
-                commit_message=commit_message,
-                create_pr=False,
-                path_in_repo=path_in_repo,
-            )
+                repo_url = f"https://huggingface.co/{repo_id}"
+                if path_in_repo:
+                    repo_url += f"/tree/main/{path_in_repo}"
 
-            repo_url = f"https://huggingface.co/{repo_id}"
-            if path_in_repo:
-                repo_url += f"/tree/main/{path_in_repo}"
+                print(f"🤗 Exported model to HuggingFace: {repo_id}")
+                print(f"   Path: {path_in_repo or '(root)'}")
+                print(f"   URL: {repo_url}")
 
-            print(f"🤗 Exported model to HuggingFace: {repo_id}")
-            print(f"   Path: {path_in_repo or '(root)'}")
-            print(f"   URL: {repo_url}")
+                return repo_url
 
-            return repo_url
+            except Exception as e:
+                # Provide detailed error information
+                error_msg = f"Failed to upload to HuggingFace Hub"
+                if hasattr(e, 'response'):
+                    # HTTP error from HF API
+                    error_msg += f" (HTTP {e.response.status_code})"
+                    if hasattr(e.response, 'text'):
+                        error_msg += f": {e.response.text}"
+                else:
+                    error_msg += f": {str(e)}"
+
+                # Check common issues
+                if "401" in str(e) or "unauthorized" in str(e).lower():
+                    error_msg += "\n💡 Hint: Check that HUGGING_FACE_HUB_TOKEN is valid and has write access"
+                elif "403" in str(e) or "forbidden" in str(e).lower():
+                    error_msg += f"\n💡 Hint: Token may not have permission to write to repo '{repo_id}'"
+                elif "404" in str(e):
+                    error_msg += f"\n💡 Hint: Repository '{repo_id}' may not exist or token lacks access"
+
+                raise RuntimeError(error_msg) from e
 
     def import_from_huggingface(
         self,
