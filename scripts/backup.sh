@@ -17,3 +17,4 @@ ls -lh ~/backups/${BACKUP_NAME}.tar.gz
 echo ""
 echo "📥 Download with:"
 echo "  scp -P YOUR_PORT root@YOUR_HOST:~/backups/${BACKUP_NAME}.tar.gz ~/temporal-backups/"
+echo "  scp -P 14516 -i ~/.ssh/id_ed25519 root@103.196.86.35:~/backups/temporal-complete-20251110-155455.tar.gz ~/temporal-backups/"
