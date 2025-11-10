@@ -5074,11 +5074,15 @@ async def export_ensemble_to_huggingface(
                 })
 
             except Exception as e:
-                print(f"❌ Error exporting {model_info.get('focus')}: {str(e)}")
+                error_details = f"{type(e).__name__}: {str(e)}"
+                print(f"❌ Error exporting {model_info.get('focus')}: {error_details}")
+                # Print full traceback for debugging
+                import traceback
+                traceback.print_exc()
                 failed_models.append({
                     "lookback": model_info.get("lookback"),
                     "focus": model_info.get("focus"),
-                    "error": str(e)
+                    "error": error_details
                 })
 
         # Update last_export timestamp if we have a config
