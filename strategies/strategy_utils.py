@@ -12,6 +12,8 @@ import matplotlib.pyplot as plt
 from typing import Dict, List, Tuple, Optional
 import sys
 import importlib.util
+import gc
+import torch
 
 
 def load_ensemble_module(module_path: str = "../examples/crypto_ensemble_forecast.py"):
@@ -122,6 +124,13 @@ def train_ensemble(symbol: str, forecast_horizon: int, configs: List[Dict],
             fine_tune_epochs=fine_tune_epochs
         )
         ensemble_models.append(model_info)
+
+        # Aggressively free GPU memory between models to prevent OOM
+        # Synchronize ensures all GPU operations complete before clearing cache
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        gc.collect()  # Also run Python garbage collection
 
     # Make predictions
     ensemble_stats, df_latest = ensemble_module.make_ensemble_predictions(

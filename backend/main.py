@@ -9,6 +9,9 @@ import pandas as pd
 import traceback
 import logging
 
+# Configure PyTorch memory management to reduce fragmentation
+os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'expandable_segments:True')
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
