@@ -358,7 +358,7 @@ def load_cached_model_for_inference(symbol, lookback, forecast_horizon, focus, i
         Model info dict ready for predictions, or None if model not in cache
     """
     import torch
-    from temporal.model import TemporalTransformer
+    from temporal.model import Temporal
     from strategies.model_cache import get_model_cache
 
     model_cache = get_model_cache()
@@ -377,12 +377,12 @@ def load_cached_model_for_inference(symbol, lookback, forecast_horizon, focus, i
     feature_columns = metadata['feature_columns']
     num_features = len(feature_columns)
 
-    # Create model architecture
-    model = TemporalTransformer(
-        num_features=num_features,
+    # Create model architecture (must match the architecture used during training)
+    model = Temporal(
+        input_dim=num_features,
         d_model=512,
-        num_encoder_layers=3,
-        num_decoder_layers=3,
+        num_encoder_layers=6,  # Default used during training
+        num_decoder_layers=6,  # Default used during training
         forecast_horizon=forecast_horizon,
         dropout=0.1
     )
@@ -423,11 +423,23 @@ def load_cached_model_for_inference(symbol, lookback, forecast_horizon, focus, i
     }
 
 
-def make_ensemble_predictions(ensemble_models, symbol, forecast_horizon=7, interval='1d'):
-    """Make predictions using all models in the ensemble."""
+def make_ensemble_predictions(ensemble_models, symbol, forecast_horizon=7, interval='1d', cutoff_date=None):
+    """
+    Make predictions using all models in the ensemble.
+
+    Args:
+        ensemble_models: List of loaded model info dictionaries
+        symbol: Trading symbol
+        forecast_horizon: Number of periods to forecast
+        interval: Data interval ('1d' or '1h')
+        cutoff_date: Optional datetime to limit data to (for backtesting). If provided, only uses data up to this date.
+    """
     print(f"\n{'='*70}")
     print("GENERATING ENSEMBLE PREDICTIONS")
     print(f"{'='*70}")
+
+    if cutoff_date:
+        print(f"🕐 Cutoff date: {cutoff_date} (backtest mode - using only historical data)")
 
     # Auto-detect available data period from cache for this specific interval
     from strategies.data_cache import get_cache
@@ -465,6 +477,13 @@ def make_ensemble_predictions(ensemble_models, symbol, forecast_horizon=7, inter
     for model_info in ensemble_models:
         # Fetch latest data - use period to match training data and enable saving full history
         df_latest = fetch_crypto_data(symbol, period=period, interval=interval)
+
+        # Apply cutoff date if provided (for backtesting)
+        if cutoff_date:
+            df_latest = df_latest[df_latest.index <= cutoff_date]
+            if len(df_latest) == 0:
+                raise ValueError(f"No data available up to cutoff date {cutoff_date}")
+
         df_latest, _ = add_technical_indicators(df_latest, focus=model_info['focus'])
 
         # Prepare features
@@ -474,7 +493,9 @@ def make_ensemble_predictions(ensemble_models, symbol, forecast_horizon=7, inter
         # Get input window
         lookback = model_info['lookback']
         latest = data_latest_norm[-lookback:]
-        latest_tensor = torch.FloatTensor(latest).unsqueeze(0).to(model_info['trainer'].device)
+        # Get device from model (works in both training and inference mode)
+        device = next(model_info['model'].parameters()).device
+        latest_tensor = torch.FloatTensor(latest).unsqueeze(0).to(device)
 
         # Predict
         model_info['model'].eval()

@@ -35,7 +35,7 @@ from strategies.mean_reversion_strategy import analyze_mean_reversion_strategy
 from strategies.acceleration_strategy import analyze_acceleration_strategy
 from strategies.swing_trading_strategy import analyze_swing_trading_strategy
 from strategies.risk_adjusted_strategy import analyze_risk_adjusted_strategy
-from strategies.strategy_utils import load_ensemble_module, train_ensemble, get_default_ensemble_configs
+from strategies.strategy_utils import load_ensemble_module, train_ensemble, inference_ensemble, get_default_ensemble_configs
 from strategies.strategy_cache import get_strategy_cache
 
 logger = logging.getLogger(__name__)
@@ -462,59 +462,89 @@ class BacktestEngine:
         # Train consensus model if not already trained
         if self.consensus_stats is None:
             try:
-                print(f"\n{'='*60}")
-                print(f"TRAINING CONSENSUS MODEL FOR BACKTEST")
-                print(f"{'='*60}\n")
-                logger.info("Training consensus model for backtest")
-
-                # Load ensemble module and train model
+                # Load ensemble module
                 ensemble = load_ensemble_module("examples/crypto_ensemble_forecast.py")
                 configs = get_default_ensemble_configs(horizon=14)
 
-                # Train ensemble model
-                stats, _ = train_ensemble(
-                    symbol=self.config.symbol,
-                    forecast_horizon=14,
-                    configs=configs,
-                    name="Backtest-Consensus",
-                    ensemble_module=ensemble
-                )
+                if self.config.inference_mode:
+                    # Inference mode - load cached models without training
+                    # Use first date of backtest as cutoff to avoid forward-looking bias
+                    cutoff_date = pd.to_datetime(price_data['date'].iloc[0])
+
+                    print(f"\n{'='*60}")
+                    print(f"LOADING CACHED MODELS FOR BACKTEST (INFERENCE MODE)")
+                    print(f"{'='*60}\n")
+                    logger.info("Loading cached models for backtest (inference mode)")
+
+                    stats, _ = inference_ensemble(
+                        symbol=self.config.symbol,
+                        forecast_horizon=14,
+                        configs=configs,
+                        name="Backtest-Consensus",
+                        ensemble_module=ensemble,
+                        cutoff_date=cutoff_date
+                    )
+                    logger.info("Model inference loading completed")
+                    print(f"✅ Cached models loaded\n")
+                else:
+                    # Training mode - train fresh models
+                    print(f"\n{'='*60}")
+                    print(f"TRAINING CONSENSUS MODEL FOR BACKTEST")
+                    print(f"{'='*60}\n")
+                    logger.info("Training consensus model for backtest")
+
+                    # Train ensemble model
+                    stats, _ = train_ensemble(
+                        symbol=self.config.symbol,
+                        forecast_horizon=14,
+                        configs=configs,
+                        name="Backtest-Consensus",
+                        ensemble_module=ensemble
+                    )
+                    logger.info("Model training completed")
+                    print(f"✅ Model training completed\n")
 
                 # Store trained model stats for use during testing
                 self.consensus_stats = stats
-                logger.info("Model training completed")
-                print(f"✅ Model training completed\n")
 
-                # Train multi-horizon models for multi-timeframe strategy
-                print(f"{'='*60}")
-                print(f"TRAINING MULTI-HORIZON MODELS FOR MULTI-TIMEFRAME STRATEGY")
-                print(f"{'='*60}\n")
-
-                multi_horizon_stats = {}
-                horizons = [7, 14, 30]
-
-                for horizon in horizons:
-                    try:
-                        print(f"Training {horizon}-day horizon model...")
-                        configs_h = get_default_ensemble_configs(horizon=horizon)
-                        stats_h, _ = train_ensemble(
-                            symbol=self.config.symbol,
-                            forecast_horizon=horizon,
-                            configs=configs_h,
-                            name=f"Backtest-Horizon-{horizon}d",
-                            ensemble_module=ensemble
-                        )
-                        multi_horizon_stats[horizon] = (stats_h, None)  # (stats, df) - df not needed
-                        print(f"✅ {horizon}-day model training completed\n")
-                    except Exception as e:
-                        logger.warning(f"Training {horizon}-day horizon failed: {e}")
-                        print(f"⚠️  {horizon}-day model training failed: {e}\n")
-
-                self.multi_horizon_stats = multi_horizon_stats if len(multi_horizon_stats) >= 2 else None
-                if self.multi_horizon_stats:
-                    print(f"✅ Multi-horizon training completed ({len(multi_horizon_stats)} horizons)\n")
+                # Train or load multi-horizon models for multi-timeframe strategy
+                if self.config.inference_mode:
+                    # Skip multi-horizon in inference mode (would require additional cached models)
+                    print(f"{'='*60}")
+                    print(f"SKIPPING MULTI-HORIZON FOR INFERENCE MODE")
+                    print(f"{'='*60}\n")
+                    print(f"⚠️  Multi-timeframe strategy skipped in inference mode\n")
+                    self.multi_horizon_stats = None
                 else:
-                    print(f"⚠️  Multi-horizon training incomplete, skipping multi-timeframe strategy\n")
+                    print(f"{'='*60}")
+                    print(f"TRAINING MULTI-HORIZON MODELS FOR MULTI-TIMEFRAME STRATEGY")
+                    print(f"{'='*60}\n")
+
+                    multi_horizon_stats = {}
+                    horizons = [7, 14, 30]
+
+                    for horizon in horizons:
+                        try:
+                            print(f"Training {horizon}-day horizon model...")
+                            configs_h = get_default_ensemble_configs(horizon=horizon)
+                            stats_h, _ = train_ensemble(
+                                symbol=self.config.symbol,
+                                forecast_horizon=horizon,
+                                configs=configs_h,
+                                name=f"Backtest-Horizon-{horizon}d",
+                                ensemble_module=ensemble
+                            )
+                            multi_horizon_stats[horizon] = (stats_h, None)  # (stats, df) - df not needed
+                            print(f"✅ {horizon}-day model training completed\n")
+                        except Exception as e:
+                            logger.warning(f"Training {horizon}-day horizon failed: {e}")
+                            print(f"⚠️  {horizon}-day model training failed: {e}\n")
+
+                    self.multi_horizon_stats = multi_horizon_stats if len(multi_horizon_stats) >= 2 else None
+                    if self.multi_horizon_stats:
+                        print(f"✅ Multi-horizon training completed ({len(multi_horizon_stats)} horizons)\n")
+                    else:
+                        print(f"⚠️  Multi-horizon training incomplete, skipping multi-timeframe strategy\n")
 
             except Exception as e:
                 logger.error(f"Model training failed: {e}")
@@ -751,66 +781,97 @@ class BacktestEngine:
         all_trades = []
         all_equity_points = []
 
-        # Train model once at the beginning
-        # Note: For MVP, we train once and reuse across all periods
+        # Train or load model once at the beginning
+        # Note: For MVP, we train/load once and reuse across all periods
         # TODO: In future, implement per-period training with data-aware training function
         try:
-            print(f"\n{'='*60}")
-            print(f"TRAINING CONSENSUS MODEL FOR BACKTEST")
-            print(f"Training on full dataset to get model for consensus signals")
-            print(f"{'='*60}\n")
-
-            logger.info("Training consensus model for backtest")
-
-            # Load ensemble module and train model
+            # Load ensemble module
             ensemble = load_ensemble_module("examples/crypto_ensemble_forecast.py")
             configs = get_default_ensemble_configs(horizon=14)
 
-            # Train ensemble model
-            # Note: This will fetch recent data for training
-            # In future versions, we should train per-period using only data available at that time
-            stats, _ = train_ensemble(
-                symbol=self.config.symbol,
-                forecast_horizon=14,
-                configs=configs,
-                name="Backtest-Consensus",
-                ensemble_module=ensemble
-            )
+            if self.config.inference_mode:
+                # Inference mode - load cached models without training
+                # Use first date of backtest as cutoff to avoid forward-looking bias
+                cutoff_date = pd.to_datetime(price_data['date'].iloc[0])
+
+                print(f"\n{'='*60}")
+                print(f"LOADING CACHED MODELS FOR BACKTEST (INFERENCE MODE)")
+                print(f"Using cached models for consensus signals")
+                print(f"{'='*60}\n")
+
+                logger.info("Loading cached models for backtest (inference mode)")
+
+                stats, _ = inference_ensemble(
+                    symbol=self.config.symbol,
+                    forecast_horizon=14,
+                    configs=configs,
+                    name="Backtest-Consensus",
+                    ensemble_module=ensemble,
+                    cutoff_date=cutoff_date
+                )
+                logger.info("Model inference loading completed")
+            else:
+                # Training mode - train fresh models
+                print(f"\n{'='*60}")
+                print(f"TRAINING CONSENSUS MODEL FOR BACKTEST")
+                print(f"Training on full dataset to get model for consensus signals")
+                print(f"{'='*60}\n")
+
+                logger.info("Training consensus model for backtest")
+
+                # Train ensemble model
+                # Note: This will fetch recent data for training
+                # In future versions, we should train per-period using only data available at that time
+                stats, _ = train_ensemble(
+                    symbol=self.config.symbol,
+                    forecast_horizon=14,
+                    configs=configs,
+                    name="Backtest-Consensus",
+                    ensemble_module=ensemble
+                )
+                logger.info("Model training completed")
 
             # Store trained model stats for use during testing
             self.consensus_stats = stats
-            logger.info("Model training completed")
 
-            # Train multi-horizon models for multi-timeframe strategy
-            print(f"{'='*60}")
-            print(f"TRAINING MULTI-HORIZON MODELS FOR MULTI-TIMEFRAME STRATEGY")
-            print(f"{'='*60}\n")
-
-            multi_horizon_stats = {}
-            horizons = [7, 14, 30]
-
-            for horizon in horizons:
-                try:
-                    print(f"Training {horizon}-day horizon model...")
-                    configs_h = get_default_ensemble_configs(horizon=horizon)
-                    stats_h, _ = train_ensemble(
-                        symbol=self.config.symbol,
-                        forecast_horizon=horizon,
-                        configs=configs_h,
-                        name=f"Backtest-Horizon-{horizon}d",
-                        ensemble_module=ensemble
-                    )
-                    multi_horizon_stats[horizon] = (stats_h, None)  # (stats, df) - df not needed
-                    print(f"✅ {horizon}-day model training completed\n")
-                except Exception as e:
-                    logger.warning(f"Training {horizon}-day horizon failed: {e}")
-                    print(f"⚠️  {horizon}-day model training failed: {e}\n")
-
-            self.multi_horizon_stats = multi_horizon_stats if len(multi_horizon_stats) >= 2 else None
-            if self.multi_horizon_stats:
-                print(f"✅ Multi-horizon training completed ({len(multi_horizon_stats)} horizons)\n")
+            # Train or load multi-horizon models for multi-timeframe strategy
+            if self.config.inference_mode:
+                # Skip multi-horizon in inference mode (would require additional cached models)
+                print(f"{'='*60}")
+                print(f"SKIPPING MULTI-HORIZON FOR INFERENCE MODE")
+                print(f"{'='*60}\n")
+                print(f"⚠️  Multi-timeframe strategy skipped in inference mode\n")
+                self.multi_horizon_stats = None
             else:
-                print(f"⚠️  Multi-horizon training incomplete, skipping multi-timeframe strategy\n")
+                print(f"{'='*60}")
+                print(f"TRAINING MULTI-HORIZON MODELS FOR MULTI-TIMEFRAME STRATEGY")
+                print(f"{'='*60}\n")
+
+                multi_horizon_stats = {}
+                horizons = [7, 14, 30]
+
+                for horizon in horizons:
+                    try:
+                        print(f"Training {horizon}-day horizon model...")
+                        configs_h = get_default_ensemble_configs(horizon=horizon)
+                        stats_h, _ = train_ensemble(
+                            symbol=self.config.symbol,
+                            forecast_horizon=horizon,
+                            configs=configs_h,
+                            name=f"Backtest-Horizon-{horizon}d",
+                            ensemble_module=ensemble
+                        )
+                        multi_horizon_stats[horizon] = (stats_h, None)  # (stats, df) - df not needed
+                        print(f"✅ {horizon}-day model training completed\n")
+                    except Exception as e:
+                        logger.warning(f"Training {horizon}-day horizon failed: {e}")
+                        print(f"⚠️  {horizon}-day model training failed: {e}\n")
+
+                self.multi_horizon_stats = multi_horizon_stats if len(multi_horizon_stats) >= 2 else None
+                if self.multi_horizon_stats:
+                    print(f"✅ Multi-horizon training completed ({len(multi_horizon_stats)} horizons)\n")
+                else:
+                    print(f"⚠️  Multi-horizon training incomplete, skipping multi-timeframe strategy\n")
 
         except Exception as e:
             logger.error(f"Model training failed: {e}")

@@ -50,16 +50,19 @@ def calculate_mean_reversion_metrics(df: pd.DataFrame, current_price: float) -> 
     Returns:
         Dictionary with mean reversion metrics
     """
+    # Handle both uppercase and lowercase column names
+    close_col = 'Close' if 'Close' in df.columns else 'close'
+
     # Calculate moving averages
-    sma_20 = df['Close'].rolling(window=20).mean().iloc[-1]
-    sma_50 = df['Close'].rolling(window=50).mean().iloc[-1]
+    sma_20 = df[close_col].rolling(window=20).mean().iloc[-1]
+    sma_50 = df[close_col].rolling(window=50).mean().iloc[-1]
 
     # Calculate deviations
     deviation_20_pct = ((current_price - sma_20) / sma_20) * 100
     deviation_50_pct = ((current_price - sma_50) / sma_50) * 100
 
     # Calculate volatility (standard deviation)
-    std_20 = df['Close'].rolling(window=20).std().iloc[-1]
+    std_20 = df[close_col].rolling(window=20).std().iloc[-1]
     z_score_20 = (current_price - sma_20) / std_20 if std_20 > 0 else 0
 
     # Determine condition
@@ -342,16 +345,19 @@ def visualize_mean_reversion_strategy(strategy_data: Dict, stats: Dict, df: pd.D
     current_price = strategy_data['current_price']
     mr = strategy_data['mr_metrics']
 
+    # Handle both uppercase and lowercase column names
+    close_col = 'Close' if 'Close' in df.columns else 'close'
+
     # Plot 1: Price history with moving averages
     ax1 = axes[0, 0]
 
     # Last 60 days of price data
     recent_data = df.tail(60)
-    ax1.plot(recent_data.index, recent_data['Close'], 'b-', linewidth=2, label='Price', alpha=0.7)
+    ax1.plot(recent_data.index, recent_data[close_col], 'b-', linewidth=2, label='Price', alpha=0.7)
 
     # Calculate and plot SMAs
-    sma_20_series = recent_data['Close'].rolling(window=20).mean()
-    sma_50_series = recent_data['Close'].rolling(window=50).mean()
+    sma_20_series = recent_data[close_col].rolling(window=20).mean()
+    sma_50_series = recent_data[close_col].rolling(window=50).mean()
 
     ax1.plot(recent_data.index, sma_20_series, 'g-', linewidth=2, label='20-Day SMA', alpha=0.7)
     ax1.plot(recent_data.index, sma_50_series, 'r-', linewidth=2, label='50-Day SMA', alpha=0.7)
@@ -371,7 +377,7 @@ def visualize_mean_reversion_strategy(strategy_data: Dict, stats: Dict, df: pd.D
     # Plot 2: Deviation histogram
     ax2 = axes[0, 1]
 
-    deviations = ((recent_data['Close'] - sma_20_series) / sma_20_series * 100).dropna()
+    deviations = ((recent_data[close_col] - sma_20_series) / sma_20_series * 100).dropna()
     ax2.hist(deviations, bins=30, alpha=0.7, color='blue', edgecolor='black')
     ax2.axvline(mr['deviation_20_pct'], color='red', linestyle='--', linewidth=2,
                 label=f'Current: {mr["deviation_20_pct"]:+.1f}%')
@@ -390,9 +396,9 @@ def visualize_mean_reversion_strategy(strategy_data: Dict, stats: Dict, df: pd.D
     # Plot 3: Z-Score evolution
     ax3 = axes[1, 0]
 
-    sma = recent_data['Close'].rolling(window=20).mean()
-    std = recent_data['Close'].rolling(window=20).std()
-    z_scores = ((recent_data['Close'] - sma) / std).dropna()
+    sma = recent_data[close_col].rolling(window=20).mean()
+    std = recent_data[close_col].rolling(window=20).std()
+    z_scores = ((recent_data[close_col] - sma) / std).dropna()
 
     ax3.plot(z_scores.index, z_scores, 'b-', linewidth=2, alpha=0.7)
     ax3.axhline(0, color='black', linestyle='-', linewidth=1, alpha=0.5)
@@ -461,7 +467,9 @@ def main():
 
     stats_14day, df_14day = train_ensemble(symbol, 14, configs_14day, "14-DAY", ensemble)
 
-    current_price = df_14day['Close'].iloc[-1]
+    # Handle both uppercase and lowercase column names
+    close_col = 'Close' if 'Close' in df_14day.columns else 'close'
+    current_price = df_14day[close_col].iloc[-1]
 
     # Analyze strategy
     strategy_data = analyze_mean_reversion_strategy(stats_14day, df_14day, current_price)

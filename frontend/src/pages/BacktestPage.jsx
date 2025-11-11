@@ -28,6 +28,7 @@ export default function BacktestPage() {
     train_window_days: 252,
     test_window_days: 63,
     retrain_frequency_days: 21,
+    inference_mode: false,
     enabled_strategies: ['gradient', 'confidence', 'volatility', 'acceleration', 'swing', 'risk_adjusted', 'mean_reversion', 'multi_timeframe'],
   });
 
@@ -62,6 +63,7 @@ export default function BacktestPage() {
       initial_capital: parseFloat(formData.initial_capital),
       position_size_pct: parseFloat(formData.position_size_pct),
       min_edge_bps: parseFloat(formData.min_edge_bps),
+      inference_mode: formData.inference_mode,
       transaction_costs: {
         taker_fee_bps: 5.0,
         maker_rebate_bps: 0.0,
@@ -500,6 +502,26 @@ export default function BacktestPage() {
                     Please select at least one strategy for the consensus system
                   </div>
                 )}
+              </div>
+
+              {/* Inference Mode */}
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold text-gray-200">Model Settings</h3>
+                <label className="flex items-center gap-3 p-4 bg-gray-700/30 border border-gray-700 rounded-lg cursor-pointer hover:bg-gray-700/50 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={formData.inference_mode}
+                    onChange={(e) => setFormData({ ...formData, inference_mode: e.target.checked })}
+                    className="w-5 h-5 bg-gray-900 border-gray-600 rounded text-brand-600 focus:ring-brand-500"
+                  />
+                  <div className="flex-1">
+                    <span className="block text-sm font-medium text-gray-200">⚡ Inference Mode (Fast Backtesting)</span>
+                    <span className="block text-xs text-gray-400 mt-1">
+                      Use cached models without training or fine-tuning. Much faster backtests using models that may be days or weeks old.
+                      Great for quick parameter testing when speed matters more than having the latest data.
+                    </span>
+                  </div>
+                </label>
               </div>
 
               {/* Walk-Forward Validation */}

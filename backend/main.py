@@ -792,6 +792,7 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
 
         # Strategy 3: Multi-Timeframe (25% -> 37%)
         # Only run for daily intervals - hourly doesn't need multi-timeframe alignment
+        # Skip in inference mode to avoid training additional models
         logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Running Multi-Timeframe strategy (3/8)")
         await ws_manager.send_progress(
             task_id=consensus_id,
@@ -812,8 +813,18 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
                 'note': 'For hourly intervals, ensemble model disagreement serves as multi-timeframe proxy'
             }
             results['Multi-Timeframe'] = result
+        elif request.inference_mode:
+            # Skip multi-timeframe for inference mode - would require training additional horizons
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Multi-Timeframe skipped for inference mode (would require model training)")
+            result = {
+                'signal': 'SKIPPED',
+                'position_size_pct': 0,
+                'reason': 'Multi-timeframe analysis requires training models for multiple horizons',
+                'note': 'In inference mode, we use only the cached middle-horizon model. Use ensemble disagreement as proxy.'
+            }
+            results['Multi-Timeframe'] = result
         else:
-            # Run multi-timeframe for daily intervals
+            # Run multi-timeframe for daily intervals (training mode only)
             try:
                 # Run in process pool to avoid blocking
                 timeframe_data = await loop.run_in_executor(
@@ -1205,6 +1216,7 @@ async def analyze_consensus(
     background_tasks: BackgroundTasks,
     database: Database = Depends(get_database)
 ):
+    logger.info(f"🔍 Consensus request received: symbol={request.symbol}, interval={request.interval}, inference_mode={request.inference_mode}")
     """Start consensus analysis (async) - runs all 8 strategies"""
     try:
         # Create pending consensus record
