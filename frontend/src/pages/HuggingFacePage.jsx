@@ -951,11 +951,23 @@ function HuggingFacePage() {
                   <option value="">Select consensus analysis...</option>
                   {consensusAnalyses
                     .filter(c => c.symbol === selectedConfig?.symbol)
-                    .map((consensus) => (
-                      <option key={consensus.id} value={consensus.id}>
-                        {consensus.symbol} - {new Date(consensus.created_at).toLocaleDateString()} ({consensus.total_count || 0} models)
-                      </option>
-                    ))}
+                    .map((consensus) => {
+                      const date = new Date(consensus.created_at);
+                      const timestamp = date.toLocaleString('en-US', {
+                        month: '2-digit',
+                        day: '2-digit',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: true
+                      });
+                      const interval = consensus.interval || '1d';
+                      return (
+                        <option key={consensus.id} value={consensus.id}>
+                          {consensus.symbol} ({interval}) - {timestamp} ({consensus.total_count || 0} models)
+                        </option>
+                      );
+                    })}
                 </select>
               </div>
 
