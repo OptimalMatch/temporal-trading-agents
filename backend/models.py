@@ -52,6 +52,7 @@ class ConsensusRequest(BaseModel):
     symbol: str = Field(..., description="Trading symbol")
     interval: str = Field(default='1d', description="Data interval: '1d' for daily, '1h' for hourly")
     horizons: Optional[List[int]] = Field(default=None, description="Forecast horizons (auto-adjusted based on interval if not provided)")
+    inference_mode: bool = Field(default=False, description="If True, use cached models without training/fine-tuning")
 
 
 # ==================== Response Models ====================

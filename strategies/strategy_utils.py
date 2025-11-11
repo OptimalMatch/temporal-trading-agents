@@ -140,6 +140,113 @@ def train_ensemble(symbol: str, forecast_horizon: int, configs: List[Dict],
     return ensemble_stats, df_latest
 
 
+def inference_ensemble(symbol: str, forecast_horizon: int, configs: List[Dict],
+                      name: str, ensemble_module, interval: str = '1d',
+                      max_cache_age_days: Optional[int] = None) -> Tuple[Optional[Dict], Optional[pd.DataFrame]]:
+    """
+    Fast inference using cached models only - NO TRAINING.
+
+    This is for quick predictions when you just want to know what the models think,
+    without any training or fine-tuning overhead.
+
+    Args:
+        symbol: Trading symbol (e.g., 'BTC-USD')
+        forecast_horizon: Number of periods to forecast
+        configs: List of model configurations
+        name: Display name for this ensemble
+        ensemble_module: The loaded ensemble module
+        interval: Data interval ('1d' for daily, '1h' for hourly)
+        max_cache_age_days: Maximum model age in days (None = use any age, even weeks/months old)
+
+    Returns:
+        Tuple of (ensemble_stats, latest_dataframe) or (None, None) if models not available
+    """
+    from datetime import datetime, timedelta
+    from strategies.model_cache import get_model_cache
+
+    interval_label = "hours" if interval == '1h' else "days"
+    print(f"\n{'='*70}")
+    print(f"INFERENCE-ONLY MODE: {name} ENSEMBLE ({forecast_horizon}-{interval_label[:-1]} forecast)")
+    print(f"{'='*70}")
+    print(f"⚡ Fast mode: Loading cached models only (no training/fine-tuning)")
+
+    if max_cache_age_days:
+        print(f"📅 Model age limit: {max_cache_age_days} days")
+    else:
+        print(f"📅 Model age limit: None (will use models of any age)")
+
+    # Check if all required models exist in cache
+    model_cache = get_model_cache()
+    missing_models = []
+    too_old_models = []
+
+    for config in configs:
+        lookback = config['lookback']
+        focus = config['focus']
+
+        if not model_cache.exists(symbol, interval, lookback, focus, forecast_horizon):
+            missing_models.append(f"{focus} (lookback={lookback})")
+        elif max_cache_age_days:
+            # Check age if limit specified
+            metadata = model_cache.get_metadata(symbol, interval, lookback, focus, forecast_horizon)
+            if metadata:
+                age = datetime.now() - metadata['training_timestamp']
+                if age.days > max_cache_age_days:
+                    too_old_models.append(f"{focus} (lookback={lookback}, age={age.days}d)")
+
+    # Report any issues
+    if missing_models:
+        print(f"❌ Missing cached models: {', '.join(missing_models)}")
+        print(f"   Run training first or use train_ensemble() with use_cache=True")
+        return None, None
+
+    if too_old_models:
+        print(f"❌ Models too old (>{max_cache_age_days}d): {', '.join(too_old_models)}")
+        print(f"   Increase max_cache_age_days or run training to update models")
+        return None, None
+
+    print(f"✅ All {len(configs)} cached models available for inference")
+
+    # Load models for inference (no training)
+    ensemble_models = []
+    for config in configs:
+        lookback = config['lookback']
+        focus = config['focus']
+
+        # Load model metadata to show age
+        metadata = model_cache.get_metadata(symbol, interval, lookback, focus, forecast_horizon)
+        age_hours = (datetime.now() - metadata['training_timestamp']).total_seconds() / 3600
+
+        print(f"📂 Loading {config['name']} (age: {age_hours:.1f}h, trained: {metadata['training_timestamp'].strftime('%Y-%m-%d %H:%M')})")
+
+        # Use the ensemble module's inference-only path
+        # This loads the cached model without any training
+        model_info = ensemble_module.load_cached_model_for_inference(
+            symbol=symbol,
+            lookback=lookback,
+            forecast_horizon=forecast_horizon,
+            focus=focus,
+            interval=interval
+        )
+
+        if model_info is None:
+            print(f"❌ Failed to load {config['name']} from cache")
+            return None, None
+
+        ensemble_models.append(model_info)
+
+    print(f"✅ All models loaded, making predictions...")
+
+    # Make predictions (no training happened)
+    ensemble_stats, df_latest = ensemble_module.make_ensemble_predictions(
+        ensemble_models, symbol, forecast_horizon, interval=interval
+    )
+
+    print(f"✅ Inference complete - predictions ready!")
+
+    return ensemble_stats, df_latest
+
+
 def calculate_forecast_metrics(stats: Dict, current_price: float,
                                horizon_days: int) -> Dict:
     """

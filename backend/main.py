@@ -60,7 +60,7 @@ from backend.analysis_queue import get_analysis_queue
 from backend.forecast_publisher import ForecastPublisher, WebhookConfig, create_export_payload
 
 # Import strategies
-from strategies.strategy_utils import load_ensemble_module, train_ensemble, get_default_ensemble_configs
+from strategies.strategy_utils import load_ensemble_module, train_ensemble, inference_ensemble, get_default_ensemble_configs
 from strategies.forecast_gradient_strategy import analyze_gradient_strategy
 from strategies.confidence_weighted_strategy import analyze_confidence_weighted_strategy
 from strategies.multi_timeframe_strategy import train_multiple_timeframes, analyze_multi_timeframe_strategy
@@ -336,6 +336,15 @@ def _train_ensemble_worker(symbol: str, horizon: int, name: str, interval: str =
     return train_ensemble(symbol, horizon, configs, name, ensemble, interval=interval,
                          use_cache=use_cache, max_cache_age_hours=max_cache_age_hours,
                          fine_tune_epochs=fine_tune_epochs)
+
+def _inference_ensemble_worker(symbol: str, horizon: int, name: str, interval: str = '1d',
+                               ensemble_path: str = "examples/crypto_ensemble_forecast.py",
+                               max_cache_age_days: Optional[int] = None):
+    """Worker function for inference-only (no training) in separate process"""
+    ensemble = load_ensemble_module(ensemble_path)
+    configs = get_default_ensemble_configs(horizon)
+    return inference_ensemble(symbol, horizon, configs, name, ensemble, interval=interval,
+                             max_cache_age_days=max_cache_age_days)
 
 def _train_multiple_timeframes_worker(symbol: str, horizons: list, interval: str = '1d', ensemble_path: str = "examples/crypto_ensemble_forecast.py"):
     """Worker function for training multiple timeframes in separate process"""
@@ -707,17 +716,31 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
         interval_label = "HOUR" if request.interval == '1h' else "DAY"
 
         # Log: Training models
-        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Training ensemble models for consensus analysis (interval: {request.interval}, horizon: {middle_horizon})")
-
-        # Train middle horizon ensemble - run in process pool to avoid blocking event loop
-        loop = asyncio.get_event_loop()
-        stats, df = await loop.run_in_executor(
-            executor,
-            _train_ensemble_worker,
-            request.symbol, middle_horizon, f"{middle_horizon}-{interval_label}", request.interval
-        )
-        current_price = df['Close'].iloc[-1]
-        logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Model training completed. Current price: ${current_price:.2f}")
+        if request.inference_mode:
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Loading cached models for inference (no training) - interval: {request.interval}, horizon: {middle_horizon}")
+            # Inference mode - just load cached models without training
+            loop = asyncio.get_event_loop()
+            stats, df = await loop.run_in_executor(
+                executor,
+                _inference_ensemble_worker,
+                request.symbol, middle_horizon, f"{middle_horizon}-{interval_label}", request.interval,
+                "examples/crypto_ensemble_forecast.py", None  # No age limit - use any cached models
+            )
+            if stats is None or df is None:
+                raise HTTPException(status_code=400, detail="No cached models available for inference mode. Run training first.")
+            current_price = df['Close'].iloc[-1]
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Inference completed. Current price: ${current_price:.2f}")
+        else:
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Training ensemble models for consensus analysis (interval: {request.interval}, horizon: {middle_horizon})")
+            # Train middle horizon ensemble - run in process pool to avoid blocking event loop
+            loop = asyncio.get_event_loop()
+            stats, df = await loop.run_in_executor(
+                executor,
+                _train_ensemble_worker,
+                request.symbol, middle_horizon, f"{middle_horizon}-{interval_label}", request.interval
+            )
+            current_price = df['Close'].iloc[-1]
+            logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Model training completed. Current price: ${current_price:.2f}")
 
         results = {}
         strategy_ids = []

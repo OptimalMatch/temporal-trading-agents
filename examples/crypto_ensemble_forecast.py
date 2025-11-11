@@ -340,6 +340,89 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
     }
 
 
+def load_cached_model_for_inference(symbol, lookback, forecast_horizon, focus, interval='1d'):
+    """
+    Load a cached model for inference only - NO TRAINING.
+
+    This is a fast path for predictions when you just want to use existing models
+    without any training or fine-tuning overhead.
+
+    Args:
+        symbol: Trading symbol (e.g., 'BTC-USD')
+        lookback: Lookback window size
+        forecast_horizon: Forecast horizon
+        focus: Model focus ('momentum', 'balanced', 'mean_reversion')
+        interval: Data interval ('1d' or '1h')
+
+    Returns:
+        Model info dict ready for predictions, or None if model not in cache
+    """
+    import torch
+    from temporal.model import TemporalTransformer
+    from strategies.model_cache import get_model_cache
+
+    model_cache = get_model_cache()
+
+    # Check if model exists
+    if not model_cache.exists(symbol, interval, lookback, focus, forecast_horizon):
+        print(f"❌ No cached model found for {symbol} {interval} lookback={lookback} focus={focus} horizon={forecast_horizon}")
+        return None
+
+    # Get metadata to determine feature count
+    metadata = model_cache.get_metadata(symbol, interval, lookback, focus, forecast_horizon)
+    if not metadata:
+        print(f"❌ Failed to load metadata for cached model")
+        return None
+
+    feature_columns = metadata['feature_columns']
+    num_features = len(feature_columns)
+
+    # Create model architecture
+    model = TemporalTransformer(
+        num_features=num_features,
+        d_model=512,
+        num_encoder_layers=3,
+        num_decoder_layers=3,
+        forecast_horizon=forecast_horizon,
+        dropout=0.1
+    )
+
+    # Load cached model
+    cached_result = model_cache.load(model, symbol, interval, lookback, focus, forecast_horizon)
+    if cached_result is None:
+        print(f"❌ Failed to load cached model from disk")
+        return None
+
+    model, scaler, metadata = cached_result
+
+    # Fetch latest data for predictions
+    from temporal.data_sources import fetch_crypto_data, fetch_stock_data
+
+    is_crypto = '-USD' in symbol or '-EUR' in symbol or '-GBP' in symbol
+    if is_crypto:
+        df = fetch_crypto_data(symbol, period='5y', interval=interval)
+    else:
+        df = fetch_stock_data(symbol, period='5y', interval=interval)
+
+    if df is None or df.empty:
+        print(f"❌ Failed to fetch data for {symbol}")
+        return None
+
+    # Return model info ready for predictions
+    return {
+        'model': model,
+        'scaler': scaler,
+        'trainer': None,  # Not needed for inference
+        'feature_columns': feature_columns,
+        'lookback': lookback,
+        'focus': focus,
+        'name': f"{focus.title()} (lookback={lookback})",
+        'df_original': df,
+        'cached': True,
+        'training_type': 'inference-only'
+    }
+
+
 def make_ensemble_predictions(ensemble_models, symbol, forecast_horizon=7, interval='1d'):
     """Make predictions using all models in the ensemble."""
     print(f"\n{'='*70}")
