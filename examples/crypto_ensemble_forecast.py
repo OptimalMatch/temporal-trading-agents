@@ -393,12 +393,24 @@ def load_cached_model_for_inference(symbol, lookback, forecast_horizon, focus, i
     feature_columns = metadata['feature_columns']
     num_features = len(feature_columns)
 
-    # Create model architecture (must match the architecture used during training)
+    # Get model architecture from metadata (must match the architecture used during training)
+    model_arch = metadata.get('model_architecture', {})
+    d_model = model_arch.get('d_model', 512) or 512  # Default to 512 if not in metadata or None
+    # Handle None values explicitly - infer layer count from d_model
+    num_encoder_layers = model_arch.get('num_encoder_layers') or (6 if d_model == 512 else 4)
+    num_decoder_layers = model_arch.get('num_decoder_layers') or (6 if d_model == 512 else 4)
+    # Infer d_ff (feedforward dimension) - typically d_model * 4
+    d_ff = model_arch.get('d_ff') or (d_model * 4)
+
+    print(f"  Architecture from cache: d_model={d_model}, d_ff={d_ff}, enc_layers={num_encoder_layers}, dec_layers={num_decoder_layers}")
+
+    # Create model architecture matching cached model
     model = Temporal(
         input_dim=num_features,
-        d_model=512,
-        num_encoder_layers=6,  # Default used during training
-        num_decoder_layers=6,  # Default used during training
+        d_model=d_model,
+        num_encoder_layers=num_encoder_layers,
+        num_decoder_layers=num_decoder_layers,
+        d_ff=d_ff,
         forecast_horizon=forecast_horizon,
         dropout=0.1
     )
