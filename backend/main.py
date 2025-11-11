@@ -5145,8 +5145,65 @@ async def export_ensemble_to_huggingface(
         ]
 
         print(f"🔧 ENSEMBLE EXPORT: Starting export for {symbol} ({interval}) to {repo_id}")
+        if request.include_all_horizons:
+            print(f"🔧 ENSEMBLE EXPORT: include_all_horizons=True - will export all cached horizon variants")
 
-        for member_index, model_info in enumerate(model_configs, 1):
+        # Build list of models to export
+        models_to_export = []
+        if request.include_all_horizons:
+            # Find all horizon variants for each base configuration
+            import os
+            import json
+            cache_dir = cache.cache_dir
+            seen_combinations = set()  # Track unique combinations to avoid duplicates
+
+            for model_info in model_configs:
+                lookback = model_info["lookback"]
+                focus = model_info["focus"]
+
+                # Get all cached models for this lookback/focus combination
+                for filename in os.listdir(cache_dir):
+                    if filename.endswith("_meta.json") and f"_{interval}_" in filename and focus in filename:
+                        meta_path = os.path.join(cache_dir, filename)
+                        with open(meta_path, 'r') as f:
+                            meta = json.load(f)
+                            if meta.get("lookback") == lookback and meta.get("focus") == focus:
+                                horizon = meta.get("forecast_horizon")
+                                combo_key = (lookback, focus, horizon)
+                                if combo_key not in seen_combinations:
+                                    models_to_export.append({
+                                        "lookback": lookback,
+                                        "focus": focus,
+                                        "forecast_horizon": horizon
+                                    })
+                                    seen_combinations.add(combo_key)
+        else:
+            # Export only the specific models from the consensus
+            models_to_export = model_configs
+
+        print(f"🔧 ENSEMBLE EXPORT: Exporting {len(models_to_export)} model(s)")
+
+        # Rebuild all_members list based on what we're actually exporting
+        all_members = []
+        for model_info in models_to_export:
+            lookback = model_info["lookback"]
+            focus = model_info["focus"]
+            horizon = model_info["forecast_horizon"]
+
+            if request.include_all_horizons:
+                # Include horizon in path when exporting all variants
+                subdir = f"{focus}_lookback{lookback}_{horizon}h"
+            else:
+                subdir = f"{focus}_lookback{lookback}"
+
+            all_members.append({
+                "focus": focus,
+                "lookback": lookback,
+                "forecast_horizon": horizon,
+                "path": f"../{subdir}"
+            })
+
+        for member_index, model_info in enumerate(models_to_export, 1):
             try:
                 lookback = model_info["lookback"]
                 focus = model_info["focus"]
@@ -5162,22 +5219,27 @@ async def export_ensemble_to_huggingface(
                     focus,
                     forecast_horizon
                 ):
-                    print(f"❌ Model not found in cache: {focus} (lookback={lookback})")
+                    print(f"❌ Model not found in cache: {focus} (lookback={lookback}, horizon={forecast_horizon})")
                     failed_models.append({
                         "lookback": lookback,
                         "focus": focus,
+                        "forecast_horizon": forecast_horizon,
                         "error": "Model not found in cache"
                     })
                     continue
 
-                print(f"✅ Model found in cache: {focus} (lookback={lookback}), exporting...")
+                print(f"✅ Model found in cache: {focus} (lookback={lookback}, horizon={forecast_horizon}h), exporting...")
 
                 # Create subdirectory path for this model variant
-                subdir_name = f"{focus}_lookback{lookback}"
+                if request.include_all_horizons:
+                    # Include horizon in subdirectory name when exporting all variants
+                    subdir_name = f"{focus}_lookback{lookback}_{forecast_horizon}h"
+                else:
+                    subdir_name = f"{focus}_lookback{lookback}"
 
                 # Build ensemble info for this model
                 ensemble_info = {
-                    "total_members": len(model_configs),
+                    "total_members": len(models_to_export),
                     "member_index": member_index,
                     "all_members": all_members
                 }

@@ -986,3 +986,4 @@ class EnsembleExportRequest(BaseModel):
     consensus_id: str
     repo_id: Optional[str] = None  # Override config repo_id
     commit_message: Optional[str] = None
+    include_all_horizons: bool = False  # Export all cached horizon variants for each config
