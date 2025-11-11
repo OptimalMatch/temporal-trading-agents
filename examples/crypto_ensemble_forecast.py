@@ -324,13 +324,24 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
     learning_rate = 1e-5 if interval == '1h' else 1e-4
     grad_clip = 0.5 if interval == '1h' else 1.0
 
-    print(f"🎯 Training config: lr={learning_rate}, grad_clip={grad_clip}")
+    # Use Huber loss for hourly data - robust to outliers
+    # MSE loss squares errors which causes explosive values with outliers
+    # Huber loss acts like MSE for small errors, but like MAE for large errors
+    if interval == '1h':
+        # Delta=1.0 is typical - switches from quadratic to linear at error=1.0
+        criterion = torch.nn.HuberLoss(delta=1.0)
+        loss_name = "Huber"
+    else:
+        criterion = torch.nn.MSELoss()
+        loss_name = "MSE"
+
+    print(f"🎯 Training config: lr={learning_rate}, grad_clip={grad_clip}, loss={loss_name}")
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)
     trainer = TemporalTrainer(
         model=model,
         optimizer=optimizer,
-        criterion=torch.nn.MSELoss(),
+        criterion=criterion,
         device="cuda" if torch.cuda.is_available() else "cpu",
         grad_clip=grad_clip,
         use_amp=True  # Enable mixed precision training for 1.5-2x speedup
