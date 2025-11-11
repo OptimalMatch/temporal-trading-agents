@@ -14,7 +14,9 @@ import {
 
 function ForecastChart({ forecastData, symbol, interval = '1d' }) {
   const [showIndividualModels, setShowIndividualModels] = useState(true);
-  const [historicalDays, setHistoricalDays] = useState(120);
+  const isHourly = interval === '1h';
+  // For hourly: default to 168 periods (1 week), for daily: 120 periods
+  const [historicalPeriods, setHistoricalPeriods] = useState(isHourly ? 168 : 120);
   const [extendedHistoricalData, setExtendedHistoricalData] = useState(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
@@ -22,10 +24,10 @@ function ForecastChart({ forecastData, symbol, interval = '1d' }) {
   useEffect(() => {
     if (!symbol || !forecastData) return;
 
-    const availableDays = forecastData.historical_days;
+    const availablePeriods = forecastData.historical_days; // historical_days works for both days and hours
 
-    // Only fetch if user selected more days than what's in forecastData
-    if (historicalDays > availableDays) {
+    // Only fetch if user selected more periods than what's in forecastData
+    if (historicalPeriods > availablePeriods) {
       const fetchHistoricalData = async () => {
         setLoadingHistory(true);
         try {
@@ -53,7 +55,7 @@ function ForecastChart({ forecastData, symbol, interval = '1d' }) {
       // Don't need extended data, clear it
       setExtendedHistoricalData(null);
     }
-  }, [symbol, historicalDays, forecastData, interval]);
+  }, [symbol, historicalPeriods, forecastData, interval]);
 
   if (!forecastData) {
     return (
@@ -68,38 +70,38 @@ function ForecastChart({ forecastData, symbol, interval = '1d' }) {
 
   // Determine which historical data to use
   let historicalPrices = forecastData.historical_prices || [];
-  let availableDays = forecastData.historical_days || historicalPrices.length;
+  let availablePeriods = forecastData.historical_days || historicalPrices.length;
 
   // Use extended historical data if available and needed
-  if (extendedHistoricalData && historicalDays > forecastData.historical_days) {
+  if (extendedHistoricalData && historicalPeriods > forecastData.historical_days) {
     historicalPrices = extendedHistoricalData;
-    availableDays = extendedHistoricalData.length;
+    availablePeriods = extendedHistoricalData.length;
   }
 
-  // Historical data (negative days) - filter based on user selection
+  // Historical data (negative periods) - filter based on user selection
   if (historicalPrices && historicalPrices.length > 0) {
-    const displayDays = Math.min(historicalDays, availableDays);
-    const startIndex = availableDays - displayDays;
-    const histStart = -displayDays;
+    const displayPeriods = Math.min(historicalPeriods, availablePeriods);
+    const startIndex = availablePeriods - displayPeriods;
+    const histStart = -displayPeriods;
 
     historicalPrices.slice(startIndex).forEach((price, idx) => {
       chartData.push({
-        day: histStart + idx,
+        period: histStart + idx,
         historical: price,
         isHistorical: true
       });
     });
   }
 
-  // Add current price marker (day 0)
+  // Add current price marker (period 0)
   chartData.push({
-    day: 0,
+    period: 0,
     historical: forecastData.current_price,
     forecast_median: forecastData.current_price,
     isHistorical: false
   });
 
-  // Forecast data (positive days)
+  // Forecast data (positive periods)
   const ensembleMedian = forecastData.ensemble_median || forecastData.median || [];
   const ensembleQ25 = forecastData.ensemble_q25 || forecastData.q25 || [];
   const ensembleQ75 = forecastData.ensemble_q75 || forecastData.q75 || [];
@@ -107,13 +109,13 @@ function ForecastChart({ forecastData, symbol, interval = '1d' }) {
   const ensembleMax = forecastData.ensemble_max || forecastData.max || [];
   const individualModels = forecastData.individual_models || [];
 
-  // Generate forecast days if not present (for imported forecasts)
-  const forecastDays = forecastData.forecast_days ||
+  // Generate forecast periods if not present (for imported forecasts)
+  const forecastPeriods = forecastData.forecast_days ||
     Array.from({ length: ensembleMedian.length }, (_, i) => i + 1);
 
-  forecastDays.forEach((day, idx) => {
+  forecastPeriods.forEach((period, idx) => {
     const dataPoint = {
-      day: day,
+      period: period,
       forecast_median: ensembleMedian[idx],
       forecast_q25: ensembleQ25[idx],
       forecast_q75: ensembleQ75[idx],
@@ -144,11 +146,13 @@ function ForecastChart({ forecastData, symbol, interval = '1d' }) {
 
     const data = payload[0].payload;
     const isHist = data.isHistorical;
+    const periodLabel = isHourly ? 'hours' : 'days';
+    const currentLabel = isHourly ? 'Now' : 'Today';
 
     return (
       <div className="bg-gray-800 border border-gray-600 rounded-lg p-3 shadow-xl">
         <p className="text-gray-300 font-semibold mb-2">
-          {data.day === 0 ? 'Today' : data.day < 0 ? `${Math.abs(data.day)} days ago` : `+${data.day} days`}
+          {data.period === 0 ? currentLabel : data.period < 0 ? `${Math.abs(data.period)} ${periodLabel} ago` : `+${data.period} ${periodLabel}`}
         </p>
         {isHist && data.historical && (
           <p className="text-blue-400">Historical: {formatPrice(data.historical)}</p>
@@ -176,15 +180,27 @@ function ForecastChart({ forecastData, symbol, interval = '1d' }) {
           <div className="flex items-center space-x-2">
             <label className="text-sm text-gray-400">Historical:</label>
             <select
-              value={historicalDays}
-              onChange={(e) => setHistoricalDays(Number(e.target.value))}
+              value={historicalPeriods}
+              onChange={(e) => setHistoricalPeriods(Number(e.target.value))}
               className="px-2 py-1 text-sm bg-gray-700 text-gray-300 rounded border border-gray-600 focus:outline-none focus:border-brand-500"
               disabled={loadingHistory}
             >
-              <option value={60}>60 days</option>
-              <option value={120}>120 days</option>
-              <option value={365}>1 year</option>
-              <option value={730}>2 years</option>
+              {isHourly ? (
+                <>
+                  <option value={24}>24 hours (1 day)</option>
+                  <option value={48}>48 hours (2 days)</option>
+                  <option value={168}>168 hours (1 week)</option>
+                  <option value={336}>336 hours (2 weeks)</option>
+                  <option value={720}>720 hours (1 month)</option>
+                </>
+              ) : (
+                <>
+                  <option value={60}>60 days</option>
+                  <option value={120}>120 days</option>
+                  <option value={365}>1 year</option>
+                  <option value={730}>2 years</option>
+                </>
+              )}
             </select>
             {loadingHistory && (
               <span className="text-xs text-gray-400 animate-pulse">Loading...</span>
@@ -204,9 +220,9 @@ function ForecastChart({ forecastData, symbol, interval = '1d' }) {
         <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
           <XAxis
-            dataKey="day"
+            dataKey="period"
             stroke="#9CA3AF"
-            label={{ value: 'Days', position: 'insideBottom', offset: -5, fill: '#9CA3AF' }}
+            label={{ value: isHourly ? 'Hours' : 'Days', position: 'insideBottom', offset: -5, fill: '#9CA3AF' }}
           />
           <YAxis
             stroke="#9CA3AF"
@@ -217,7 +233,7 @@ function ForecastChart({ forecastData, symbol, interval = '1d' }) {
           <Legend />
 
           {/* Current price reference line */}
-          <ReferenceLine x={0} stroke="#6B7280" strokeDasharray="3 3" label="Today" />
+          <ReferenceLine x={0} stroke="#6B7280" strokeDasharray="3 3" label={isHourly ? "Now" : "Today"} />
 
           {/* Historical prices */}
           <Line
