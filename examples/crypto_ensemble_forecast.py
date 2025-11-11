@@ -183,8 +183,41 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
         # For daily data: 90 days = 90 samples
         recent_window = min(90, len(data) // 2)
 
+    print(f"📊 Normalization: fitting scaler on last {recent_window} samples out of {len(data)} total")
+
+    # Check for NaN/inf before normalization
+    if np.any(np.isnan(data)) or np.any(np.isinf(data)):
+        nan_count = np.sum(np.isnan(data))
+        inf_count = np.sum(np.isinf(data))
+        print(f"⚠️  WARNING: Data contains {nan_count} NaN and {inf_count} inf values BEFORE normalization")
+        # Replace inf with NaN, then forward fill, then backward fill
+        data = np.where(np.isinf(data), np.nan, data)
+        for col_idx in range(data.shape[1]):
+            col_data = data[:, col_idx]
+            mask = np.isnan(col_data)
+            if np.any(mask):
+                # Forward fill
+                idx = np.where(~mask, np.arange(len(mask)), 0)
+                np.maximum.accumulate(idx, out=idx)
+                col_data[mask] = col_data[idx[mask]]
+                # Backward fill any remaining
+                idx = np.where(~np.isnan(col_data), np.arange(len(col_data)), len(col_data))
+                idx = np.minimum.accumulate(idx[::-1])[::-1]
+                mask = np.isnan(col_data)
+                col_data[mask] = col_data[idx[mask]]
+                data[:, col_idx] = col_data
+        print(f"✓ Cleaned data by filling NaN/inf values")
+
     scaler.fit(data[-recent_window:])  # Fit on recent data only
     data_normalized = scaler.transform(data)  # Transform all data with recent scaler
+
+    # Check for NaN/inf after normalization
+    if np.any(np.isnan(data_normalized)) or np.any(np.isinf(data_normalized)):
+        nan_count = np.sum(np.isnan(data_normalized))
+        inf_count = np.sum(np.isinf(data_normalized))
+        print(f"⚠️  WARNING: Data contains {nan_count} NaN and {inf_count} inf values AFTER normalization")
+    else:
+        print(f"✓ Normalized data stats: min={data_normalized.min():.2f}, max={data_normalized.max():.2f}, mean={data_normalized.mean():.2f}")
 
     # Split
     train_data, val_data, test_data = split_train_val_test(data_normalized)
