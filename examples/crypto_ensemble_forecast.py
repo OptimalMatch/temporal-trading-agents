@@ -217,27 +217,44 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
     use_cached = False
 
     if use_cache:
-        is_stale = model_cache.is_stale(
-            symbol, interval, lookback, focus, forecast_horizon,
-            max_age_hours=max_cache_age_hours,
-            latest_data_timestamp=latest_data_timestamp
-        )
+        # Check if cached model exists and is within age limit
+        if model_cache.exists(symbol, interval, lookback, focus, forecast_horizon):
+            metadata = model_cache.get_metadata(symbol, interval, lookback, focus, forecast_horizon)
 
-        if not is_stale:
-            # Try to load cached model
-            cached_result = model_cache.load(model, symbol, interval, lookback, focus, forecast_horizon)
+            if metadata:
+                training_time = metadata['training_timestamp']
+                age_hours = (datetime.now() - training_time).total_seconds() / 3600
 
-            if cached_result is not None:
-                model, cached_scaler, metadata = cached_result
-                use_cached = True
+                # Only skip cache if model is too old (beyond max age)
+                if age_hours <= max_cache_age_hours:
+                    # Try to load cached model (even if stale due to new data - we'll fine-tune it)
+                    cached_result = model_cache.load(model, symbol, interval, lookback, focus, forecast_horizon)
 
-                # Check if feature columns match
-                if metadata['feature_columns'] == feature_columns:
-                    scaler = cached_scaler
-                    print(f"🔄 Using cached model (age: {(datetime.now() - metadata['training_timestamp']).total_seconds() / 3600:.1f}h)")
+                    if cached_result is not None:
+                        model, cached_scaler, metadata = cached_result
+
+                        # Check if feature columns match
+                        if metadata['feature_columns'] == feature_columns:
+                            scaler = cached_scaler
+                            use_cached = True
+
+                            # Check if new data is available
+                            has_new_data = False
+                            if latest_data_timestamp and 'data_end_timestamp' in metadata:
+                                model_data_end = metadata['data_end_timestamp']
+                                threshold_hours = 2 if interval == '1h' else 24
+                                new_data_hours = (latest_data_timestamp - model_data_end).total_seconds() / 3600
+                                has_new_data = new_data_hours > threshold_hours
+
+                            if has_new_data:
+                                print(f"🔄 Using cached model for fine-tuning (age: {age_hours:.1f}h, {new_data_hours:.1f}h of new data)")
+                            else:
+                                print(f"🔄 Using cached model (age: {age_hours:.1f}h, up-to-date)")
+                        else:
+                            print(f"⚠️  Feature mismatch - retraining from scratch")
+                            use_cached = False
                 else:
-                    print(f"⚠️  Feature mismatch - retraining from scratch")
-                    use_cached = False
+                    print(f"⚠️  Cached model too old ({age_hours:.1f}h > {max_cache_age_hours}h) - retraining from scratch")
 
     # Skip torch.compile() - autotuning overhead not worth it for either interval
     # Batch size optimization provides sufficient speedup without compilation delay
