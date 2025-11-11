@@ -37,8 +37,8 @@ torch>=2.2.0
 torchvision>=0.17.0
 torchaudio>=0.2.0
 
-# Temporal forecasting (v0.3.3 includes mixed precision training for 1.5-2x speedup)
-temporal-forecasting==0.3.3
+# Temporal forecasting (v0.3.4 adds NaN batch skipping to prevent weight corruption)
+temporal-forecasting==0.3.4
 
 # HuggingFace Hub integration for model sharing
 transformers==4.46.3
