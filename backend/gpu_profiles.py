@@ -5,7 +5,7 @@ Defines optimized batch sizes and parallelism settings for different GPU types.
 These profiles are tuned to maximize training speed while avoiding OOM errors.
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import os
 
 
@@ -84,13 +84,56 @@ GPU_PROFILES: Dict[str, Dict[str, Any]] = {
 }
 
 
+# GPU name to profile mapping for auto-detection
+GPU_NAME_MAPPING = {
+    "rtx 4090": "rtx_4090",
+    "rtx 5090": "rtx_5090",
+    "a100-sxm4-40gb": "a100_40gb",
+    "a100-sxm4-80gb": "a100_80gb",
+    "a100 80gb": "a100_80gb",
+    "a100 40gb": "a100_40gb",
+    "h200": "h200",
+    "b200": "b200",
+}
+
+
+def detect_gpu_profile() -> Optional[str]:
+    """
+    Auto-detect GPU profile based on available hardware.
+
+    Returns:
+        Profile name if GPU detected, None otherwise
+    """
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return None
+
+        # Get GPU name from PyTorch
+        gpu_name = torch.cuda.get_device_name(0).lower()
+
+        # Try to match GPU name to profile
+        for name_pattern, profile in GPU_NAME_MAPPING.items():
+            if name_pattern in gpu_name:
+                print(f"🔍 GPU AUTO-DETECT: Detected '{torch.cuda.get_device_name(0)}' -> using profile '{profile}'")
+                return profile
+
+        # If no match, return None (will use default)
+        print(f"⚠️  GPU AUTO-DETECT: Unknown GPU '{torch.cuda.get_device_name(0)}', using default profile")
+        return None
+
+    except Exception as e:
+        print(f"⚠️  GPU AUTO-DETECT: Failed to detect GPU ({e}), using default profile")
+        return None
+
+
 def get_gpu_profile(profile_name: str = None) -> Dict[str, Any]:
     """
     Get GPU profile configuration.
 
     Args:
         profile_name: Profile name (e.g., 'rtx_4090', 'rtx_5090')
-                     If None, reads from GPU_PROFILE env var (default: 'rtx_4090')
+                     If None, auto-detects GPU or reads from GPU_PROFILE env var
 
     Returns:
         Dictionary with GPU profile settings
@@ -99,7 +142,18 @@ def get_gpu_profile(profile_name: str = None) -> Dict[str, Any]:
         ValueError: If profile name is not found
     """
     if profile_name is None:
-        profile_name = os.getenv("GPU_PROFILE", "rtx_4090")
+        # First try environment variable
+        profile_name = os.getenv("GPU_PROFILE")
+
+        # If not set, try auto-detection
+        if profile_name is None:
+            detected_profile = detect_gpu_profile()
+            if detected_profile:
+                profile_name = detected_profile
+            else:
+                # Fall back to default
+                profile_name = "rtx_4090"
+                print(f"ℹ️  Using default GPU profile: {profile_name}")
 
     profile_name = profile_name.lower()
 
