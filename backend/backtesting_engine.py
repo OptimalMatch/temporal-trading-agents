@@ -799,6 +799,7 @@ class BacktestEngine:
                 print(f"\n{'='*60}")
                 print(f"TRAINING CONSENSUS MODEL FOR BACKTEST")
                 print(f"Training on full dataset to get model for consensus signals")
+                print(f"Training from scratch (inference mode disabled)")
                 print(f"{'='*60}\n")
 
                 logger.info("Training consensus model for backtest")
@@ -808,7 +809,8 @@ class BacktestEngine:
                     forecast_horizon=14,
                     configs=configs,
                     name="Backtest-Consensus",
-                    ensemble_module=ensemble
+                    ensemble_module=ensemble,
+                    use_cache=False  # Don't use cached models when inference mode is disabled
                 )
                 logger.info("Model training completed")
                 self.consensus_stats = stats
@@ -823,14 +825,15 @@ class BacktestEngine:
 
                 for horizon in horizons:
                     try:
-                        print(f"Training {horizon}-day horizon model...")
+                        print(f"Training {horizon}-day horizon model from scratch...")
                         configs_h = get_default_ensemble_configs(horizon=horizon)
                         stats_h, _ = train_ensemble(
                             symbol=self.config.symbol,
                             forecast_horizon=horizon,
                             configs=configs_h,
                             name=f"Backtest-Horizon-{horizon}d",
-                            ensemble_module=ensemble
+                            ensemble_module=ensemble,
+                            use_cache=False  # Don't use cached models when inference mode is disabled
                         )
                         multi_horizon_stats[horizon] = (stats_h, None)
                         print(f"✅ {horizon}-day model training completed\n")
