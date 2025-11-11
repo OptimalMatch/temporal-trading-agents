@@ -502,15 +502,22 @@ def make_ensemble_predictions(ensemble_models, symbol, forecast_horizon=7, inter
         with torch.no_grad():
             forecast = model_info['model'].forecast(latest_tensor)
 
-        # Extract Close price (first feature)
-        forecast_full = np.zeros((forecast_horizon, len(model_info['feature_columns'])))
-        forecast_full[:, 0] = forecast.cpu().numpy()[0, :, 0]
-        forecast_prices = model_info['scaler'].inverse_transform(forecast_full)[:, 0]
+        # Extract Close price forecasts (first feature)
+        forecast_np = forecast.cpu().numpy()[0, :, 0]  # Shape: (forecast_horizon,)
+
+        # Denormalize Close price directly using scaler parameters
+        # StandardScaler formula: X_normalized = (X - mean) / scale
+        # Inverse: X = X_normalized * scale + mean
+        close_mean = model_info['scaler'].mean_[0]
+        close_scale = model_info['scaler'].scale_[0]
+        forecast_prices = forecast_np * close_scale + close_mean
+
+        # DEBUG: Check current price from data
+        current_price = df_latest['Close'].iloc[-1]
 
         all_predictions.append(forecast_prices)
 
         # Store details
-        current_price = df_latest['Close'].iloc[-1]
         final_change = ((forecast_prices[-1] - current_price) / current_price) * 100
 
         prediction_details.append({

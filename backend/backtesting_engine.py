@@ -781,37 +781,21 @@ class BacktestEngine:
         all_trades = []
         all_equity_points = []
 
-        # Train or load model once at the beginning
-        # Note: For MVP, we train/load once and reuse across all periods
-        # TODO: In future, implement per-period training with data-aware training function
+        # Load ensemble module once (used for all periods)
         try:
-            # Load ensemble module
             ensemble = load_ensemble_module("examples/crypto_ensemble_forecast.py")
-            configs = get_default_ensemble_configs(horizon=14)
+        except Exception as e:
+            logger.error(f"Failed to load ensemble module: {e}")
+            logger.warning("Falling back to dummy signals for all periods")
+            ensemble = None
 
-            if self.config.inference_mode:
-                # Inference mode - load cached models without training
-                # Use first date of backtest as cutoff to avoid forward-looking bias
-                cutoff_date = pd.to_datetime(price_data['date'].iloc[0])
+        # Note: In inference mode, we load models per-period with appropriate cutoff dates
+        # In training mode, we still train once and reuse (TODO: implement per-period training)
+        if not self.config.inference_mode:
+            # Training mode - train model once at the beginning
+            try:
+                configs = get_default_ensemble_configs(horizon=14)
 
-                print(f"\n{'='*60}")
-                print(f"LOADING CACHED MODELS FOR BACKTEST (INFERENCE MODE)")
-                print(f"Using cached models for consensus signals")
-                print(f"{'='*60}\n")
-
-                logger.info("Loading cached models for backtest (inference mode)")
-
-                stats, _ = inference_ensemble(
-                    symbol=self.config.symbol,
-                    forecast_horizon=14,
-                    configs=configs,
-                    name="Backtest-Consensus",
-                    ensemble_module=ensemble,
-                    cutoff_date=cutoff_date
-                )
-                logger.info("Model inference loading completed")
-            else:
-                # Training mode - train fresh models
                 print(f"\n{'='*60}")
                 print(f"TRAINING CONSENSUS MODEL FOR BACKTEST")
                 print(f"Training on full dataset to get model for consensus signals")
@@ -819,9 +803,6 @@ class BacktestEngine:
 
                 logger.info("Training consensus model for backtest")
 
-                # Train ensemble model
-                # Note: This will fetch recent data for training
-                # In future versions, we should train per-period using only data available at that time
                 stats, _ = train_ensemble(
                     symbol=self.config.symbol,
                     forecast_horizon=14,
@@ -830,19 +811,9 @@ class BacktestEngine:
                     ensemble_module=ensemble
                 )
                 logger.info("Model training completed")
+                self.consensus_stats = stats
 
-            # Store trained model stats for use during testing
-            self.consensus_stats = stats
-
-            # Train or load multi-horizon models for multi-timeframe strategy
-            if self.config.inference_mode:
-                # Skip multi-horizon in inference mode (would require additional cached models)
-                print(f"{'='*60}")
-                print(f"SKIPPING MULTI-HORIZON FOR INFERENCE MODE")
-                print(f"{'='*60}\n")
-                print(f"⚠️  Multi-timeframe strategy skipped in inference mode\n")
-                self.multi_horizon_stats = None
-            else:
+                # Train multi-horizon models for multi-timeframe strategy
                 print(f"{'='*60}")
                 print(f"TRAINING MULTI-HORIZON MODELS FOR MULTI-TIMEFRAME STRATEGY")
                 print(f"{'='*60}\n")
@@ -861,7 +832,7 @@ class BacktestEngine:
                             name=f"Backtest-Horizon-{horizon}d",
                             ensemble_module=ensemble
                         )
-                        multi_horizon_stats[horizon] = (stats_h, None)  # (stats, df) - df not needed
+                        multi_horizon_stats[horizon] = (stats_h, None)
                         print(f"✅ {horizon}-day model training completed\n")
                     except Exception as e:
                         logger.warning(f"Training {horizon}-day horizon failed: {e}")
@@ -873,9 +844,17 @@ class BacktestEngine:
                 else:
                     print(f"⚠️  Multi-horizon training incomplete, skipping multi-timeframe strategy\n")
 
-        except Exception as e:
-            logger.error(f"Model training failed: {e}")
-            logger.warning("Falling back to dummy signals for all periods")
+            except Exception as e:
+                logger.error(f"Model training failed: {e}")
+                logger.warning("Falling back to dummy signals for all periods")
+                self.consensus_stats = None
+                self.multi_horizon_stats = None
+        else:
+            # Inference mode - will load models per-period inside the loop
+            print(f"\n{'='*60}")
+            print(f"INFERENCE MODE ENABLED")
+            print(f"Models will be loaded per-period with temporal cutoffs")
+            print(f"{'='*60}\n")
             self.consensus_stats = None
             self.multi_horizon_stats = None
 
@@ -883,6 +862,33 @@ class BacktestEngine:
             logger.info(f"Period {period_num}/{len(splits)}")
             logger.info(f"  Train: {train_df['date'].iloc[0]} to {train_df['date'].iloc[-1]}")
             logger.info(f"  Test: {test_df['date'].iloc[0]} to {test_df['date'].iloc[-1]}")
+
+            # In inference mode, load fresh predictions for this period with temporal cutoff
+            if self.config.inference_mode and ensemble is not None:
+                try:
+                    # Use start of test period as cutoff to avoid forward-looking bias
+                    cutoff_date = pd.to_datetime(test_df['date'].iloc[0])
+
+                    print(f"\n{'='*60}")
+                    print(f"PERIOD {period_num}/{len(splits)}: LOADING MODELS (INFERENCE MODE)")
+                    print(f"Cutoff date: {cutoff_date}")
+                    print(f"{'='*60}\n")
+
+                    configs = get_default_ensemble_configs(horizon=14)
+                    stats, _ = inference_ensemble(
+                        symbol=self.config.symbol,
+                        forecast_horizon=14,
+                        configs=configs,
+                        name=f"Backtest-Period-{period_num}",
+                        ensemble_module=ensemble,
+                        cutoff_date=cutoff_date
+                    )
+                    self.consensus_stats = stats
+                    logger.info(f"Period {period_num} inference completed")
+                except Exception as e:
+                    logger.error(f"Period {period_num} inference failed: {e}")
+                    logger.warning("Falling back to dummy signals for this period")
+                    self.consensus_stats = None
 
             # Run backtest on test period using trained model
             # Reset state but preserve regime tracker
