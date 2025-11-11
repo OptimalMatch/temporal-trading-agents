@@ -319,20 +319,29 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
     # torch.compile() disabled to ensure predictable, fast training times
 
     # Train or fine-tune
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
+    # Use lower learning rate and more aggressive gradient clipping for hourly data
+    # Hourly data is more volatile and prone to gradient explosions
+    learning_rate = 1e-5 if interval == '1h' else 1e-4
+    grad_clip = 0.5 if interval == '1h' else 1.0
+
+    print(f"🎯 Training config: lr={learning_rate}, grad_clip={grad_clip}")
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)
     trainer = TemporalTrainer(
         model=model,
         optimizer=optimizer,
         criterion=torch.nn.MSELoss(),
         device="cuda" if torch.cuda.is_available() else "cpu",
-        grad_clip=1.0,
+        grad_clip=grad_clip,
         use_amp=True  # Enable mixed precision training for 1.5-2x speedup
     )
 
     if use_cached:
         # Fine-tune with reduced epochs and lower learning rate
         print(f"🔧 Fine-tuning cached model ({fine_tune_epochs} epochs)...")
-        optimizer.param_groups[0]['lr'] = 1e-5  # Lower learning rate for fine-tuning
+        # Use 10x lower learning rate for fine-tuning
+        fine_tune_lr = learning_rate / 10
+        optimizer.param_groups[0]['lr'] = fine_tune_lr
 
         history = trainer.fit(
             train_loader=train_loader,
