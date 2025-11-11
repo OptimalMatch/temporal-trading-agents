@@ -920,6 +920,135 @@ GPL-3.0-or-later
 
             return repo_url
 
+    def list_all_cached_models(self) -> List[Dict[str, Any]]:
+        """
+        List all cached models with detailed metadata.
+
+        Returns:
+            List of dictionaries containing cache information
+        """
+        model_files = list(self.cache_dir.glob("*_model.pt"))
+        cached_models = []
+
+        for model_file in model_files:
+            cache_key = model_file.stem.replace('_model', '')
+            metadata_path = self._get_metadata_path(cache_key)
+            scaler_path = self._get_scaler_path(cache_key)
+
+            if metadata_path.exists():
+                with open(metadata_path, 'r') as f:
+                    metadata = json.load(f)
+
+                # Get file sizes
+                model_size = model_file.stat().st_size
+                scaler_size = scaler_path.stat().st_size if scaler_path.exists() else 0
+                metadata_size = metadata_path.stat().st_size
+
+                # Get modification times
+                model_mtime = datetime.fromtimestamp(model_file.stat().st_mtime)
+
+                cached_models.append({
+                    'cache_key': cache_key,
+                    'symbol': metadata.get('symbol', 'Unknown'),
+                    'interval': metadata.get('interval', 'Unknown'),
+                    'lookback': metadata.get('lookback', 0),
+                    'focus': metadata.get('focus', 'Unknown'),
+                    'forecast_horizon': metadata.get('forecast_horizon', 0),
+                    'training_timestamp': metadata.get('training_timestamp'),
+                    'data_end_timestamp': metadata.get('data_end_timestamp'),
+                    'last_modified': model_mtime.isoformat(),
+                    'model_size_mb': model_size / (1024 * 1024),
+                    'total_size_mb': (model_size + scaler_size + metadata_size) / (1024 * 1024),
+                    'architecture': metadata.get('architecture', {}),
+                    'training_samples': metadata.get('training_samples', 0),
+                    'validation_loss': metadata.get('validation_loss'),
+                    'epochs_trained': metadata.get('epochs_trained', 0),
+                    'fine_tuned': metadata.get('fine_tuned', False),
+                    'fine_tune_count': metadata.get('fine_tune_count', 0),
+                })
+
+        # Sort by last modified (newest first)
+        cached_models.sort(key=lambda x: x['last_modified'], reverse=True)
+
+        return cached_models
+
+    def delete_cached_model(self, cache_key: str) -> bool:
+        """
+        Delete a specific cached model and its associated files.
+
+        Args:
+            cache_key: The cache key identifying the model
+
+        Returns:
+            True if deleted successfully, False if not found
+        """
+        model_path = self._get_model_path(cache_key)
+        metadata_path = self._get_metadata_path(cache_key)
+        scaler_path = self._get_scaler_path(cache_key)
+
+        deleted = False
+        for path in [model_path, metadata_path, scaler_path]:
+            if path.exists():
+                path.unlink()
+                deleted = True
+
+        return deleted
+
+    def export_cache_to_zip(self, cache_key: str, output_path: Optional[str] = None) -> str:
+        """
+        Export a cached model and its files to a zip archive.
+
+        Args:
+            cache_key: The cache key identifying the model
+            output_path: Optional output path for the zip file
+
+        Returns:
+            Path to the created zip file
+        """
+        model_path = self._get_model_path(cache_key)
+        metadata_path = self._get_metadata_path(cache_key)
+        scaler_path = self._get_scaler_path(cache_key)
+
+        if not model_path.exists() or not metadata_path.exists():
+            raise FileNotFoundError(f"Cache files not found for key: {cache_key}")
+
+        # Create output path if not specified
+        if output_path is None:
+            output_path = str(self.cache_dir / f"{cache_key}_export.zip")
+
+        import zipfile
+        with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            zipf.write(model_path, model_path.name)
+            zipf.write(metadata_path, metadata_path.name)
+            if scaler_path.exists():
+                zipf.write(scaler_path, scaler_path.name)
+
+        return output_path
+
+    def import_cache_from_zip(self, zip_path: str) -> str:
+        """
+        Import a cached model from a zip archive.
+
+        Args:
+            zip_path: Path to the zip file containing cache files
+
+        Returns:
+            The cache key of the imported model
+        """
+        import zipfile
+
+        with zipfile.ZipFile(zip_path, 'r') as zipf:
+            # Extract all files to cache directory
+            zipf.extractall(self.cache_dir)
+
+            # Find the cache key from extracted files
+            for name in zipf.namelist():
+                if name.endswith('_model.pt'):
+                    cache_key = name.replace('_model.pt', '')
+                    return cache_key
+
+        raise ValueError("No valid model file found in zip archive")
+
     def get_cache_stats(self) -> Dict[str, Any]:
         """
         Get statistics about the model cache.

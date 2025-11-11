@@ -202,6 +202,92 @@ class APIService {
     return this.request(`/optimize/${optimizationId}/cancel`, { method: 'POST' });
   }
 
+  // Model Cache Management
+  async getCachedModels() {
+    return this.request('/cache/models');
+  }
+
+  async deleteCachedModel(cacheKey) {
+    return this.request(`/cache/models/${cacheKey}`, { method: 'DELETE' });
+  }
+
+  async clearCache(symbol = null, interval = null) {
+    const params = new URLSearchParams();
+    if (symbol) params.append('symbol', symbol);
+    if (interval) params.append('interval', interval);
+    const query = params.toString();
+    return this.request(`/cache/clear${query ? '?' + query : ''}`, { method: 'POST' });
+  }
+
+  async exportCachedModel(cacheKey) {
+    const url = `${API_BASE}/cache/export/${cacheKey}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error('Failed to export cached model');
+    }
+    const blob = await response.blob();
+    return blob;
+  }
+
+  async importCachedModel(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const url = `${API_BASE}/cache/import`;
+    const response = await fetch(url, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: response.statusText }));
+      throw new Error(error.detail || 'Failed to import cached model');
+    }
+
+    return await response.json();
+  }
+
+  async getCacheStats() {
+    return this.request('/cache/stats');
+  }
+
+  // Full System Backup/Restore
+  async createFullBackup() {
+    return this.request('/backup/full', { method: 'POST' });
+  }
+
+  async downloadBackup(backupId) {
+    const url = `${API_BASE}/backup/download/${backupId}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error('Failed to download backup');
+    }
+    const blob = await response.blob();
+    return blob;
+  }
+
+  async restoreFullBackup(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const url = `${API_BASE}/backup/restore`;
+    const response = await fetch(url, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: response.statusText }));
+      throw new Error(error.detail || 'Failed to restore backup');
+    }
+
+    return await response.json();
+  }
+
+  async listBackups() {
+    return this.request('/backup/list');
+  }
+
   // Generic HTTP methods for federation and other endpoints
   async get(endpoint) {
     return this.request(endpoint, { method: 'GET' });
