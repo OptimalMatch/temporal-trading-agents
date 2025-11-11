@@ -142,7 +142,7 @@ def train_ensemble(symbol: str, forecast_horizon: int, configs: List[Dict],
 
 def inference_ensemble(symbol: str, forecast_horizon: int, configs: List[Dict],
                       name: str, ensemble_module, interval: str = '1d',
-                      max_cache_age_days: Optional[int] = None) -> Tuple[Optional[Dict], Optional[pd.DataFrame]]:
+                      max_cache_age_days: Optional[int] = None, cutoff_date=None) -> Tuple[Optional[Dict], Optional[pd.DataFrame]]:
     """
     Fast inference using cached models only - NO TRAINING.
 
@@ -157,6 +157,7 @@ def inference_ensemble(symbol: str, forecast_horizon: int, configs: List[Dict],
         ensemble_module: The loaded ensemble module
         interval: Data interval ('1d' for daily, '1h' for hourly)
         max_cache_age_days: Maximum model age in days (None = use any age, even weeks/months old)
+        cutoff_date: Optional datetime to limit data to (for backtesting)
 
     Returns:
         Tuple of (ensemble_stats, latest_dataframe) or (None, None) if models not available
@@ -239,7 +240,7 @@ def inference_ensemble(symbol: str, forecast_horizon: int, configs: List[Dict],
 
     # Make predictions (no training happened)
     ensemble_stats, df_latest = ensemble_module.make_ensemble_predictions(
-        ensemble_models, symbol, forecast_horizon, interval=interval
+        ensemble_models, symbol, forecast_horizon, interval=interval, cutoff_date=cutoff_date
     )
 
     print(f"✅ Inference complete - predictions ready!")

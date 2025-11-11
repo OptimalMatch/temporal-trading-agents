@@ -488,6 +488,12 @@ class BacktestConfig(BaseModel):
         'swing', 'risk_adjusted', 'mean_reversion', 'multi_timeframe'
     ]
 
+    # Inference mode (fast predictions using cached models)
+    inference_mode: bool = Field(
+        default=False,
+        description="If True, use cached models without training/fine-tuning for much faster backtests"
+    )
+
 
 class BacktestTrade(BaseModel):
     """Individual trade in backtest"""
