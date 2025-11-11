@@ -68,6 +68,19 @@ GPU_PROFILES: Dict[str, Dict[str, Any]] = {
                  "Reduced from 5120->3584->2560 for hourly after repeated OOM errors. "
                  "Still fast training - 10-12x vs CPU, with memory headroom.",
     },
+    "b200": {
+        "name": "NVIDIA B200",
+        "vram_gb": 180,
+        "batch_size_1d": 2048,  # Daily intervals - same as H200
+        "batch_size_1h": 3200,  # Hourly intervals - 25% increase over H200
+        "max_workers": 4,       # 4 parallel models (39GB more VRAM than H200)
+        "memory_per_model_1d": 28,  # ~28GB per model for daily
+        "memory_per_model_1h": 40,  # ~40GB per model for hourly
+        "notes": "High performance profile for B200 with 180GB VRAM (39GB more than H200). "
+                 "Conservative batch size increase for hourly (3200 vs H200's 2560). "
+                 "Supports 4 parallel workers vs H200's 3. "
+                 "Total capacity: 4 workers × 40GB = 160GB used, 20GB buffer.",
+    },
 }
 
 
