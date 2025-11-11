@@ -51,7 +51,8 @@ function HuggingFacePage() {
 
   const [ensembleExportFormData, setEnsembleExportFormData] = useState({
     consensus_id: '',
-    commit_message: ''
+    commit_message: '',
+    include_all_horizons: false
   });
 
   useEffect(() => {
@@ -288,7 +289,8 @@ function HuggingFacePage() {
         body: JSON.stringify({
           consensus_id: ensembleExportFormData.consensus_id,
           repo_id: selectedConfig.repo_id,
-          commit_message: ensembleExportFormData.commit_message || undefined
+          commit_message: ensembleExportFormData.commit_message || undefined,
+          include_all_horizons: ensembleExportFormData.include_all_horizons
         })
       });
 
@@ -969,6 +971,21 @@ function HuggingFacePage() {
                       );
                     })}
                 </select>
+              </div>
+
+              <div>
+                <label className="flex items-center gap-2 text-sm font-medium text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={ensembleExportFormData.include_all_horizons}
+                    onChange={(e) => setEnsembleExportFormData({ ...ensembleExportFormData, include_all_horizons: e.target.checked })}
+                    className="w-4 h-4 bg-gray-900 border border-gray-700 rounded text-blue-600 focus:ring-blue-500"
+                  />
+                  <span>Export all horizon variants (6h, 12h, 24h, 72h)</span>
+                </label>
+                <p className="text-xs text-gray-500 mt-1 ml-6">
+                  When enabled, exports all cached horizon variants for each model configuration instead of just the horizons used in the consensus
+                </p>
               </div>
 
               <div>
