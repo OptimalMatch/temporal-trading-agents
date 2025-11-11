@@ -45,14 +45,22 @@ def add_technical_indicators(df, focus='balanced'):
     """
     Add technical indicators with different focus.
 
+    IMPORTANT: We train on RETURNS (percentage changes), not absolute prices.
+    This makes the model learn patterns of change, not absolute price levels.
+
     Args:
         df: DataFrame with OHLCV data
         focus: 'momentum', 'mean_reversion', or 'balanced'
     """
     df = df.copy()
 
-    # Base indicators (always included)
+    # CRITICAL: Calculate percentage returns FIRST - these are what we'll predict
+    # Returns are scale-invariant: a 5% move means the same whether price is $100 or $100k
     df['Returns'] = df['Close'].pct_change()
+    df['Open_Returns'] = df['Open'].pct_change()
+    df['High_Returns'] = df['High'].pct_change()
+    df['Low_Returns'] = df['Low'].pct_change()
+    df['Volume_Returns'] = df['Volume'].pct_change()
     df['Log_Returns'] = np.log(df['Close'] / df['Close'].shift(1))
 
     # Moving averages
@@ -78,14 +86,15 @@ def add_technical_indicators(df, focus='balanced'):
     df['RSI_Deviation'] = df['RSI'] - 50  # Deviation from neutral
 
     if focus == 'momentum':
-        # Momentum-focused features
-        df['Momentum_7'] = df['Close'] - df['Close'].shift(7)
-        df['Momentum_14'] = df['Close'] - df['Close'].shift(14)
-        df['Momentum_21'] = df['Close'] - df['Close'].shift(21)
+        # Momentum-focused features (all based on returns, not prices)
+        df['Momentum_7'] = df['Returns'].rolling(window=7).sum()  # Cumulative 7-day return
+        df['Momentum_14'] = df['Returns'].rolling(window=14).sum()  # Cumulative 14-day return
+        df['Momentum_21'] = df['Returns'].rolling(window=21).sum()  # Cumulative 21-day return
         df['Price_Acceleration'] = df['Returns'].diff()
 
-        feature_columns = ['Close', 'Open', 'High', 'Low', 'Volume',
-                          'Returns', 'MA_7', 'MA_21', 'Volatility_7',
+        # PRIMARY FEATURE MUST BE 'Returns' at index 0 (what we predict)
+        feature_columns = ['Returns', 'Open_Returns', 'High_Returns', 'Low_Returns', 'Volume_Returns',
+                          'Log_Returns', 'Price_to_MA7', 'Price_to_MA21', 'Volatility_7',
                           'RSI', 'Momentum_7', 'Momentum_14', 'Momentum_21',
                           'Price_Acceleration']
 
@@ -98,20 +107,21 @@ def add_technical_indicators(df, focus='balanced'):
         # How stretched is price from mean?
         df['Price_Stretch'] = (df['Close'] - df['MA_21']).abs() / df['Volatility_21'] / df['Close']
 
-        feature_columns = ['Close', 'Open', 'High', 'Low', 'Volume',
-                          'Returns', 'MA_7', 'MA_21', 'MA_50',
-                          'Price_to_MA7', 'Price_to_MA21', 'Price_to_MA50',
-                          'RSI', 'RSI_Deviation', 'BB_Position', 'Price_Stretch']
+        # PRIMARY FEATURE MUST BE 'Returns' at index 0 (what we predict)
+        feature_columns = ['Returns', 'Open_Returns', 'High_Returns', 'Low_Returns', 'Volume_Returns',
+                          'Log_Returns', 'Price_to_MA7', 'Price_to_MA21', 'Price_to_MA50',
+                          'RSI', 'RSI_Deviation', 'BB_Position', 'Price_Stretch', 'Volatility_7']
 
     else:  # balanced
-        df['Momentum_7'] = df['Close'] - df['Close'].shift(7)
-        df['Momentum_21'] = df['Close'] - df['Close'].shift(21)
+        df['Momentum_7'] = df['Returns'].rolling(window=7).sum()  # Cumulative 7-day return
+        df['Momentum_21'] = df['Returns'].rolling(window=21).sum()  # Cumulative 21-day return
         df['Volume_MA_7'] = df['Volume'].rolling(window=7).mean()
         df['Volume_Ratio'] = df['Volume'] / df['Volume_MA_7']
         df['Price_Range'] = (df['High'] - df['Low']) / df['Close']
 
-        feature_columns = ['Close', 'Open', 'High', 'Low', 'Volume',
-                          'Returns', 'Log_Returns', 'MA_7', 'MA_21', 'MA_50',
+        # PRIMARY FEATURE MUST BE 'Returns' at index 0 (what we predict)
+        feature_columns = ['Returns', 'Open_Returns', 'High_Returns', 'Low_Returns', 'Volume_Returns',
+                          'Log_Returns', 'Price_to_MA7', 'Price_to_MA21', 'Price_to_MA50',
                           'Volatility_7', 'Volatility_21', 'RSI',
                           'Momentum_7', 'Momentum_21', 'Volume_Ratio', 'Price_Range']
 
@@ -158,9 +168,14 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
     data = prepare_for_temporal(df, feature_columns=feature_columns)
     print(f"✓ Prepared {data.shape[0]} samples with {data.shape[1]} features")
 
-    # Normalize
+    # Normalize using RECENT data only (last 90 days) for scaler fitting
+    # This makes predictions relative to current price levels, not historical averages
+    # Otherwise, with crypto going from $40k→$106k, the historical mean ($70k) causes
+    # the model to predict values that look like huge drops from current levels
     scaler = StandardScaler()
-    data_normalized = scaler.fit_transform(data)
+    recent_window = min(90, len(data) // 2)  # Last 90 days or half the data
+    scaler.fit(data[-recent_window:])  # Fit on recent data only
+    data_normalized = scaler.transform(data)  # Transform all data with recent scaler
 
     # Split
     train_data, val_data, test_data = split_train_val_test(data_normalized)
@@ -199,14 +214,15 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
         prefetch_factor=2
     )
 
-    # Create model template - optimized for RTX 4090 (24GB VRAM)
+    # Create model template - using proven original temporal example configuration
+    # Smaller model size reduces overfitting and produces more varied, realistic forecasts
     model = Temporal(
         input_dim=data.shape[1],
-        d_model=512,  # Increased from 256 for better model capacity
-        num_encoder_layers=6,  # Increased from 4 for deeper network
-        num_decoder_layers=6,  # Increased from 4 for deeper network
+        d_model=256,  # Original proven size (not 512 - too large causes mode collapse)
+        num_encoder_layers=4,  # Original depth (not 6 - too deep causes flat predictions)
+        num_decoder_layers=4,  # Original depth (not 6 - too deep causes flat predictions)
         num_heads=8,
-        d_ff=2048,  # Increased from 1024 for wider feedforward network
+        d_ff=1024,  # Original feedforward size (not 2048 - too wide causes overfitting)
         forecast_horizon=forecast_horizon,
         dropout=0.1
     )
@@ -235,7 +251,7 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
 
                         # Check if feature columns match
                         if metadata['feature_columns'] == feature_columns:
-                            scaler = cached_scaler
+                            # Don't use cached scaler - use fresh one fitted on current data
                             use_cached = True
 
                             # Check if new data is available
@@ -502,18 +518,44 @@ def make_ensemble_predictions(ensemble_models, symbol, forecast_horizon=7, inter
         with torch.no_grad():
             forecast = model_info['model'].forecast(latest_tensor)
 
-        # Extract Close price forecasts (first feature)
+        # Extract RETURNS forecasts (first feature is now Returns, not Close)
         forecast_np = forecast.cpu().numpy()[0, :, 0]  # Shape: (forecast_horizon,)
 
-        # Denormalize Close price directly using scaler parameters
+        # DEBUG: Check forecast shape and raw values
+        print(f"  DEBUG: Model {model_info['name']} - forecast shape: {forecast.shape}, forecast_np length: {len(forecast_np)}")
+        print(f"  DEBUG: Model trained with horizon: {model_info.get('forecast_horizon', 'unknown')}")
+        print(f"  DEBUG: Requested horizon for this prediction: {forecast_horizon}")
+        print(f"  DEBUG: Raw normalized forecasts (first 7): {forecast_np[:7]}")
+
+        # Denormalize to get RETURNS (percentage changes)
         # StandardScaler formula: X_normalized = (X - mean) / scale
         # Inverse: X = X_normalized * scale + mean
-        close_mean = model_info['scaler'].mean_[0]
-        close_scale = model_info['scaler'].scale_[0]
-        forecast_prices = forecast_np * close_scale + close_mean
+        returns_mean = model_info['scaler'].mean_[0]  # Mean of Returns, not prices
+        returns_scale = model_info['scaler'].scale_[0]  # Std of Returns
+        print(f"  DEBUG: Scaler mean[0]={returns_mean:.6f}, scale[0]={returns_scale:.6f}")
+        forecast_returns = forecast_np * returns_scale + returns_mean  # These are percentage returns
 
-        # DEBUG: Check current price from data
+        # Get current price from data (needed for converting returns to prices)
         current_price = df_latest['Close'].iloc[-1]
+
+        # Convert returns to prices by applying them sequentially to current price
+        # Day 1 price = current_price * (1 + return_day1)
+        # Day 2 price = day1_price * (1 + return_day2), etc.
+        forecast_prices = np.zeros(len(forecast_returns))
+        cumulative_price = current_price
+        for i, daily_return in enumerate(forecast_returns):
+            cumulative_price = cumulative_price * (1 + daily_return)
+            forecast_prices[i] = cumulative_price
+
+        # DEBUG: Print day-by-day forecasts showing BOTH returns and resulting prices
+        print(f"\n  {model_info['name']} day-by-day forecasts:")
+        print(f"    Current: ${current_price:,.2f}")
+        for day_idx in range(min(7, len(forecast_prices))):
+            day_num = day_idx + 1
+            day_return = forecast_returns[day_idx]
+            day_price = forecast_prices[day_idx]
+            cumulative_change = ((day_price - current_price) / current_price) * 100
+            print(f"    Day {day_num}: Return={day_return:+.4f} ({day_return*100:+.2f}%) → Price=${day_price:,.2f} (cumulative {cumulative_change:+.1f}%)")
 
         all_predictions.append(forecast_prices)
 
@@ -527,7 +569,7 @@ def make_ensemble_predictions(ensemble_models, symbol, forecast_horizon=7, inter
             'focus': model_info['focus']
         })
 
-        print(f"✓ {model_info['name']}: Day 7 = ${forecast_prices[-1]:,.2f} ({final_change:+.1f}%)")
+        print(f"  ✓ Summary: Day 7 = ${forecast_prices[-1]:,.2f} ({final_change:+.1f}%)\n")
 
     all_predictions = np.array(all_predictions)
 

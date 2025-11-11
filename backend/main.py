@@ -249,9 +249,14 @@ async def ensure_dataset_available(symbol: str, database: Database, interval: st
     """
     from strategies.data_cache import get_cache
 
-    # Use 5 years of historical data for all assets (crypto and stocks)
+    # For crypto daily data, use 2 years (like original temporal examples)
+    # 2y gives enough training data while avoiding most of 2021-2022 crash ($69k→$16k)
+    # For hourly data or stocks, 5 years is fine
     is_crypto = '-USD' in symbol or '-EUR' in symbol or '-GBP' in symbol
-    required_period = '5y'
+    if is_crypto and interval == '1d':
+        required_period = '2y'  # 2y for crypto daily (matches original temporal examples)
+    else:
+        required_period = '5y'  # 5y for stocks or hourly crypto data
 
     print(f"📊 Checking dataset availability for {symbol} (required period: {required_period})")
 
@@ -691,7 +696,7 @@ async def run_consensus_analysis_background(consensus_id: str, request: Consensu
 
         # Ensure dataset is available before analysis
         logs.append(f"[{datetime.now(timezone.utc).isoformat()}] Checking dataset availability for {request.symbol}")
-        dataset_ready = await ensure_dataset_available(request.symbol, database)
+        dataset_ready = await ensure_dataset_available(request.symbol, database, interval=request.interval)
 
         if not dataset_ready:
             error_msg = f"Failed to ensure dataset availability for {request.symbol}"

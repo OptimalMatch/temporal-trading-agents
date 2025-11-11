@@ -75,10 +75,11 @@ def train_ensemble(symbol: str, forecast_horizon: int, configs: List[Dict],
     # For daily intervals, prefer shorter periods to avoid learning from stale historical data
     # For hourly intervals, longer periods are fine (5y hourly is more recent than 5y daily)
     # Crypto markets evolve quickly - old price levels aren't predictive
+    # Use 2y for crypto daily (like original temporal examples) - enough data without too much crash bias
     if interval == '1d':
-        preferred_periods = ['2y', '1y', '6mo', '5y']  # Prefer 2y for daily
+        preferred_periods = ['2y', '1y', '6mo']  # 2y for daily (matches original)
     else:  # '1h' or other short intervals
-        preferred_periods = ['5y', '2y', '1y', '6mo']  # Prefer 5y for hourly
+        preferred_periods = ['1y', '6mo', '3mo']  # 1y max for hourly
 
     # Try to detect what data is available by checking cache
     available_period = None
@@ -89,7 +90,7 @@ def train_ensemble(symbol: str, forecast_horizon: int, configs: List[Dict],
             break
 
     # Default based on interval if nothing found
-    period = available_period or ('2y' if interval == '1d' else '5y')
+    period = available_period or ('2y' if interval == '1d' else '1y')
 
     is_crypto = '-USD' in symbol or '-EUR' in symbol or '-GBP' in symbol
     asset_type = 'crypto' if is_crypto else 'stock'
