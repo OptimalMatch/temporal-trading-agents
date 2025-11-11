@@ -173,7 +173,16 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
     # Otherwise, with crypto going from $40k→$106k, the historical mean ($70k) causes
     # the model to predict values that look like huge drops from current levels
     scaler = StandardScaler()
-    recent_window = min(90, len(data) // 2)  # Last 90 days or half the data
+
+    # Calculate recent_window based on interval to get ~90 days worth of data
+    if interval == '1h':
+        # For hourly data: 90 days * 24 hours = 2160 hours
+        recent_days_in_hours = 90 * 24
+        recent_window = min(recent_days_in_hours, len(data) // 2)
+    else:
+        # For daily data: 90 days = 90 samples
+        recent_window = min(90, len(data) // 2)
+
     scaler.fit(data[-recent_window:])  # Fit on recent data only
     data_normalized = scaler.transform(data)  # Transform all data with recent scaler
 
