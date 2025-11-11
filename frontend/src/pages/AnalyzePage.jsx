@@ -5,6 +5,7 @@ import useWebSocket from '../hooks/useWebSocket';
 import ProgressIndicator from '../components/ProgressIndicator';
 import StrategyCard from '../components/StrategyCard';
 import ForecastChart from '../components/ForecastChart';
+import CacheManagement from '../components/CacheManagement';
 
 const STRATEGY_OPTIONS = [
   { value: 'gradient', label: 'Forecast Gradient', description: 'Analyzes the shape of the forecast curve' },
@@ -358,6 +359,11 @@ function AnalyzePage() {
           )}
         </div>
       )}
+
+      {/* Model Cache Management Section */}
+      <div className="mt-8">
+        <CacheManagement />
+      </div>
     </div>
   );
 }

@@ -31,6 +31,9 @@ import asyncio
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import json
 import httpx
+import tempfile
+import tarfile
+import shutil
 
 from backend.gpu_profiles import get_max_workers, get_gpu_profile, print_profile_info
 from backend.models import (
@@ -5353,6 +5356,504 @@ async def export_ensemble_to_huggingface(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to export ensemble: {str(e)}")
+
+
+# ============================================================================
+# Model Cache Management
+# ============================================================================
+
+@app.get("/api/v1/cache/models")
+async def list_cached_models():
+    """
+    List all cached models with detailed metadata.
+    """
+    try:
+        from strategies.model_cache import get_model_cache
+        cache = get_model_cache()
+        models = cache.list_all_cached_models()
+
+        # Calculate summary stats
+        total_size = sum(m['total_size_mb'] for m in models)
+
+        return {
+            "count": len(models),
+            "total_size_mb": total_size,
+            "models": models
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list cached models: {str(e)}")
+
+
+@app.delete("/api/v1/cache/models/{cache_key}")
+async def delete_cached_model(cache_key: str):
+    """
+    Delete a specific cached model by its cache key.
+    """
+    try:
+        from strategies.model_cache import get_model_cache
+        cache = get_model_cache()
+
+        success = cache.delete_cached_model(cache_key)
+
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Cached model not found: {cache_key}")
+
+        return {
+            "message": f"Cached model deleted successfully",
+            "cache_key": cache_key
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete cached model: {str(e)}")
+
+
+@app.post("/api/v1/cache/clear")
+async def clear_cache(
+    symbol: Optional[str] = None,
+    interval: Optional[str] = None
+):
+    """
+    Clear all cached models or filter by symbol/interval.
+    """
+    try:
+        from strategies.model_cache import get_model_cache
+        cache = get_model_cache()
+
+        # Get list before clearing for count
+        models_before = cache.list_all_cached_models()
+
+        # Apply filters if provided
+        if symbol or interval:
+            models_to_clear = [
+                m for m in models_before
+                if (not symbol or m['symbol'] == symbol) and
+                   (not interval or m['interval'] == interval)
+            ]
+
+            # Delete each filtered model
+            for model in models_to_clear:
+                cache.delete_cached_model(model['cache_key'])
+
+            count = len(models_to_clear)
+        else:
+            # Clear all
+            cache.clear()
+            count = len(models_before)
+
+        return {
+            "message": f"Cleared {count} cached model(s)",
+            "count": count,
+            "filters": {
+                "symbol": symbol,
+                "interval": interval
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to clear cache: {str(e)}")
+
+
+@app.get("/api/v1/cache/export/{cache_key}")
+async def export_cached_model(cache_key: str):
+    """
+    Export a cached model to a zip file and return it for download.
+    """
+    try:
+        from strategies.model_cache import get_model_cache
+        from fastapi.responses import FileResponse
+
+        cache = get_model_cache()
+
+        # Export to zip
+        zip_path = cache.export_cache_to_zip(cache_key)
+
+        return FileResponse(
+            path=zip_path,
+            media_type="application/zip",
+            filename=f"{cache_key}.zip",
+            headers={"Content-Disposition": f"attachment; filename={cache_key}.zip"}
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to export cached model: {str(e)}")
+
+
+@app.post("/api/v1/cache/import")
+async def import_cached_model(file: bytes = None):
+    """
+    Import a cached model from a zip file upload.
+
+    Note: This endpoint expects a multipart/form-data upload.
+    """
+    try:
+        from strategies.model_cache import get_model_cache
+        import tempfile
+
+        if not file:
+            raise HTTPException(status_code=400, detail="No file provided")
+
+        cache = get_model_cache()
+
+        # Save uploaded file to temporary location
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
+            tmp.write(file)
+            tmp_path = tmp.name
+
+        try:
+            # Import from zip
+            cache_key = cache.import_cache_from_zip(tmp_path)
+
+            return {
+                "message": "Cached model imported successfully",
+                "cache_key": cache_key
+            }
+        finally:
+            # Clean up temp file
+            import os
+            os.unlink(tmp_path)
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to import cached model: {str(e)}")
+
+
+@app.get("/api/v1/cache/stats")
+async def get_cache_stats():
+    """
+    Get cache statistics and summary information.
+    """
+    try:
+        from strategies.model_cache import get_model_cache
+        cache = get_model_cache()
+
+        stats = cache.get_cache_stats()
+        models = cache.list_all_cached_models()
+
+        # Group by symbol and interval
+        by_symbol = {}
+        by_interval = {}
+
+        for model in models:
+            symbol = model['symbol']
+            interval = model['interval']
+
+            if symbol not in by_symbol:
+                by_symbol[symbol] = []
+            by_symbol[symbol].append(model)
+
+            if interval not in by_interval:
+                by_interval[interval] = []
+            by_interval[interval].append(model)
+
+        return {
+            **stats,
+            "by_symbol": {k: len(v) for k, v in by_symbol.items()},
+            "by_interval": {k: len(v) for k, v in by_interval.items()},
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get cache stats: {str(e)}")
+
+
+# ============================================================================
+# Full System Backup/Restore
+# ============================================================================
+
+@app.post("/api/v1/backup/full")
+async def create_full_backup(
+    background_tasks: BackgroundTasks,
+    db: Database = Depends(get_database)
+):
+    """
+    Create a full system backup including model cache and MongoDB data.
+    Returns immediately with a backup ID. Download using /api/v1/backup/download/{backup_id}
+    """
+    try:
+        from strategies.model_cache import get_model_cache
+
+        # Generate backup ID with timestamp
+        backup_id = f"temporal-complete-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        backup_dir = Path(tempfile.gettempdir()) / "temporal-backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup_path = backup_dir / f"{backup_id}.tar.gz"
+
+        logger.info(f"Creating full system backup: {backup_id}")
+
+        # Create temporary directory for backup staging
+        with tempfile.TemporaryDirectory() as staging_dir:
+            staging_path = Path(staging_dir)
+
+            # 1. Export MongoDB data to JSON
+            logger.info("Exporting MongoDB data...")
+            mongo_backup_dir = staging_path / "mongodb-json"
+            mongo_backup_dir.mkdir()
+
+            # Export consensus results
+            consensus_results = []
+            async for doc in db.db.consensus_results.find({}):
+                doc['_id'] = str(doc['_id'])
+                for key, val in doc.items():
+                    if isinstance(val, datetime):
+                        doc[key] = val.isoformat()
+                consensus_results.append(doc)
+
+            with open(mongo_backup_dir / "consensus_results.json", 'w') as f:
+                json.dump(consensus_results, f, indent=2)
+            logger.info(f"  ✓ {len(consensus_results)} consensus results")
+
+            # Export strategy analyses
+            strategy_analyses = []
+            async for doc in db.db.strategy_analyses.find({}):
+                doc['_id'] = str(doc['_id'])
+                for key, val in doc.items():
+                    if isinstance(val, datetime):
+                        doc[key] = val.isoformat()
+                strategy_analyses.append(doc)
+
+            with open(mongo_backup_dir / "strategy_analyses.json", 'w') as f:
+                json.dump(strategy_analyses, f, indent=2)
+            logger.info(f"  ✓ {len(strategy_analyses)} strategy analyses")
+
+            # Export HuggingFace configs
+            hf_configs = []
+            async for doc in db.db.huggingface_configs.find({}):
+                doc['_id'] = str(doc['_id'])
+                for key, val in doc.items():
+                    if isinstance(val, datetime):
+                        doc[key] = val.isoformat()
+                hf_configs.append(doc)
+
+            with open(mongo_backup_dir / "huggingface_configs.json", 'w') as f:
+                json.dump(hf_configs, f, indent=2)
+            logger.info(f"  ✓ {len(hf_configs)} HuggingFace configs")
+
+            # 2. Create tar.gz with model cache and MongoDB data
+            logger.info("Creating backup archive...")
+            cache = get_model_cache()
+
+            with tarfile.open(backup_path, "w:gz") as tar:
+                # Add model cache directory
+                if cache.cache_dir.exists():
+                    tar.add(cache.cache_dir, arcname="model_cache")
+                    logger.info(f"  ✓ Added model_cache directory")
+
+                # Add MongoDB JSON exports
+                tar.add(mongo_backup_dir, arcname="mongodb-json")
+                logger.info(f"  ✓ Added mongodb-json directory")
+
+        backup_size = backup_path.stat().st_size / (1024 * 1024)  # MB
+        logger.info(f"✅ Backup complete: {backup_path.name} ({backup_size:.2f} MB)")
+
+        return {
+            "backup_id": backup_id,
+            "backup_path": str(backup_path),
+            "size_mb": backup_size,
+            "timestamp": datetime.now().isoformat(),
+            "message": "Backup created successfully. Use backup_id to download.",
+            "download_url": f"/api/v1/backup/download/{backup_id}"
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to create backup: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create backup: {str(e)}")
+
+
+@app.get("/api/v1/backup/download/{backup_id}")
+async def download_backup(backup_id: str):
+    """
+    Download a backup file created by /api/v1/backup/full
+    """
+    try:
+        from fastapi.responses import FileResponse
+
+        backup_dir = Path(tempfile.gettempdir()) / "temporal-backups"
+        backup_path = backup_dir / f"{backup_id}.tar.gz"
+
+        if not backup_path.exists():
+            raise HTTPException(status_code=404, detail=f"Backup not found: {backup_id}")
+
+        return FileResponse(
+            path=backup_path,
+            media_type="application/gzip",
+            filename=f"{backup_id}.tar.gz",
+            headers={"Content-Disposition": f"attachment; filename={backup_id}.tar.gz"}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to download backup: {str(e)}")
+
+
+@app.post("/api/v1/backup/restore")
+async def restore_full_backup(
+    file: bytes,
+    db: Database = Depends(get_database)
+):
+    """
+    Restore a full system backup from an uploaded tar.gz file.
+    WARNING: This will replace existing model cache and MongoDB data.
+    """
+    try:
+        from strategies.model_cache import get_model_cache
+
+        if not file:
+            raise HTTPException(status_code=400, detail="No file provided")
+
+        logger.info("Starting full system restore...")
+
+        # Save uploaded file to temporary location
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".tar.gz") as tmp:
+            tmp.write(file)
+            tmp_path = tmp.name
+
+        try:
+            # Extract backup to temporary directory
+            with tempfile.TemporaryDirectory() as extract_dir:
+                extract_path = Path(extract_dir)
+
+                logger.info("Extracting backup archive...")
+                with tarfile.open(tmp_path, "r:gz") as tar:
+                    tar.extractall(extract_path)
+
+                # 1. Restore model cache
+                model_cache_src = extract_path / "model_cache"
+                if model_cache_src.exists():
+                    logger.info("Restoring model cache...")
+                    cache = get_model_cache()
+
+                    # Clear existing cache
+                    if cache.cache_dir.exists():
+                        shutil.rmtree(cache.cache_dir)
+
+                    # Copy restored cache
+                    shutil.copytree(model_cache_src, cache.cache_dir)
+
+                    # Count restored files
+                    file_count = len(list(cache.cache_dir.glob("*_model.pt")))
+                    logger.info(f"  ✓ Restored {file_count} cached models")
+                else:
+                    logger.warning("  ⚠ No model_cache found in backup")
+
+                # 2. Restore MongoDB data
+                mongo_backup_dir = extract_path / "mongodb-json"
+                if mongo_backup_dir.exists():
+                    logger.info("Restoring MongoDB data...")
+
+                    # Restore consensus results
+                    consensus_file = mongo_backup_dir / "consensus_results.json"
+                    if consensus_file.exists():
+                        with open(consensus_file, 'r') as f:
+                            results = json.load(f)
+
+                        # Convert ISO datetime strings back to datetime objects
+                        for doc in results:
+                            for key, val in doc.items():
+                                if isinstance(val, str) and 'T' in val:
+                                    try:
+                                        doc[key] = datetime.fromisoformat(val.replace('Z', '+00:00'))
+                                    except:
+                                        pass
+                            if '_id' in doc:
+                                del doc['_id']
+
+                        if results:
+                            await db.db.consensus_results.insert_many(results)
+                            logger.info(f"  ✓ Restored {len(results)} consensus results")
+
+                    # Restore strategy analyses
+                    analyses_file = mongo_backup_dir / "strategy_analyses.json"
+                    if analyses_file.exists():
+                        with open(analyses_file, 'r') as f:
+                            analyses = json.load(f)
+
+                        for doc in analyses:
+                            for key, val in doc.items():
+                                if isinstance(val, str) and 'T' in val:
+                                    try:
+                                        doc[key] = datetime.fromisoformat(val.replace('Z', '+00:00'))
+                                    except:
+                                        pass
+                            if '_id' in doc:
+                                del doc['_id']
+
+                        if analyses:
+                            await db.db.strategy_analyses.insert_many(analyses)
+                            logger.info(f"  ✓ Restored {len(analyses)} strategy analyses")
+
+                    # Restore HuggingFace configs
+                    configs_file = mongo_backup_dir / "huggingface_configs.json"
+                    if configs_file.exists():
+                        with open(configs_file, 'r') as f:
+                            configs = json.load(f)
+
+                        for doc in configs:
+                            for key, val in doc.items():
+                                if isinstance(val, str) and 'T' in val:
+                                    try:
+                                        doc[key] = datetime.fromisoformat(val.replace('Z', '+00:00'))
+                                    except:
+                                        pass
+                            if '_id' in doc:
+                                del doc['_id']
+
+                        if configs:
+                            await db.db.huggingface_configs.insert_many(configs)
+                            logger.info(f"  ✓ Restored {len(configs)} HuggingFace configs")
+                else:
+                    logger.warning("  ⚠ No mongodb-json found in backup")
+
+            logger.info("✅ Full system restore complete!")
+
+            return {
+                "message": "System restored successfully from backup",
+                "timestamp": datetime.now().isoformat()
+            }
+
+        finally:
+            # Clean up temp file
+            os.unlink(tmp_path)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to restore backup: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to restore backup: {str(e)}")
+
+
+@app.get("/api/v1/backup/list")
+async def list_backups():
+    """
+    List available backup files in the temporary backup directory.
+    """
+    try:
+        backup_dir = Path(tempfile.gettempdir()) / "temporal-backups"
+
+        if not backup_dir.exists():
+            return {"backups": [], "count": 0}
+
+        backups = []
+        for backup_file in backup_dir.glob("temporal-complete-*.tar.gz"):
+            stat = backup_file.stat()
+            backups.append({
+                "backup_id": backup_file.stem,
+                "filename": backup_file.name,
+                "size_mb": stat.st_size / (1024 * 1024),
+                "created": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+                "download_url": f"/api/v1/backup/download/{backup_file.stem}"
+            })
+
+        # Sort by creation time (newest first)
+        backups.sort(key=lambda x: x['created'], reverse=True)
+
+        return {
+            "backups": backups,
+            "count": len(backups)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list backups: {str(e)}")
 
 
 if __name__ == "__main__":
