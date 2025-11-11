@@ -41,27 +41,44 @@ echo ""
 if [ -d "$RESTORE_DIR/model_cache" ]; then
     echo "💾 Restoring model cache..."
 
-    # Determine target location based on whether we're in Docker or host
-    if [ -d "/workspace" ]; then
-        # Running in a container with /workspace mount
-        MODEL_CACHE_TARGET="/workspace/model_cache"
+    # Check if Docker is being used with backend container
+    if command -v docker &> /dev/null && docker ps --format '{{.Names}}' | grep -q 'temporal-trading-backend'; then
+        echo "  ℹ Detected Docker backend container - restoring to Docker volume"
+
+        # Count files to restore
+        FILE_COUNT=$(find "$RESTORE_DIR/model_cache" -type f | wc -l)
+        echo "  Copying $FILE_COUNT files to container..."
+
+        # Copy directly to container
+        docker cp "$RESTORE_DIR/model_cache/." temporal-trading-backend:/app/model_cache/
+
+        # Verify
+        CONTAINER_SIZE=$(docker exec temporal-trading-backend du -sh /app/model_cache | cut -f1)
+        CONTAINER_FILES=$(docker exec temporal-trading-backend sh -c 'find /app/model_cache -type f | wc -l')
+        echo "  ✓ Model cache restored to Docker volume ($CONTAINER_SIZE, $CONTAINER_FILES files)"
     else
-        # Running on host - use local directory
-        MODEL_CACHE_TARGET="$(pwd)/model_cache"
+        # Running on host without Docker or container not running
+        if [ -d "/workspace" ]; then
+            # Running in a container with /workspace mount
+            MODEL_CACHE_TARGET="/workspace/model_cache"
+        else
+            # Running on host - use local directory
+            MODEL_CACHE_TARGET="$(pwd)/model_cache"
+        fi
+
+        echo "  Target: $MODEL_CACHE_TARGET"
+
+        # Create backup of existing cache if it exists
+        if [ -d "$MODEL_CACHE_TARGET" ]; then
+            BACKUP_SUFFIX=$(date +%Y%m%d-%H%M%S)
+            echo "  ⚠ Existing model_cache found, backing up to model_cache.backup-$BACKUP_SUFFIX"
+            mv "$MODEL_CACHE_TARGET" "${MODEL_CACHE_TARGET}.backup-${BACKUP_SUFFIX}"
+        fi
+
+        mkdir -p "$(dirname $MODEL_CACHE_TARGET)"
+        cp -r "$RESTORE_DIR/model_cache" "$MODEL_CACHE_TARGET"
+        echo "  ✓ Model cache restored ($(du -sh $MODEL_CACHE_TARGET | cut -f1))"
     fi
-
-    echo "  Target: $MODEL_CACHE_TARGET"
-
-    # Create backup of existing cache if it exists
-    if [ -d "$MODEL_CACHE_TARGET" ]; then
-        BACKUP_SUFFIX=$(date +%Y%m%d-%H%M%S)
-        echo "  ⚠ Existing model_cache found, backing up to model_cache.backup-$BACKUP_SUFFIX"
-        mv "$MODEL_CACHE_TARGET" "${MODEL_CACHE_TARGET}.backup-${BACKUP_SUFFIX}"
-    fi
-
-    mkdir -p "$(dirname $MODEL_CACHE_TARGET)"
-    cp -r "$RESTORE_DIR/model_cache" "$MODEL_CACHE_TARGET"
-    echo "  ✓ Model cache restored ($(du -sh $MODEL_CACHE_TARGET | cut -f1))"
 else
     echo "  ⚠ No model_cache found in backup"
 fi
