@@ -321,8 +321,11 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
     # Train or fine-tune
     # Use lower learning rate and more aggressive gradient clipping for hourly data
     # Hourly data is more volatile and prone to gradient explosions
-    learning_rate = 1e-5 if interval == '1h' else 1e-4
-    grad_clip = 0.5 if interval == '1h' else 1.0
+    learning_rate = 1e-6 if interval == '1h' else 1e-4  # Ultra-low LR for hourly to prevent NaN
+    grad_clip = 0.3 if interval == '1h' else 1.0  # Tighter clipping for hourly
+
+    # Disable AMP for hourly data to prevent numerical instability
+    use_amp = False if interval == '1h' else True
 
     # Use Huber loss for hourly data - robust to outliers
     # MSE loss squares errors which causes explosive values with outliers
@@ -335,7 +338,7 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
         criterion = torch.nn.MSELoss()
         loss_name = "MSE"
 
-    print(f"🎯 Training config: lr={learning_rate}, grad_clip={grad_clip}, loss={loss_name}")
+    print(f"🎯 Training config: lr={learning_rate}, grad_clip={grad_clip}, loss={loss_name}, use_amp={use_amp}")
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-5)
     trainer = TemporalTrainer(
@@ -344,7 +347,7 @@ def train_ensemble_model(symbol, period, lookback, forecast_horizon, epochs, foc
         criterion=criterion,
         device="cuda" if torch.cuda.is_available() else "cpu",
         grad_clip=grad_clip,
-        use_amp=True  # Enable mixed precision training for 1.5-2x speedup
+        use_amp=use_amp  # Disable AMP for hourly to prevent NaN
     )
 
     if use_cached:
