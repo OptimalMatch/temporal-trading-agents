@@ -44,10 +44,10 @@ class APIService {
     return this.request(`/analyze/confidence?symbol=${symbol}`, { method: 'POST' });
   }
 
-  async analyzeConsensus(symbol, horizons = [3, 7, 14, 21], interval = '1d') {
+  async analyzeConsensus(symbol, horizons = [3, 7, 14, 21], interval = '1d', inferenceMode = false) {
     return this.request('/analyze/consensus', {
       method: 'POST',
-      body: JSON.stringify({ symbol, horizons, interval }),
+      body: JSON.stringify({ symbol, horizons, interval, inference_mode: inferenceMode }),
     });
   }
 

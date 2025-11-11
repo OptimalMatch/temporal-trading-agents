@@ -27,6 +27,7 @@ function AnalyzePage() {
   const [selectedStrategy, setSelectedStrategy] = useState('all');
   const [interval, setInterval] = useState('1d'); // '1d' for daily, '1h' for hourly
   const [horizons, setHorizons] = useState([3, 7, 14, 21]);
+  const [inferenceMode, setInferenceMode] = useState(false); // Inference-only mode (no training)
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
@@ -70,7 +71,7 @@ function AnalyzePage() {
       let response;
 
       if (selectedStrategy === 'all') {
-        response = await api.analyzeConsensus(symbol, horizons, interval);
+        response = await api.analyzeConsensus(symbol, horizons, interval, inferenceMode);
       } else if (selectedStrategy === 'gradient') {
         response = await api.analyzeGradient(symbol);
       } else if (selectedStrategy === 'confidence') {
@@ -257,6 +258,27 @@ function AnalyzePage() {
                 Multi-timeframe analysis is not available for hourly intervals. The consensus will use a single
                 12-hour forecast horizon. Ensemble model disagreement serves as a proxy for multi-timeframe uncertainty.
               </p>
+            </div>
+          )}
+
+          {/* Inference Mode (for consensus only) */}
+          {selectedStrategy === 'all' && (
+            <div>
+              <label className="flex items-center gap-3 p-4 bg-gray-800 border border-gray-700 rounded-lg cursor-pointer hover:bg-gray-750 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={inferenceMode}
+                  onChange={(e) => setInferenceMode(e.target.checked)}
+                  className="w-5 h-5 bg-gray-900 border-gray-600 rounded text-brand-600 focus:ring-brand-500"
+                />
+                <div className="flex-1">
+                  <span className="block text-sm font-medium text-gray-200">⚡ Inference Mode (Fast Predictions)</span>
+                  <span className="block text-xs text-gray-400 mt-1">
+                    Use cached models without training or fine-tuning. Instant predictions from models that may be days or weeks old.
+                    Great for quick analysis when speed matters more than having the latest data.
+                  </span>
+                </div>
+              </label>
             </div>
           )}
 
