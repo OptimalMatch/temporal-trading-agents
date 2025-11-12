@@ -164,6 +164,7 @@ export default function AutoOptimizePage() {
 
     try {
       const request = {
+        name: `Auto-Optimized ${config.symbol} (${new Date().toLocaleDateString()})`,
         config: {
           symbol: config.symbol,
           initial_capital: config.initial_capital,
