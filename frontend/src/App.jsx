@@ -1,5 +1,5 @@
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { Activity, Calendar, History, Play, TrendingUp, Database, BarChart3, Settings, Info, Zap, Clock, Target, Network, Upload } from 'lucide-react';
+import { Activity, Calendar, History, Play, TrendingUp, Database, BarChart3, Settings, Info, Zap, Clock, Target, Network, Upload, Sparkles } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import Dashboard from './pages/Dashboard';
 import HistoryPage from './pages/HistoryPage';
@@ -8,6 +8,7 @@ import AnalyzePage from './pages/AnalyzePage';
 import DataSyncPage from './pages/DataSyncPage';
 import BacktestPage from './pages/BacktestPage';
 import OptimizationPage from './pages/OptimizationPage';
+import AutoOptimizePage from './pages/AutoOptimizePage';
 import PaperTradingPage from './pages/PaperTradingPage';
 import ExperimentsPage from './pages/ExperimentsPage';
 import FederationPage from './pages/FederationPage';
@@ -31,6 +32,7 @@ function Navigation() {
     { path: '/analyze', label: 'Analyze', icon: Play },
     { path: '/backtest', label: 'Backtest', icon: BarChart3 },
     { path: '/optimize', label: 'Optimize', icon: Settings },
+    { path: '/auto-optimize', label: 'Auto-Opt', icon: Sparkles },
     { path: '/paper', label: 'Paper', icon: Zap },
     { path: '/experiments', label: 'Experiments', icon: Target },
     { path: '/history', label: 'History', icon: History },
@@ -116,6 +118,7 @@ function App() {
             <Route path="/analyze" element={<AnalyzePage />} />
             <Route path="/backtest" element={<BacktestPage />} />
             <Route path="/optimize" element={<OptimizationPage />} />
+            <Route path="/auto-optimize" element={<AutoOptimizePage />} />
             <Route path="/paper" element={<PaperTradingPage />} />
             <Route path="/experiments" element={<ExperimentsPage />} />
             <Route path="/history" element={<HistoryPage />} />

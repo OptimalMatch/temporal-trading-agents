@@ -570,6 +570,7 @@ def make_ensemble_predictions(ensemble_models, symbol, forecast_horizon=7, inter
     for model_info in ensemble_models:
         # Fetch latest data - use period to match training data and enable saving full history
         df_latest = fetch_crypto_data(symbol, period=period, interval=interval)
+        print(f"  DEBUG: After fetch_crypto_data - df_latest shape: {df_latest.shape}, columns: {list(df_latest.columns)[:5]}")
 
         # Apply cutoff date if provided (for backtesting)
         if cutoff_date:
@@ -578,9 +579,16 @@ def make_ensemble_predictions(ensemble_models, symbol, forecast_horizon=7, inter
                 raise ValueError(f"No data available up to cutoff date {cutoff_date}")
 
         df_latest, _ = add_technical_indicators(df_latest, focus=model_info['focus'])
+        print(f"  DEBUG: After add_technical_indicators - df_latest shape: {df_latest.shape}, columns: {len(df_latest.columns)}")
 
         # Prepare features
         data_latest = prepare_for_temporal(df_latest, model_info['feature_columns'])
+        print(f"  DEBUG: After prepare_for_temporal - data_latest shape: {data_latest.shape}, feature_columns: {model_info['feature_columns']}")
+        if len(data_latest) == 0:
+            print(f"  ERROR: data_latest is empty! df_latest had {len(df_latest)} rows before prepare_for_temporal")
+            print(f"  ERROR: df_latest columns: {list(df_latest.columns)}")
+            print(f"  ERROR: df_latest NaN counts:\n{df_latest.isnull().sum()}")
+            raise ValueError(f"prepare_for_temporal returned empty array. Check if feature_columns exist in df_latest")
         data_latest_norm = model_info['scaler'].transform(data_latest)
 
         # Get input window
