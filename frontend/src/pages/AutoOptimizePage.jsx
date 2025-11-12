@@ -170,8 +170,19 @@ export default function AutoOptimizePage() {
 
     const strategies = config.enabledStrategies;
     const results = [];
+    const totalStrategies = strategies.length;
 
-    for (const strategy of strategies) {
+    for (let i = 0; i < strategies.length; i++) {
+      const strategy = strategies[i];
+
+      // Update progress for Stage 3 showing current strategy
+      updateStageProgress({
+        completed: i,
+        total: totalStrategies,
+        percentage: Math.round((i / totalStrategies) * 100),
+        currentStrategy: strategy
+      });
+
       const request = {
         name: `Auto-Opt Stage 3: ${strategy}`,
         base_config: {
@@ -208,6 +219,13 @@ export default function AutoOptimizePage() {
         return: result.best_metrics.total_return_pct,
       });
     }
+
+    // Final update showing all strategies completed
+    updateStageProgress({
+      completed: totalStrategies,
+      total: totalStrategies,
+      percentage: 100
+    });
 
     // Sort by Sharpe ratio
     results.sort((a, b) => b.sharpe - a.sharpe);
@@ -287,9 +305,13 @@ export default function AutoOptimizePage() {
         throw new Error(`Optimization ${optimizationId} failed`);
       }
 
-      // Update progress
-      if (optimization.progress_pct) {
-        updateStageProgress(optimization.progress_pct);
+      // Update progress with completed/total combinations
+      if (optimization.total_combinations > 0) {
+        updateStageProgress({
+          completed: optimization.completed_combinations || 0,
+          total: optimization.total_combinations,
+          percentage: Math.round((optimization.completed_combinations || 0) / optimization.total_combinations * 100)
+        });
       }
     }
   };
@@ -514,7 +536,11 @@ export default function AutoOptimizePage() {
                       </span>
                       {stageStatus?.progress && (
                         <span className="text-sm text-gray-400">
-                          {stageStatus.progress}%
+                          {stage.id === 3 && stageStatus.progress.currentStrategy ? (
+                            <>Testing {stageStatus.progress.currentStrategy} ({stageStatus.progress.completed}/{stageStatus.progress.total} strategies)</>
+                          ) : (
+                            <>{stageStatus.progress.completed}/{stageStatus.progress.total} combinations ({stageStatus.progress.percentage}%)</>
+                          )}
                         </span>
                       )}
                     </div>
@@ -523,7 +549,7 @@ export default function AutoOptimizePage() {
                       <div className="mt-2 w-full bg-gray-700 rounded-full h-2">
                         <div
                           className="bg-brand-500 h-2 rounded-full transition-all"
-                          style={{ width: `${stageStatus.progress}%` }}
+                          style={{ width: `${stageStatus.progress.percentage}%` }}
                         />
                       </div>
                     )}
