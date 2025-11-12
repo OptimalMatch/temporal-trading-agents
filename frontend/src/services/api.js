@@ -202,6 +202,28 @@ class APIService {
     return this.request(`/optimize/${optimizationId}/cancel`, { method: 'POST' });
   }
 
+  // Auto-Optimization (backend-orchestrated multi-stage workflow)
+  async createAutoOptimize(name, config) {
+    return this.request(`/auto-optimize?name=${encodeURIComponent(name)}`, {
+      method: 'POST',
+      body: JSON.stringify(config),
+    });
+  }
+
+  async getAutoOptimize(autoOptimizeId) {
+    return this.request(`/auto-optimize/${autoOptimizeId}`);
+  }
+
+  async listAutoOptimizes(limit = 50) {
+    return this.request(`/auto-optimize?limit=${limit}`);
+  }
+
+  async cancelAutoOptimize(autoOptimizeId) {
+    return this.request(`/auto-optimize/${autoOptimizeId}/cancel`, {
+      method: 'POST',
+    });
+  }
+
   // Model Cache Management
   async getCachedModels() {
     return this.request('/cache/models');

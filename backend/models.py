@@ -673,6 +673,66 @@ class OptimizationRun(BaseModel):
     error_message: Optional[str] = None
 
 
+# ==================== Auto-Optimize Models ====================
+
+class AutoOptimizeStatus(str, Enum):
+    """Status of auto-optimize workflow"""
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class AutoOptimizeStageResult(BaseModel):
+    """Result from a single stage of auto-optimization"""
+    stage_id: int
+    stage_name: str
+    optimization_id: str  # Reference to the OptimizationRun for this stage
+    best_params: Optional[OptimizableParams] = None
+    best_metrics: Optional[BacktestMetrics] = None
+    started_at: datetime
+    completed_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+
+
+class AutoOptimizeConfig(BaseModel):
+    """Configuration for auto-optimize workflow"""
+    symbol: str
+    start_date: str  # YYYY-MM-DD
+    end_date: str  # YYYY-MM-DD
+    initial_capital: float = 100000.0
+    enabled_strategies: List[str] = [
+        'gradient', 'confidence', 'volatility', 'acceleration',
+        'swing', 'risk_adjusted', 'mean_reversion', 'multi_timeframe'
+    ]
+
+
+class AutoOptimizeRun(BaseModel):
+    """Multi-stage auto-optimization workflow"""
+    auto_optimize_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    config: AutoOptimizeConfig
+    status: AutoOptimizeStatus = AutoOptimizeStatus.PENDING
+
+    # Workflow state
+    current_stage: int = 0  # 0=not started, 1-4=stage number
+    stages: List[AutoOptimizeStageResult] = []
+
+    # Final results
+    optimal_params: Optional[OptimizableParams] = None
+    optimal_metrics: Optional[BacktestMetrics] = None
+    baseline_sharpe: Optional[float] = None
+    improvement_pct: Optional[float] = None
+
+    # Timing
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    execution_time_ms: Optional[int] = None
+    error_message: Optional[str] = None
+
+
 # ==================== Paper Trading Models ====================
 
 class PaperTradingStatus(str, Enum):
