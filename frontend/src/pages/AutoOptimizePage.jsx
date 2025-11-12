@@ -161,8 +161,8 @@ export default function AutoOptimizePage() {
 
     const optimization = await api.createOptimization(request);
 
-    // Poll for completion
-    return await pollOptimizationCompletion(optimization.optimization_id);
+    // Poll for completion, passing stageId explicitly
+    return await pollOptimizationCompletion(optimization.optimization_id, stageId);
   };
 
   const runStrategyComparison = async (bestMinEdge, bestPositionSize) => {
@@ -176,7 +176,7 @@ export default function AutoOptimizePage() {
       const strategy = strategies[i];
 
       // Update progress for Stage 3 showing current strategy
-      updateStageProgress({
+      updateStageProgress(3, {
         completed: i,
         total: totalStrategies,
         percentage: Math.round((i / totalStrategies) * 100),
@@ -212,7 +212,7 @@ export default function AutoOptimizePage() {
       };
 
       const optimization = await api.createOptimization(request);
-      const result = await pollOptimizationCompletion(optimization.optimization_id);
+      const result = await pollOptimizationCompletion(optimization.optimization_id, 3);
       results.push({
         strategy: strategy,
         sharpe: result.best_metrics.sharpe_ratio,
@@ -221,7 +221,7 @@ export default function AutoOptimizePage() {
     }
 
     // Final update showing all strategies completed
-    updateStageProgress({
+    updateStageProgress(3, {
       completed: totalStrategies,
       total: totalStrategies,
       percentage: 100
@@ -284,10 +284,10 @@ export default function AutoOptimizePage() {
     };
 
     const optimization = await api.createOptimization(request);
-    return await pollOptimizationCompletion(optimization.optimization_id);
+    return await pollOptimizationCompletion(optimization.optimization_id, 4);
   };
 
-  const pollOptimizationCompletion = async (optimizationId) => {
+  const pollOptimizationCompletion = async (optimizationId, stageId) => {
     while (true) {
       await new Promise(resolve => setTimeout(resolve, 5000)); // Poll every 5 seconds
 
@@ -307,7 +307,7 @@ export default function AutoOptimizePage() {
 
       // Update progress with completed/total combinations
       if (optimization.total_combinations > 0) {
-        updateStageProgress({
+        updateStageProgress(stageId, {
           completed: optimization.completed_combinations || 0,
           total: optimization.total_combinations,
           percentage: Math.round((optimization.completed_combinations || 0) / optimization.total_combinations * 100)
@@ -340,13 +340,16 @@ export default function AutoOptimizePage() {
     }
   };
 
-  const updateStageProgress = (progress) => {
-    // Update current stage progress
+  const updateStageProgress = (stageId, progress) => {
+    console.log('updateStageProgress called:', { stageId, progress });
+    // Update specified stage progress
     setStages(prev => {
       const updated = [...prev];
-      const currentIndex = updated.findIndex(s => s.id === currentStage);
-      if (currentIndex >= 0) {
-        updated[currentIndex] = { ...updated[currentIndex], progress };
+      const stageIndex = updated.findIndex(s => s.id === stageId);
+      console.log('Found stage at index:', stageIndex, 'stages:', updated.length);
+      if (stageIndex >= 0) {
+        updated[stageIndex] = { ...updated[stageIndex], progress };
+        console.log('Updated stage:', updated[stageIndex]);
       }
       return updated;
     });
