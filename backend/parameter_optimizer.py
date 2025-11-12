@@ -305,3 +305,75 @@ class ParameterOptimizer:
         logger.info(f"Best {optimization_metric.value}: {ranked_results[0].metric_value:.4f}")
 
         return optimization_run
+
+    async def run_optimization(
+        self,
+        name: str,
+        base_config: BacktestConfig,
+        parameter_grid: ParameterGrid,
+        optimization_metric: str = "sharpe_ratio",
+        top_n_results: int = 10
+    ) -> OptimizationRun:
+        """
+        Async wrapper for optimize() method.
+        Runs optimization in a thread pool executor to avoid blocking the event loop.
+
+        Args:
+            name: Name for this optimization run
+            base_config: Base backtest configuration
+            parameter_grid: Grid of parameters to test
+            optimization_metric: Metric to optimize (string name)
+            top_n_results: Number of top results to return
+
+        Returns:
+            Optimization run with results
+        """
+        import asyncio
+        from strategies.data_cache import get_cache
+
+        # Convert string metric to enum
+        metric_enum = OptimizationMetric(optimization_metric)
+
+        # Load price data from cache
+        cache = get_cache()
+        is_crypto = '-' in base_config.symbol
+        period = '2y' if is_crypto else '5y'
+        price_data = cache.get(base_config.symbol, period, interval='1d')
+
+        if price_data is None or len(price_data) == 0:
+            raise ValueError(f"No price data found for {base_config.symbol} in cache. Please sync data first.")
+
+        # Filter by date range
+        if base_config.start_date or base_config.end_date:
+            if base_config.start_date:
+                price_data = price_data[price_data.index >= base_config.start_date]
+            if base_config.end_date:
+                price_data = price_data[price_data.index <= base_config.end_date]
+
+        # Reset index and normalize column names
+        price_data = price_data.reset_index()
+        price_data = price_data.rename(columns={
+            'Date': 'date', 'Close': 'close', 'Open': 'open',
+            'High': 'high', 'Low': 'low', 'Volume': 'volume'
+        })
+        price_data.columns = [c.lower() for c in price_data.columns]
+
+        if len(price_data) == 0:
+            raise ValueError(f"No price data in date range {base_config.start_date} to {base_config.end_date}")
+
+        # Run the synchronous optimize method in a thread pool
+        loop = asyncio.get_event_loop()
+        optimization_run = await loop.run_in_executor(
+            None,
+            self.optimize,
+            base_config,
+            parameter_grid,
+            price_data,
+            metric_enum,
+            top_n_results
+        )
+
+        # Update name
+        optimization_run.name = name
+
+        return optimization_run

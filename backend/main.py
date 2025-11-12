@@ -48,6 +48,7 @@ from backend.models import (
     PaperTradingSummary, PaperTradingStatus,
     OptimizableParams, ParameterGrid, OptimizationRequest, OptimizationResult,
     OptimizationRun, OptimizationStatus, OptimizationMetric,
+    AutoOptimizeConfig, AutoOptimizeRun, AutoOptimizeStatus,
     Experiment,
     RemoteInstance, RemoteInstanceCreate, RemoteInstanceUpdate, RemoteInstanceStatus,
     RemoteForecast,
@@ -152,13 +153,16 @@ backtest_executor = None
 # Forecast publisher instance
 forecast_publisher = None
 
+# Auto-optimize manager instance
+auto_optimize_manager = None
+
 
 # ==================== Lifecycle Events ====================
 
 @app.on_event("startup")
 async def startup_event():
     """Connect to database and start scheduler on startup"""
-    global scheduler, executor, backtest_executor, forecast_publisher
+    global scheduler, executor, backtest_executor, forecast_publisher, auto_optimize_manager
 
     await db.connect()
     print("🚀 API: Server started successfully")
@@ -191,6 +195,14 @@ async def startup_event():
     # Initialize forecast publisher with no webhooks (can be added via API)
     forecast_publisher = ForecastPublisher()
     print("📡 API: Forecast publisher initialized")
+
+    # Initialize auto-optimize manager
+    from backend.parameter_optimizer import ParameterOptimizer
+    from backend.auto_optimize_manager import AutoOptimizeManager
+
+    parameter_optimizer = ParameterOptimizer(max_workers=2)  # Limit parallel workers
+    auto_optimize_manager = AutoOptimizeManager(db.client.temporal_trading, parameter_optimizer)
+    print("🎯 API: Auto-optimize manager initialized")
 
     # Restore auto-schedule jobs from database
     sync_manager = await get_sync_manager(db.client.temporal_trading)
@@ -3682,6 +3694,109 @@ async def cancel_optimization(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to cancel optimization: {str(e)}")
+
+
+# ==================== Auto-Optimize Endpoints ====================
+
+@app.post("/api/v1/auto-optimize")
+async def create_auto_optimize(
+    name: str,
+    config: AutoOptimizeConfig
+):
+    """
+    Create and start a backend-orchestrated auto-optimization workflow.
+
+    The workflow runs all 4 stages sequentially on the backend:
+      1. Min Edge Discovery
+      2. Position Sizing
+      3. Strategy Selection
+      4. Fine Tuning
+
+    Returns immediately with auto_optimize_id. Poll GET /api/v1/auto-optimize/{id}
+    to check status and progress.
+    """
+    try:
+        if not auto_optimize_manager:
+            raise HTTPException(status_code=503, detail="Auto-optimize manager not initialized")
+
+        run = await auto_optimize_manager.create_auto_optimize(name, config)
+        return run
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create auto-optimize: {str(e)}")
+
+
+@app.get("/api/v1/auto-optimize/{auto_optimize_id}")
+async def get_auto_optimize(auto_optimize_id: str):
+    """
+    Get auto-optimize workflow status and results.
+
+    Returns current_stage, stage progress, and final results when completed.
+    """
+    try:
+        if not auto_optimize_manager:
+            raise HTTPException(status_code=503, detail="Auto-optimize manager not initialized")
+
+        run = await auto_optimize_manager.get_auto_optimize(auto_optimize_id)
+
+        if not run:
+            raise HTTPException(status_code=404, detail=f"Auto-optimize {auto_optimize_id} not found")
+
+        return run
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get auto-optimize: {str(e)}")
+
+
+@app.get("/api/v1/auto-optimize")
+async def list_auto_optimizes(limit: int = 50):
+    """
+    List recent auto-optimize workflows.
+    """
+    try:
+        if not auto_optimize_manager:
+            raise HTTPException(status_code=503, detail="Auto-optimize manager not initialized")
+
+        runs = await auto_optimize_manager.list_auto_optimizes(limit)
+        return {"auto_optimizes": runs}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list auto-optimizes: {str(e)}")
+
+
+@app.post("/api/v1/auto-optimize/{auto_optimize_id}/cancel")
+async def cancel_auto_optimize(auto_optimize_id: str):
+    """
+    Cancel a running auto-optimize workflow.
+
+    Only workflows with status='running' can be cancelled.
+    Returns success=true if cancelled, false if not running or already completed.
+    """
+    try:
+        if not auto_optimize_manager:
+            raise HTTPException(status_code=503, detail="Auto-optimize manager not initialized")
+
+        success = await auto_optimize_manager.cancel_auto_optimize(auto_optimize_id)
+
+        if not success:
+            run = await auto_optimize_manager.get_auto_optimize(auto_optimize_id)
+            if not run:
+                raise HTTPException(status_code=404, detail=f"Auto-optimize {auto_optimize_id} not found")
+            else:
+                return {"success": False, "message": f"Cannot cancel workflow with status: {run.status}"}
+
+        return {"success": True, "message": "Workflow cancelled successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to cancel auto-optimize: {str(e)}")
 
 
 # ==================== Paper Trading Endpoints ====================
