@@ -396,7 +396,7 @@ export default function AutoOptimizePage() {
                             <div className="flex justify-between">
                               <span className="text-gray-400">Return:</span>
                               <span className="text-blue-400 font-mono">
-                                {stageResult.best_metrics?.total_return_pct?.toFixed(1) || 'N/A'}%
+                                {stageResult.best_metrics?.total_return ? (stageResult.best_metrics.total_return * 100).toFixed(1) : 'N/A'}%
                               </span>
                             </div>
                           </div>
@@ -474,7 +474,7 @@ export default function AutoOptimizePage() {
               <div className="bg-gray-800/50 rounded-lg p-4">
                 <div className="text-sm text-gray-400 mb-1">Total Return</div>
                 <div className="text-2xl font-bold text-blue-400">
-                  {autoOptimizeRun.optimal_metrics?.total_return_pct?.toFixed(1) || 'N/A'}%
+                  {autoOptimizeRun.optimal_metrics?.total_return ? (autoOptimizeRun.optimal_metrics.total_return * 100).toFixed(1) : 'N/A'}%
                 </div>
               </div>
 
@@ -513,8 +513,49 @@ export default function AutoOptimizePage() {
                     {autoOptimizeRun.optimal_params?.buy_threshold || 'N/A'}
                   </span>
                 </div>
+                <div>
+                  <span className="text-gray-400">Moderate Buy:</span>{' '}
+                  <span className="text-gray-100 font-mono">
+                    {autoOptimizeRun.optimal_params?.moderate_buy_threshold || 'N/A'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-400">Sell:</span>{' '}
+                  <span className="text-gray-100 font-mono">
+                    {autoOptimizeRun.optimal_params?.sell_threshold || 'N/A'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-400">Moderate Sell:</span>{' '}
+                  <span className="text-gray-100 font-mono">
+                    {autoOptimizeRun.optimal_params?.moderate_sell_threshold || 'N/A'}
+                  </span>
+                </div>
               </div>
             </div>
+
+            {/* Selected Strategies */}
+            {autoOptimizeRun.stages?.[2]?.optimization_id && (
+              <div className="bg-gray-800 rounded-lg p-4 mb-4">
+                <h3 className="font-semibold text-gray-100 mb-3">Selected Strategies (Top 3)</h3>
+                <div className="flex flex-wrap gap-2">
+                  {autoOptimizeRun.stages[2].optimization_id.split(',').map((strategy, idx) => (
+                    <span
+                      key={idx}
+                      className="px-3 py-1.5 bg-brand-900/30 text-brand-400 border border-brand-700 rounded-lg text-sm font-medium"
+                    >
+                      {idx === 0 && '🥇 '}
+                      {idx === 1 && '🥈 '}
+                      {idx === 2 && '🥉 '}
+                      {strategy.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                    </span>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-400 mt-2">
+                  These strategies performed best during Stage 3: Strategy Selection
+                </p>
+              </div>
+            )}
 
             <button
               onClick={applyOptimalParameters}
