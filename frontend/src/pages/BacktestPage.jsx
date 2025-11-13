@@ -24,6 +24,11 @@ export default function BacktestPage() {
     initial_capital: 100000,
     position_size_pct: 10,
     min_edge_bps: 55,
+    strong_buy_threshold: 0.80,
+    buy_threshold: 0.60,
+    moderate_buy_threshold: 0.50,
+    sell_threshold: 0.60,
+    moderate_sell_threshold: 0.50,
     walk_forward_enabled: true,
     train_window_days: 252,
     test_window_days: 63,
@@ -63,6 +68,15 @@ export default function BacktestPage() {
       initial_capital: parseFloat(formData.initial_capital),
       position_size_pct: parseFloat(formData.position_size_pct),
       min_edge_bps: parseFloat(formData.min_edge_bps),
+      optimizable: {
+        position_size_pct: parseFloat(formData.position_size_pct),
+        min_edge_bps: parseFloat(formData.min_edge_bps),
+        strong_buy_threshold: parseFloat(formData.strong_buy_threshold),
+        buy_threshold: parseFloat(formData.buy_threshold),
+        moderate_buy_threshold: parseFloat(formData.moderate_buy_threshold),
+        sell_threshold: parseFloat(formData.sell_threshold),
+        moderate_sell_threshold: parseFloat(formData.moderate_sell_threshold),
+      },
       inference_mode: formData.inference_mode,
       transaction_costs: {
         taker_fee_bps: 5.0,
@@ -411,6 +425,97 @@ export default function BacktestPage() {
                   <p className="text-xs text-gray-400 mt-1">
                     Minimum predicted move to execute trade (default: 55 bps = 3x transaction costs)
                   </p>
+                </div>
+              </div>
+
+              {/* Consensus Thresholds */}
+              <div className="space-y-3">
+                <h4 className="text-sm font-semibold text-gray-300">Consensus Thresholds</h4>
+                <p className="text-xs text-gray-400">
+                  Define what % of strategies must agree to trigger different signal strengths
+                </p>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-300 mb-1">
+                      Strong Buy Threshold
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="1"
+                      value={formData.strong_buy_threshold}
+                      onChange={(e) => setFormData({ ...formData, strong_buy_threshold: e.target.value })}
+                      className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-gray-100 text-sm"
+                      required
+                    />
+                    <p className="text-xs text-gray-500 mt-0.5">≥{(formData.strong_buy_threshold * 100).toFixed(0)}% bullish</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-300 mb-1">
+                      Buy Threshold
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="1"
+                      value={formData.buy_threshold}
+                      onChange={(e) => setFormData({ ...formData, buy_threshold: e.target.value })}
+                      className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-gray-100 text-sm"
+                      required
+                    />
+                    <p className="text-xs text-gray-500 mt-0.5">≥{(formData.buy_threshold * 100).toFixed(0)}% bullish</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-300 mb-1">
+                      Moderate Buy Threshold
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="1"
+                      value={formData.moderate_buy_threshold}
+                      onChange={(e) => setFormData({ ...formData, moderate_buy_threshold: e.target.value })}
+                      className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-gray-100 text-sm"
+                      required
+                    />
+                    <p className="text-xs text-gray-500 mt-0.5">≥{(formData.moderate_buy_threshold * 100).toFixed(0)}% bullish</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-300 mb-1">
+                      Sell Threshold
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="1"
+                      value={formData.sell_threshold}
+                      onChange={(e) => setFormData({ ...formData, sell_threshold: e.target.value })}
+                      className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-gray-100 text-sm"
+                      required
+                    />
+                    <p className="text-xs text-gray-500 mt-0.5">≥{(formData.sell_threshold * 100).toFixed(0)}% bearish</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-300 mb-1">
+                      Moderate Sell Threshold
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="1"
+                      value={formData.moderate_sell_threshold}
+                      onChange={(e) => setFormData({ ...formData, moderate_sell_threshold: e.target.value })}
+                      className="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-gray-100 text-sm"
+                      required
+                    />
+                    <p className="text-xs text-gray-500 mt-0.5">≥{(formData.moderate_sell_threshold * 100).toFixed(0)}% bearish</p>
+                  </div>
                 </div>
               </div>
 
