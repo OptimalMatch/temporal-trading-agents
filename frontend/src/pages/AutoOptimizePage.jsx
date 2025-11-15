@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Zap, Play, CheckCircle2, Clock, AlertCircle, TrendingUp, Settings, ArrowRight, Loader2, Award, Target, BarChart2 } from 'lucide-react';
+import { Zap, Play, CheckCircle2, Clock, AlertCircle, TrendingUp, Settings, ArrowRight, Loader2, Award, Target, BarChart2, History, ChevronDown, ChevronUp, Calendar, Sparkles } from 'lucide-react';
 import api from '../services/api';
 
 export default function AutoOptimizePage() {
@@ -7,6 +7,8 @@ export default function AutoOptimizePage() {
   const [autoOptimizeRun, setAutoOptimizeRun] = useState(null);
   const [error, setError] = useState(null);
   const [pollInterval, setPollInterval] = useState(null);
+  const [previousRuns, setPreviousRuns] = useState([]);
+  const [expandedRunId, setExpandedRunId] = useState(null);
 
   // Configuration
   const [config, setConfig] = useState({
@@ -57,15 +59,17 @@ export default function AutoOptimizePage() {
     };
   }, [pollInterval]);
 
-  // Check for existing running workflow on mount
+  // Fetch all previous runs on mount
   useEffect(() => {
-    const checkExistingRun = async () => {
+    const fetchPreviousRuns = async () => {
       try {
-        const response = await api.listAutoOptimizes(1); // Get the most recent run
+        const response = await api.listAutoOptimizes(100); // Get all recent runs
         const runs = response.auto_optimizes || [];
+        setPreviousRuns(runs);
+
+        // Check if the latest run is still running or pending
         if (runs.length > 0) {
           const latestRun = runs[0];
-          // If the latest run is still running or pending, attach to it
           if (latestRun.status === 'running' || latestRun.status === 'pending') {
             setAutoOptimizeRun(latestRun);
             setIsRunning(true);
@@ -86,6 +90,10 @@ export default function AutoOptimizePage() {
                   } else if (updatedRun.status === 'cancelled') {
                     setError('Auto-optimization was cancelled');
                   }
+
+                  // Refresh previous runs list
+                  const refreshed = await api.listAutoOptimizes(100);
+                  setPreviousRuns(refreshed.auto_optimizes || []);
                 }
               } catch (err) {
                 console.error('Error polling auto-optimize status:', err);
@@ -96,11 +104,11 @@ export default function AutoOptimizePage() {
           }
         }
       } catch (err) {
-        console.error('Error checking for existing run:', err);
+        console.error('Error fetching previous runs:', err);
       }
     };
 
-    checkExistingRun();
+    fetchPreviousRuns();
   }, []); // Run once on mount
 
   const startAutoOptimization = async () => {
@@ -112,6 +120,10 @@ export default function AutoOptimizePage() {
       // Create auto-optimize run (backend will orchestrate all stages)
       const run = await api.createAutoOptimize('Auto-Optimize Run', config);
       setAutoOptimizeRun(run);
+
+      // Refresh previous runs to include the new run
+      const refreshed = await api.listAutoOptimizes(100);
+      setPreviousRuns(refreshed.auto_optimizes || []);
 
       // Start polling for status updates every 5 seconds
       const interval = setInterval(async () => {
@@ -129,6 +141,10 @@ export default function AutoOptimizePage() {
             } else if (updatedRun.status === 'cancelled') {
               setError('Auto-optimization was cancelled');
             }
+
+            // Refresh previous runs list with final status
+            const refreshed = await api.listAutoOptimizes(100);
+            setPreviousRuns(refreshed.auto_optimizes || []);
           }
         } catch (err) {
           console.error('Error polling auto-optimize status:', err);
@@ -185,13 +201,65 @@ export default function AutoOptimizePage() {
     }
   };
 
-  const resetAndRunAnother = () => {
+  const resetAndRunAnother = async () => {
     setAutoOptimizeRun(null);
     setError(null);
     setIsRunning(false);
     if (pollInterval) {
       clearInterval(pollInterval);
       setPollInterval(null);
+    }
+
+    // Refresh previous runs
+    try {
+      const response = await api.listAutoOptimizes(100);
+      setPreviousRuns(response.auto_optimizes || []);
+    } catch (err) {
+      console.error('Error refreshing previous runs:', err);
+    }
+  };
+
+  const toggleRunExpansion = (runId) => {
+    setExpandedRunId(expandedRunId === runId ? null : runId);
+  };
+
+  const formatDate = (dateStr) => {
+    if (!dateStr) return 'N/A';
+    const date = new Date(dateStr + (dateStr.endsWith('Z') ? '' : 'Z'));
+    return date.toLocaleString();
+  };
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'completed':
+        return 'text-green-400';
+      case 'failed':
+        return 'text-red-400';
+      case 'cancelled':
+        return 'text-yellow-400';
+      case 'running':
+        return 'text-blue-400';
+      case 'pending':
+        return 'text-gray-400';
+      default:
+        return 'text-gray-400';
+    }
+  };
+
+  const getStatusBgColor = (status) => {
+    switch (status) {
+      case 'completed':
+        return 'bg-green-500/10 border-green-500/30';
+      case 'failed':
+        return 'bg-red-500/10 border-red-500/30';
+      case 'cancelled':
+        return 'bg-yellow-500/10 border-yellow-500/30';
+      case 'running':
+        return 'bg-blue-500/10 border-blue-500/30';
+      case 'pending':
+        return 'bg-gray-500/10 border-gray-500/30';
+      default:
+        return 'bg-gray-500/10 border-gray-500/30';
     }
   };
 
@@ -582,6 +650,234 @@ export default function AutoOptimizePage() {
           <div>
             <div className="font-semibold text-red-400">Optimization Failed</div>
             <div className="text-sm text-red-300 mt-1">{error}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Previous Runs History */}
+      {previousRuns.length > 0 && (
+        <div className="mt-8 bg-gray-800 rounded-lg border border-gray-700 p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <History className="w-6 h-6 text-brand-400" />
+            <h2 className="text-xl font-semibold text-gray-100">Previous Auto-Optimization Results</h2>
+            <span className="text-sm text-gray-400 ml-2">({previousRuns.length} total)</span>
+          </div>
+
+          <div className="space-y-3">
+            {previousRuns.map((run) => {
+              const isExpanded = expandedRunId === run.auto_optimize_id;
+              const isCurrentRun = autoOptimizeRun?.auto_optimize_id === run.auto_optimize_id;
+
+              return (
+                <div
+                  key={run.auto_optimize_id}
+                  className={`border rounded-lg overflow-hidden transition-all ${
+                    isCurrentRun ? 'border-brand-500' : 'border-gray-700'
+                  }`}
+                >
+                  {/* Run Header - Always Visible */}
+                  <button
+                    onClick={() => toggleRunExpansion(run.auto_optimize_id)}
+                    className="w-full px-4 py-3 bg-gray-700/50 hover:bg-gray-700 transition-colors flex items-center justify-between"
+                  >
+                    <div className="flex items-center gap-4 flex-1">
+                      {/* Status Badge */}
+                      <div className={`px-2 py-1 rounded text-xs font-medium border ${getStatusBgColor(run.status)}`}>
+                        <span className={getStatusColor(run.status)}>{run.status.toUpperCase()}</span>
+                      </div>
+
+                      {/* Run Info */}
+                      <div className="flex-1 text-left">
+                        <div className="font-medium text-gray-100">{run.name}</div>
+                        <div className="text-sm text-gray-400">
+                          {run.config.symbol} • {formatDate(run.created_at)}
+                        </div>
+                      </div>
+
+                      {/* Key Metrics (for completed runs) */}
+                      {run.status === 'completed' && run.optimal_metrics && (
+                        <div className="flex gap-4 text-sm">
+                          <div>
+                            <span className="text-gray-400">Sharpe:</span>{' '}
+                            <span className="text-green-400 font-mono">
+                              {run.optimal_metrics.sharpe_ratio?.toFixed(2) || 'N/A'}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-gray-400">Return:</span>{' '}
+                            <span className="text-blue-400 font-mono">
+                              {run.optimal_metrics.total_return
+                                ? (run.optimal_metrics.total_return * 100).toFixed(1)
+                                : 'N/A'}%
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-gray-400">Time:</span>{' '}
+                            <span className="text-purple-400 font-mono">
+                              {formatDuration(run.execution_time_ms)}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Expand/Collapse Icon */}
+                    {isExpanded ? (
+                      <ChevronUp className="w-5 h-5 text-gray-400" />
+                    ) : (
+                      <ChevronDown className="w-5 h-5 text-gray-400" />
+                    )}
+                  </button>
+
+                  {/* Expanded Details */}
+                  {isExpanded && (
+                    <div className="p-4 bg-gray-800/50 border-t border-gray-700">
+                      {run.status === 'completed' && run.optimal_params && (
+                        <div className="space-y-4">
+                          {/* Optimal Parameters */}
+                          <div>
+                            <h4 className="font-semibold text-gray-100 mb-2 flex items-center gap-2">
+                              <Sparkles className="w-4 h-4 text-yellow-400" />
+                              Optimal Parameters
+                            </h4>
+                            <div className="grid grid-cols-3 gap-3 text-sm bg-gray-700/50 rounded p-3">
+                              <div>
+                                <span className="text-gray-400">Min Edge:</span>{' '}
+                                <span className="text-gray-100 font-mono">
+                                  {run.optimal_params.min_edge_bps || 'N/A'} bps
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-gray-400">Position Size:</span>{' '}
+                                <span className="text-gray-100 font-mono">
+                                  {run.optimal_params.position_size_pct || 'N/A'}%
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-gray-400">Strong Buy:</span>{' '}
+                                <span className="text-gray-100 font-mono">
+                                  {run.optimal_params.strong_buy_threshold || 'N/A'}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-gray-400">Buy:</span>{' '}
+                                <span className="text-gray-100 font-mono">
+                                  {run.optimal_params.buy_threshold || 'N/A'}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-gray-400">Moderate Buy:</span>{' '}
+                                <span className="text-gray-100 font-mono">
+                                  {run.optimal_params.moderate_buy_threshold || 'N/A'}
+                                </span>
+                              </div>
+                              {run.optimal_params.sell_threshold && (
+                                <div>
+                                  <span className="text-gray-400">Sell:</span>{' '}
+                                  <span className="text-gray-100 font-mono">
+                                    {run.optimal_params.sell_threshold}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Stage Results */}
+                          {run.stages && run.stages.length > 0 && (
+                            <div>
+                              <h4 className="font-semibold text-gray-100 mb-2">Stage Results</h4>
+                              <div className="space-y-2">
+                                {run.stages.map((stage) => (
+                                  <div
+                                    key={stage.stage_id}
+                                    className="bg-gray-700/50 rounded p-3 text-sm"
+                                  >
+                                    <div className="font-medium text-gray-100 mb-1">
+                                      Stage {stage.stage_id}: {stage.stage_name}
+                                    </div>
+                                    {stage.best_metrics && (
+                                      <div className="grid grid-cols-3 gap-2 text-xs">
+                                        <div>
+                                          <span className="text-gray-400">Sharpe:</span>{' '}
+                                          <span className="text-green-400 font-mono">
+                                            {stage.best_metrics.sharpe_ratio?.toFixed(2) || 'N/A'}
+                                          </span>
+                                        </div>
+                                        <div>
+                                          <span className="text-gray-400">Return:</span>{' '}
+                                          <span className="text-blue-400 font-mono">
+                                            {stage.best_metrics.total_return
+                                              ? (stage.best_metrics.total_return * 100).toFixed(1)
+                                              : 'N/A'}%
+                                          </span>
+                                        </div>
+                                        {stage.best_params && (
+                                          <div>
+                                            <span className="text-gray-400">Winner:</span>{' '}
+                                            <span className="text-brand-400 font-mono">
+                                              {Object.entries(stage.best_params)
+                                                .filter(([_, v]) => v != null)
+                                                .map(([k, v]) => `${k}=${v}`)
+                                                .join(', ')}
+                                            </span>
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Configuration Details */}
+                          <div>
+                            <h4 className="font-semibold text-gray-100 mb-2 flex items-center gap-2">
+                              <Settings className="w-4 h-4 text-gray-400" />
+                              Configuration
+                            </h4>
+                            <div className="grid grid-cols-2 gap-2 text-sm bg-gray-700/50 rounded p-3">
+                              <div>
+                                <span className="text-gray-400">Symbol:</span>{' '}
+                                <span className="text-gray-100">{run.config.symbol}</span>
+                              </div>
+                              <div>
+                                <span className="text-gray-400">Initial Capital:</span>{' '}
+                                <span className="text-gray-100">
+                                  ${run.config.initial_capital.toLocaleString()}
+                                </span>
+                              </div>
+                              <div>
+                                <span className="text-gray-400">Start Date:</span>{' '}
+                                <span className="text-gray-100">{run.config.start_date}</span>
+                              </div>
+                              <div>
+                                <span className="text-gray-400">End Date:</span>{' '}
+                                <span className="text-gray-100">{run.config.end_date}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Failed/Cancelled Run Info */}
+                      {(run.status === 'failed' || run.status === 'cancelled') && (
+                        <div className={`p-3 rounded ${getStatusBgColor(run.status)}`}>
+                          <div className="text-sm">
+                            <div className={`font-semibold ${getStatusColor(run.status)}`}>
+                              {run.status === 'failed' ? 'Optimization Failed' : 'Optimization Cancelled'}
+                            </div>
+                            {run.error_message && (
+                              <div className="text-gray-300 mt-1">{run.error_message}</div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
