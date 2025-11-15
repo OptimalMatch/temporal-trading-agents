@@ -274,35 +274,69 @@ class ScheduleFrequency(str, Enum):
     HOURLY = "hourly"
     DAILY = "daily"
     WEEKLY = "weekly"
+    ONE_TIME = "one_time"  # Run once at specific date/time
     CUSTOM = "custom"  # Cron expression
 
 
+class ScheduledTaskType(str, Enum):
+    """Type of scheduled task"""
+    ANALYSIS = "analysis"
+    AUTO_OPTIMIZE = "auto_optimize"
+
+
 class ScheduledTask(BaseModel):
-    """Scheduled analysis task"""
+    """Scheduled task (analysis or auto-optimize)"""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
+    task_type: ScheduledTaskType = ScheduledTaskType.ANALYSIS
     symbol: str
-    strategy_type: StrategyType
     frequency: ScheduleFrequency
     cron_expression: Optional[str] = None  # For CUSTOM frequency
-    horizons: List[int] = [3, 7, 14, 21]
+    scheduled_datetime: Optional[datetime] = None  # For ONE_TIME frequency
+
+    # Analysis-specific fields
+    strategy_type: Optional[StrategyType] = None  # Required for ANALYSIS tasks
+    horizons: Optional[List[int]] = [3, 7, 14, 21]  # For ANALYSIS tasks
+    interval: str = '1d'  # For ANALYSIS tasks
+    inference_mode: bool = False  # For ANALYSIS tasks
+
+    # Auto-optimize-specific fields
+    start_date: Optional[str] = None  # Required for AUTO_OPTIMIZE tasks
+    end_date: Optional[str] = None  # Required for AUTO_OPTIMIZE tasks
+    initial_capital: Optional[float] = 100000.0  # For AUTO_OPTIMIZE tasks
+    enabled_strategies: Optional[List[str]] = None  # For AUTO_OPTIMIZE tasks
+
     is_active: bool = True
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     last_run: Optional[datetime] = None
+    last_started: Optional[datetime] = None  # When the task last started executing
     next_run: Optional[datetime] = None
     run_count: int = 0
+    is_running: bool = False  # Whether the task is currently executing
     metadata: Dict[str, Any] = {}
 
 
 class ScheduledTaskCreate(BaseModel):
     """Request to create a scheduled task"""
     name: str
+    task_type: ScheduledTaskType = ScheduledTaskType.ANALYSIS
     symbol: str
-    strategy_type: StrategyType
     frequency: ScheduleFrequency
     cron_expression: Optional[str] = None
+    scheduled_datetime: Optional[datetime] = None  # For ONE_TIME frequency
+
+    # Analysis-specific fields
+    strategy_type: Optional[StrategyType] = None  # Required for ANALYSIS tasks
     horizons: Optional[List[int]] = [3, 7, 14, 21]
+    interval: Optional[str] = '1d'
+    inference_mode: Optional[bool] = False
+
+    # Auto-optimize-specific fields
+    start_date: Optional[str] = None  # Required for AUTO_OPTIMIZE tasks
+    end_date: Optional[str] = None  # Required for AUTO_OPTIMIZE tasks
+    initial_capital: Optional[float] = 100000.0
+    enabled_strategies: Optional[List[str]] = None
 
 
 class ScheduledTaskUpdate(BaseModel):
@@ -311,7 +345,15 @@ class ScheduledTaskUpdate(BaseModel):
     is_active: Optional[bool] = None
     frequency: Optional[ScheduleFrequency] = None
     cron_expression: Optional[str] = None
+    scheduled_datetime: Optional[datetime] = None
     horizons: Optional[List[int]] = None
+    interval: Optional[str] = None
+    inference_mode: Optional[bool] = None
+    # Auto-optimize fields
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    initial_capital: Optional[float] = None
+    enabled_strategies: Optional[List[str]] = None
 
 
 # ==================== WebSocket Models ====================

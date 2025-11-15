@@ -40,7 +40,7 @@ from backend.models import (
     StrategyAnalysisRequest, ConsensusRequest, StrategyResult,
     ConsensusAnalysis, HealthCheck, StrategyType, StrategyAnalysis,
     ConsensusResult, AnalysisStatus, StrategySignal, ForecastStats,
-    ScheduledTask, ScheduledTaskCreate, ScheduledTaskUpdate, ScheduleFrequency,
+    ScheduledTask, ScheduledTaskCreate, ScheduledTaskUpdate, ScheduleFrequency, ScheduledTaskType,
     AnalysisStarted, ForecastData, ModelPrediction, HistoricalPriceData, PricePoint,
     WatchlistAddRequest, DataSyncJob, TickerWatchlist, DataInventory,
     BacktestConfig, BacktestRun, BacktestCreateRequest, BacktestSummary,
@@ -181,8 +181,16 @@ async def startup_event():
     backtest_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="backtest")
     print("🔬 API: ThreadPoolExecutor for backtests initialized with 2 workers")
 
-    # Initialize and start scheduler
-    scheduler = get_scheduler(db)
+    # Initialize auto-optimize manager (needed by scheduler)
+    from backend.parameter_optimizer import ParameterOptimizer
+    from backend.auto_optimize_manager import AutoOptimizeManager
+
+    parameter_optimizer = ParameterOptimizer(max_workers=2)  # Limit parallel workers
+    auto_optimize_manager = AutoOptimizeManager(db.client.temporal_trading, parameter_optimizer)
+    print("🎯 API: Auto-optimize manager initialized")
+
+    # Initialize and start scheduler (with auto_optimize_manager)
+    scheduler = get_scheduler(db, auto_optimize_manager)
     scheduler.start()
     await scheduler.load_scheduled_tasks()
     print("📅 API: Scheduler initialized")
@@ -195,14 +203,6 @@ async def startup_event():
     # Initialize forecast publisher with no webhooks (can be added via API)
     forecast_publisher = ForecastPublisher()
     print("📡 API: Forecast publisher initialized")
-
-    # Initialize auto-optimize manager
-    from backend.parameter_optimizer import ParameterOptimizer
-    from backend.auto_optimize_manager import AutoOptimizeManager
-
-    parameter_optimizer = ParameterOptimizer(max_workers=2)  # Limit parallel workers
-    auto_optimize_manager = AutoOptimizeManager(db.client.temporal_trading, parameter_optimizer)
-    print("🎯 API: Auto-optimize manager initialized")
 
     # Restore auto-schedule jobs from database
     sync_manager = await get_sync_manager(db.client.temporal_trading)
@@ -2184,13 +2184,32 @@ async def create_scheduled_task(
     task_request: ScheduledTaskCreate,
     database: Database = Depends(get_database)
 ):
-    """Create a new scheduled analysis task"""
+    """Create a new scheduled task (analysis or auto-optimize)"""
     try:
         global scheduler
 
+        # Validate task-specific required fields
+        if task_request.task_type == ScheduledTaskType.ANALYSIS:
+            if not task_request.strategy_type:
+                raise HTTPException(status_code=400, detail="strategy_type is required for analysis tasks")
+        elif task_request.task_type == ScheduledTaskType.AUTO_OPTIMIZE:
+            if not task_request.start_date or not task_request.end_date:
+                raise HTTPException(status_code=400, detail="start_date and end_date are required for auto-optimize tasks")
+
         # Calculate next run time based on frequency
         now = datetime.now(timezone.utc)
-        if task_request.frequency == ScheduleFrequency.HOURLY:
+        if task_request.frequency == ScheduleFrequency.ONE_TIME:
+            if not task_request.scheduled_datetime:
+                raise HTTPException(status_code=400, detail="scheduled_datetime is required for one-time tasks")
+            next_run = task_request.scheduled_datetime
+            # Ensure timezone-aware datetime
+            if next_run.tzinfo is None:
+                # If no timezone, assume it's already in UTC
+                next_run = next_run.replace(tzinfo=timezone.utc)
+            else:
+                # Convert to UTC if it has a different timezone
+                next_run = next_run.astimezone(timezone.utc)
+        elif task_request.frequency == ScheduleFrequency.HOURLY:
             next_run = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
         elif task_request.frequency == ScheduleFrequency.DAILY:
             next_run = (now + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
@@ -2205,11 +2224,21 @@ async def create_scheduled_task(
         # Create task
         task = ScheduledTask(
             name=task_request.name,
+            task_type=task_request.task_type,
             symbol=task_request.symbol,
-            strategy_type=task_request.strategy_type,
             frequency=task_request.frequency,
             cron_expression=task_request.cron_expression,
+            scheduled_datetime=task_request.scheduled_datetime,
+            # Analysis fields
+            strategy_type=task_request.strategy_type,
             horizons=task_request.horizons or [3, 7, 14, 21],
+            interval=task_request.interval or '1d',
+            inference_mode=task_request.inference_mode or False,
+            # Auto-optimize fields
+            start_date=task_request.start_date,
+            end_date=task_request.end_date,
+            initial_capital=task_request.initial_capital or 100000.0,
+            enabled_strategies=task_request.enabled_strategies,
             next_run=next_run
         )
 
@@ -2222,6 +2251,8 @@ async def create_scheduled_task(
 
         return task
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create scheduled task: {str(e)}")
 
@@ -3059,46 +3090,72 @@ async def get_available_tickers(market: str = "all"):
     tickers = []
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            # Fetch crypto tickers
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            # Fetch crypto tickers (use cursor-based pagination)
             crypto_url = f"https://api.massive.com/v3/reference/tickers?market=crypto&active=true&order=asc&limit=1000&sort=ticker&apiKey={api_key}"
-            crypto_response = await client.get(crypto_url)
-            if crypto_response.status_code == 200:
-                crypto_data = crypto_response.json()
-                for ticker in crypto_data.get("results", []):
-                    # Convert X:BTCUSD to BTC-USD format
-                    polygon_ticker = ticker["ticker"]
-                    if polygon_ticker.startswith("X:"):
-                        # Extract base and quote currencies
-                        # X:BTCUSD -> BTC-USD
-                        base_currency = ticker.get("base_currency_symbol", "")
-                        quote_currency = ticker.get("currency_symbol", "")
-                        if base_currency and quote_currency:
-                            symbol = f"{base_currency}-{quote_currency}"
-                        else:
-                            # Fallback: try to parse from ticker
-                            symbol = polygon_ticker[2:]  # Remove X: prefix
+            crypto_count = 0
+            while crypto_url and crypto_count < 5000:  # Limit to 5000 cryptos
+                crypto_response = await client.get(crypto_url)
+                if crypto_response.status_code == 200:
+                    crypto_data = crypto_response.json()
+                    results = crypto_data.get("results", [])
 
+                    for ticker in results:
+                        # Convert X:BTCUSD to BTC-USD format
+                        polygon_ticker = ticker["ticker"]
+                        if polygon_ticker.startswith("X:"):
+                            # Extract base and quote currencies
+                            # X:BTCUSD -> BTC-USD
+                            base_currency = ticker.get("base_currency_symbol", "")
+                            quote_currency = ticker.get("currency_symbol", "")
+                            if base_currency and quote_currency:
+                                symbol = f"{base_currency}-{quote_currency}"
+                            else:
+                                # Fallback: try to parse from ticker
+                                symbol = polygon_ticker[2:]  # Remove X: prefix
+
+                            tickers.append({
+                                "symbol": symbol,
+                                "name": ticker.get("name", symbol),
+                                "market": "crypto",
+                                "polygon_ticker": polygon_ticker
+                            })
+                            crypto_count += 1
+
+                    # Get next page URL
+                    crypto_url = crypto_data.get("next_url")
+                    if crypto_url:
+                        # Add API key to next_url
+                        crypto_url = f"{crypto_url}&apiKey={api_key}"
+                else:
+                    break
+
+            # Fetch stock tickers (US stocks) - use cursor-based pagination
+            stocks_url = f"https://api.massive.com/v3/reference/tickers?market=stocks&active=true&order=asc&limit=1000&sort=ticker&apiKey={api_key}"
+            stocks_count = 0
+            while stocks_url and stocks_count < 20000:  # Limit to 20,000 stocks
+                stocks_response = await client.get(stocks_url)
+                if stocks_response.status_code == 200:
+                    stocks_data = stocks_response.json()
+                    results = stocks_data.get("results", [])
+
+                    for ticker in results:
+                        symbol = ticker["ticker"]
                         tickers.append({
                             "symbol": symbol,
                             "name": ticker.get("name", symbol),
-                            "market": "crypto",
-                            "polygon_ticker": polygon_ticker
+                            "market": "stocks",
+                            "polygon_ticker": symbol
                         })
+                        stocks_count += 1
 
-            # Fetch stock tickers (US stocks)
-            stocks_url = f"https://api.massive.com/v3/reference/tickers?market=stocks&active=true&order=asc&limit=1000&sort=ticker&apiKey={api_key}"
-            stocks_response = await client.get(stocks_url)
-            if stocks_response.status_code == 200:
-                stocks_data = stocks_response.json()
-                for ticker in stocks_data.get("results", []):
-                    symbol = ticker["ticker"]
-                    tickers.append({
-                        "symbol": symbol,
-                        "name": ticker.get("name", symbol),
-                        "market": "stocks",
-                        "polygon_ticker": symbol
-                    })
+                    # Get next page URL
+                    stocks_url = stocks_data.get("next_url")
+                    if stocks_url:
+                        # Add API key to next_url
+                        stocks_url = f"{stocks_url}&apiKey={api_key}"
+                else:
+                    break
 
         # Sort alphabetically by symbol
         tickers.sort(key=lambda x: x["symbol"])
